@@ -508,7 +508,7 @@ class MockDeviceInventoryRepository implements DeviceInventoryRepository {
     const HomeArea(id: 'patio', name: 'Patio'),
   ];
 
-  late List<PhysicalDevice> _devices = [
+  final List<PhysicalDevice> _devices = [
     const PhysicalDevice(
       id: 'dev_switch_triple_01',
       name: 'Interruptor triple',

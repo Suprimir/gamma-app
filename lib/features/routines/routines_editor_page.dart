@@ -170,7 +170,7 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
                 child: child,
               ),
             ),
-            pageBuilder: (dialogContext, _, __) {
+            pageBuilder: (dialogContext, _, _) {
               final mq = MediaQuery.sizeOf(dialogContext);
               return Center(
                 child: SizedBox(
@@ -2242,7 +2242,7 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
         // Decodifica al tamaño mostrado (x3 para densidad), no a los 640px
         // que manda Spotify: menos memoria y menos lag al hacer scroll.
         cacheWidth: ((size ?? 64) * 3).round(),
-        errorBuilder: (_, __, ___) => fallback,
+        errorBuilder: (_, _, _) => fallback,
         loadingBuilder: (_, child, progress) =>
             progress == null ? child : fallback,
       );

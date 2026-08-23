@@ -2068,7 +2068,7 @@ class _AreaDropdown extends StatelessWidget {
           ),
         ),
         DropdownButtonFormField<String?>(
-          value: value,
+          initialValue: value,
           isExpanded: true,
           decoration: InputDecoration(
             filled: true,
@@ -2148,7 +2148,7 @@ class _RoleDropdown extends StatelessWidget {
           ),
         ),
         DropdownButtonFormField<String?>(
-          value: _semanticRoleOptions.containsKey(current) ? current : null,
+          initialValue: _semanticRoleOptions.containsKey(current) ? current : null,
           isExpanded: true,
           decoration: InputDecoration(
             filled: true,
