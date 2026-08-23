@@ -49,7 +49,7 @@ void main() {
   }
 
   testWidgets(
-    'F3A-R01: live resize compact to desktop keeps selection and page state',
+    ': live resize compact to desktop keeps selection and page state',
     (WidgetTester tester) async {
       MediaKit.ensureInitialized();
       useLinuxPlatform();
@@ -94,7 +94,7 @@ void main() {
   );
 
   testWidgets(
-    'F3A-R02: resizing back to compact restores mobile with the same state',
+    ': resizing back to compact restores mobile with the same state',
     (WidgetTester tester) async {
       MediaKit.ensureInitialized();
       useLinuxPlatform();
@@ -135,7 +135,7 @@ void main() {
   );
 
   testWidgets(
-    'F3A-M01b: mode switch to wallPanel and back at desktop keeps page state',
+    ': mode switch to wallPanel and back at desktop keeps page state',
     (WidgetTester tester) async {
       MediaKit.ensureInitialized();
       useLinuxPlatform();
@@ -186,7 +186,7 @@ void main() {
   );
 
   testWidgets(
-    'F3A-P05: persisted wallPanel at root renders the wall panel without interaction',
+    ': persisted wallPanel at root renders the wall panel without interaction',
     (WidgetTester tester) async {
       MediaKit.ensureInitialized();
       useLinuxPlatform();
@@ -212,43 +212,40 @@ void main() {
     },
   );
 
-  testWidgets(
-    'F3A-P06: compact width with persisted wallPanel falls back to mobile',
-    (WidgetTester tester) async {
-      MediaKit.ensureInitialized();
-      useLinuxPlatform();
-      SharedPreferences.setMockInitialValues({
-        'adaptive_surface_mode': 'wallPanel',
-      });
-      await tester.binding.setSurfaceSize(const Size(390, 844));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: AppShell(api: ApiClient(baseUrl: 'http://127.0.0.1:8420')),
-        ),
-      );
-      await tester.pump();
-      await tester.pump();
-
-      expect(find.byType(MobileShell), findsOneWidget);
-      expect(find.byType(WallPanelShell), findsNothing);
-
-      // The preference itself stays persisted as wallPanel.
-      final scope = tester.widget<AppAdaptiveScope>(
-        find.byType(AppAdaptiveScope),
-      );
-      expect(scope.controller.value, AppSurfaceMode.wallPanel);
-      expect(scope.effectiveSurface, EffectiveAppSurface.mobile);
-      expect(scope.windowClass.isCompact, isTrue);
-
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
-
-  testWidgets('F3A-S10: scope exposes stable presentation facts', (
-    tester,
+  testWidgets(': compact width with persisted wallPanel falls back to mobile', (
+    WidgetTester tester,
   ) async {
+    MediaKit.ensureInitialized();
+    useLinuxPlatform();
+    SharedPreferences.setMockInitialValues({
+      'adaptive_surface_mode': 'wallPanel',
+    });
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppShell(api: ApiClient(baseUrl: 'http://127.0.0.1:8420')),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byType(MobileShell), findsOneWidget);
+    expect(find.byType(WallPanelShell), findsNothing);
+
+    // The preference itself stays persisted as wallPanel.
+    final scope = tester.widget<AppAdaptiveScope>(
+      find.byType(AppAdaptiveScope),
+    );
+    expect(scope.controller.value, AppSurfaceMode.wallPanel);
+    expect(scope.effectiveSurface, EffectiveAppSurface.mobile);
+    expect(scope.windowClass.isCompact, isTrue);
+
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets(': scope exposes stable presentation facts', (tester) async {
     final controller = AdaptiveSurfaceModeController();
     await controller.load();
 
@@ -286,50 +283,49 @@ void main() {
     expect(isWallPanel, isFalse);
   });
 
-  testWidgets(
-    'F3A-S10: SettingsPage inside the scope uses the scope controller',
-    (tester) async {
-      final controller = AdaptiveSurfaceModeController();
-      await controller.setMode(AppSurfaceMode.desktop);
+  testWidgets(': SettingsPage inside the scope uses the scope controller', (
+    tester,
+  ) async {
+    final controller = AdaptiveSurfaceModeController();
+    await controller.setMode(AppSurfaceMode.desktop);
 
-      tester.view.physicalSize = const Size(700, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
+    tester.view.physicalSize = const Size(700, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: AppAdaptiveScope(
-            windowClass: AppWindowClass.large,
-            effectiveSurface: EffectiveAppSurface.desktop,
-            controller: controller,
-            child: Scaffold(body: SettingsPage(api: _FakeSettingsApi())),
-          ),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppAdaptiveScope(
+          windowClass: AppWindowClass.large,
+          effectiveSurface: EffectiveAppSurface.desktop,
+          controller: controller,
+          child: Scaffold(body: SettingsPage(api: _FakeSettingsApi())),
         ),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
 
-      final group = find.byType(RadioGroup<AppSurfaceMode>);
-      await tester.scrollUntilVisible(
-        find.text('Panel de pared'),
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
-      expect(
-        tester.widget<RadioGroup<AppSurfaceMode>>(group).groupValue,
-        AppSurfaceMode.desktop,
-      );
+    final group = find.byType(RadioGroup<AppSurfaceMode>);
+    await tester.scrollUntilVisible(
+      find.text('Panel de pared'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(
+      tester.widget<RadioGroup<AppSurfaceMode>>(group).groupValue,
+      AppSurfaceMode.desktop,
+    );
 
-      await controller.setMode(AppSurfaceMode.wallPanel);
-      await tester.pump();
-      expect(
-        tester.widget<RadioGroup<AppSurfaceMode>>(group).groupValue,
-        AppSurfaceMode.wallPanel,
-      );
-    },
-  );
+    await controller.setMode(AppSurfaceMode.wallPanel);
+    await tester.pump();
+    expect(
+      tester.widget<RadioGroup<AppSurfaceMode>>(group).groupValue,
+      AppSurfaceMode.wallPanel,
+    );
+  });
 
-  testWidgets('F3A-A06: dock labels survive 1.5x text scaling on mobile', (
+  testWidgets(': dock labels survive 1.5x text scaling on mobile', (
     WidgetTester tester,
   ) async {
     MediaKit.ensureInitialized();

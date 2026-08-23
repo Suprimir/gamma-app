@@ -13,7 +13,7 @@ import 'package:gamma_app/features/devices/devices_page.dart';
 /// F3-C desktop workspace: master/detail pane, keyboard activation, selection
 /// refresh/stale semantics, narrow fallback and multi-gang independence.
 void main() {
-  testWidgets('F3C-DESKTOP-01 selection by opaque id', (tester) async {
+  testWidgets('selection by opaque id', (tester) async {
     final repo = _DesktopFakeRepo(devices: const [_triple, _fan]);
     final controller = await pumpDesktop(tester, repo);
 
@@ -56,7 +56,7 @@ void main() {
     );
   });
 
-  testWidgets('F3C-DESKTOP-02 selected semantics exactly one', (tester) async {
+  testWidgets('selected semantics exactly one', (tester) async {
     final repo = _DesktopFakeRepo(devices: const [_triple, _fan]);
     await pumpDesktop(tester, repo);
 
@@ -71,9 +71,7 @@ void main() {
     expect(selected, findsOneWidget);
   });
 
-  testWidgets('F3C-DESKTOP-03 real keyboard Enter activates row', (
-    tester,
-  ) async {
+  testWidgets('real keyboard Enter activates row', (tester) async {
     final repo = _DesktopFakeRepo(devices: const [_triple, _fan]);
     final controller = await pumpDesktop(tester, repo);
 
@@ -86,7 +84,7 @@ void main() {
     expect(find.text('ENDPOINTS / CANALES'), findsOneWidget);
   });
 
-  testWidgets('F3C-DESKTOP-04 Space activates too', (tester) async {
+  testWidgets('Space activates too', (tester) async {
     final repo = _DesktopFakeRepo(devices: const [_triple, _fan]);
     final controller = await pumpDesktop(tester, repo);
 
@@ -98,9 +96,7 @@ void main() {
     expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
   });
 
-  testWidgets('F3C-DESKTOP-05 refresh preserves valid selection', (
-    tester,
-  ) async {
+  testWidgets('refresh preserves valid selection', (tester) async {
     final repo = _DesktopFakeRepo(devices: const [_triple, _fan]);
     final controller = await pumpDesktop(tester, repo);
 
@@ -134,7 +130,7 @@ void main() {
     expect(selected, findsOneWidget);
   });
 
-  testWidgets('F3C-DESKTOP-06 stale selection cleared', (tester) async {
+  testWidgets('stale selection cleared', (tester) async {
     final repo = _DesktopFakeRepo(devices: const [_triple, _fan]);
     final controller = await pumpDesktop(tester, repo);
 
@@ -156,7 +152,7 @@ void main() {
     expect(selected, findsNothing);
   });
 
-  testWidgets('F3C-DESKTOP-07 narrow fallback no overflow', (tester) async {
+  testWidgets('narrow fallback no overflow', (tester) async {
     final repo = _DesktopFakeRepo(devices: const [_triple, _fan]);
     await pumpDesktop(tester, repo, size: const Size(700, 900));
 
@@ -183,7 +179,7 @@ void main() {
     );
   });
 
-  testWidgets('F3C-DESKTOP-08 multi-gang detail independence', (tester) async {
+  testWidgets('multi-gang detail independence', (tester) async {
     final repo = _DesktopFakeRepo(devices: const [_triple, _fan]);
     final controller = await pumpDesktop(tester, repo);
 
@@ -220,91 +216,86 @@ void main() {
     expect(find.text('Canal 3'), findsOneWidget);
   });
 
-  testWidgets(
-    'F3C-DESKTOP-09 search filters without mutating canonical state',
-    (tester) async {
-      final repo = _DesktopFakeRepo(devices: const [_triple, _fan]);
-      await pumpDesktop(tester, repo);
+  testWidgets('search filters without mutating canonical state', (
+    tester,
+  ) async {
+    final repo = _DesktopFakeRepo(devices: const [_triple, _fan]);
+    await pumpDesktop(tester, repo);
 
-      // Search narrows the list by canonical text.
-      await tester.enterText(
-        find.byKey(const Key('desktop-device-search')),
-        'ventilador',
-      );
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-        findsNothing,
-      );
-      expect(
-        find.byKey(const ValueKey('desktop-device-dev_fan_01')),
-        findsOneWidget,
-      );
+    // Search narrows the list by canonical text.
+    await tester.enterText(
+      find.byKey(const Key('desktop-device-search')),
+      'ventilador',
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('desktop-device-dev_fan_01')),
+      findsOneWidget,
+    );
 
-      // Clearing the query restores the full canonical list; the model is
-      // untouched by the local UI filter.
-      await tester.enterText(
-        find.byKey(const Key('desktop-device-search')),
-        '',
-      );
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('desktop-device-dev_fan_01')),
-        findsOneWidget,
-      );
-      expect(repo.devices.length, 2);
-    },
-  );
+    // Clearing the query restores the full canonical list; the model is
+    // untouched by the local UI filter.
+    await tester.enterText(find.byKey(const Key('desktop-device-search')), '');
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('desktop-device-dev_fan_01')),
+      findsOneWidget,
+    );
+    expect(repo.devices.length, 2);
+  });
 
-  testWidgets(
-    'F3C-DESKTOP-10 shared configuration invariants from desktop pane',
-    (tester) async {
-      final repo = _DesktopFakeRepo(devices: const [_triple, _fan]);
-      final controller = await pumpDesktop(tester, repo);
-      await tester.tap(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-      );
-      await tester.pumpAndSettle();
+  testWidgets('shared configuration invariants from desktop pane', (
+    tester,
+  ) async {
+    final repo = _DesktopFakeRepo(devices: const [_triple, _fan]);
+    final controller = await pumpDesktop(tester, repo);
+    await tester.tap(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+    );
+    await tester.pumpAndSettle();
 
-      // Label above selector geometry (CODESTYLE #5): the area label sits
-      // above the selector, never between surfaces.
-      expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
-      final labelRect = tester.getRect(find.text('Ubicación física'));
-      final selector = find.descendant(
-        of: find.byKey(const Key('physical-area-dropdown')),
+    // Label above selector geometry (CODESTYLE #5): the area label sits
+    // above the selector, never between surfaces.
+    expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
+    final labelRect = tester.getRect(find.text('Ubicación física'));
+    final selector = find.descendant(
+      of: find.byKey(const Key('physical-area-dropdown')),
+      matching: find.byType(DropdownButtonFormField<String?>),
+    );
+    expect(selector, findsOneWidget);
+    final dropdownRect = tester.getRect(selector);
+    expect(labelRect.bottom, lessThanOrEqualTo(dropdownRect.top));
+
+    // DeviceClass stays read-only (no editing control) and independent of
+    // SemanticRole: the class label renders as metadata, never as a selector.
+    expect(find.text('Tipo de dispositivo'), findsOneWidget);
+    expect(
+      find.ancestor(
+        of: find.text('Tipo de dispositivo'),
         matching: find.byType(DropdownButtonFormField<String?>),
-      );
-      expect(selector, findsOneWidget);
-      final dropdownRect = tester.getRect(selector);
-      expect(labelRect.bottom, lessThanOrEqualTo(dropdownRect.top));
+      ),
+      findsNothing,
+    );
 
-      // DeviceClass stays read-only (no editing control) and independent of
-      // SemanticRole: the class label renders as metadata, never as a selector.
-      expect(find.text('Tipo de dispositivo'), findsOneWidget);
-      expect(
-        find.ancestor(
-          of: find.text('Tipo de dispositivo'),
-          matching: find.byType(DropdownButtonFormField<String?>),
-        ),
-        findsNothing,
-      );
-
-      // Canonical mutation authority: rename writes the request and the UI
-      // converges to the canonical DTO returned by the fake.
-      controller.selectDevice('dev_fan_01');
-      await tester.pumpAndSettle();
-      final updated = await repo.renameDevice('dev_fan_01', 'Ventilador sala');
-      await controller.loadDevices();
-      await tester.pumpAndSettle();
-      expect(repo.renamedDevices, contains(('dev_fan_01', 'Ventilador sala')));
-      expect(updated.userName, 'Ventilador sala');
-      expect(find.text('Ventilador sala'), findsWidgets);
-    },
-  );
+    // Canonical mutation authority: rename writes the request and the UI
+    // converges to the canonical DTO returned by the fake.
+    controller.selectDevice('dev_fan_01');
+    await tester.pumpAndSettle();
+    final updated = await repo.renameDevice('dev_fan_01', 'Ventilador sala');
+    await controller.loadDevices();
+    await tester.pumpAndSettle();
+    expect(repo.renamedDevices, contains(('dev_fan_01', 'Ventilador sala')));
+    expect(updated.userName, 'Ventilador sala');
+    expect(find.text('Ventilador sala'), findsWidgets);
+  });
 }
 
 Future<AdaptiveFeatureController> pumpDesktop(

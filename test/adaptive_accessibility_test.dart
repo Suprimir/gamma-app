@@ -23,7 +23,7 @@ import 'fixtures/areas_fake_repo.dart';
 /// semantics, real-keyboard activation with a visible focus border, wall
 /// touch targets, no duplicate semantic nodes and labeled form controls.
 void main() {
-  testWidgets('F3C-A11Y-01 desktop selected semantics exactly one and moves', (
+  testWidgets('desktop selected semantics exactly one and moves', (
     tester,
   ) async {
     final repo = _A11yFakeRepo(devices: const [_a11yTriple, _a11yFan]);
@@ -50,9 +50,7 @@ void main() {
     expect(_selectedRowCount(tester), 1);
   });
 
-  testWidgets('F3C-A11Y-02 area selected semantics exactly one', (
-    tester,
-  ) async {
+  testWidgets('area selected semantics exactly one', (tester) async {
     final repo = AreasFakeRepo(
       areas: const [
         HomeArea(id: 'area_SALA', name: 'Sala'),
@@ -72,9 +70,7 @@ void main() {
     expect(_selectedRowCount(tester), 1);
   });
 
-  testWidgets('F3C-A11Y-03 real keyboard activation exposes focus border', (
-    tester,
-  ) async {
+  testWidgets('real keyboard activation exposes focus border', (tester) async {
     final repo = _A11yFakeRepo(devices: const [_a11yTriple, _a11yFan]);
     final controller = await pumpDesktop(tester, repo);
 
@@ -96,9 +92,7 @@ void main() {
     expect(controller.selectedDeviceId, 'dev_fan_01');
   });
 
-  testWidgets('F3C-A11Y-04 wall device and area cards meet touch targets', (
-    tester,
-  ) async {
+  testWidgets('wall device and area cards meet touch targets', (tester) async {
     final repo = _A11yFakeRepo(devices: const [_a11yTriple, _a11yFan]);
     await pumpWallDevices(tester, repo);
 
@@ -124,9 +118,7 @@ void main() {
     }
   });
 
-  testWidgets('F3C-A11Y-05 single selected node and single label', (
-    tester,
-  ) async {
+  testWidgets('single selected node and single label', (tester) async {
     final repo = _A11yFakeRepo(devices: const [_a11yTriple, _a11yFan]);
     await pumpDesktop(tester, repo);
 
@@ -163,9 +155,7 @@ void main() {
     expect(node.label, contains('Interruptor triple'));
   });
 
-  testWidgets('F3C-A11Y-06 labeled form controls in device detail', (
-    tester,
-  ) async {
+  testWidgets('labeled form controls in device detail', (tester) async {
     final repo = _A11yFakeRepo(devices: const [_a11yTriple]);
     await pumpDesktop(tester, repo);
 

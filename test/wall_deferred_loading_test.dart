@@ -418,151 +418,148 @@ void main() {
     await settleDeferred(tester);
   }
 
-  testWidgets(
-    'F3C-OFFSTAGE-NULL-01 visited devices offstage wall switch does not crash or load',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _DeferredDeviceApi();
-      final surface = await _pumpShellDeferred(
-        tester,
-        api,
-        AppSurfaceMode.desktop,
-      );
+  testWidgets('visited devices offstage wall switch does not crash or load', (
+    tester,
+  ) async {
+    useLinuxPlatform();
+    final api = _DeferredDeviceApi();
+    final surface = await _pumpShellDeferred(
+      tester,
+      api,
+      AppSurfaceMode.desktop,
+    );
 
-      // Dispositivos visited once on desktop: DevicesPage loads its controller.
-      await tapDeferred(tester, 'Dispositivos');
-      expect(api.inventoryLoadCalls, 1);
+    // Dispositivos visited once on desktop: DevicesPage loads its controller.
+    await tapDeferred(tester, 'Dispositivos');
+    expect(api.inventoryLoadCalls, 1);
 
-      // Return to Inicio: Dispositivos stays mounted, now offstage.
-      await tapDeferred(tester, 'Inicio');
+    // Return to Inicio: Dispositivos stays mounted, now offstage.
+    await tapDeferred(tester, 'Inicio');
 
-      // Baseline for the surface switch: only composition may add loads.
-      api.inventoryLoadCalls = 0;
-      await surface.setMode(AppSurfaceMode.wallPanel);
-      await settleDeferred(tester);
-      await settleDeferred(tester);
+    // Baseline for the surface switch: only composition may add loads.
+    api.inventoryLoadCalls = 0;
+    await surface.setMode(AppSurfaceMode.wallPanel);
+    await settleDeferred(tester);
+    await settleDeferred(tester);
 
-      // RED on HEAD: the offstage WallDevicesPage reaches `snapshot!` with a
-      // null snapshot and throws a null-check TypeError during build.
-      expect(tester.takeException(), isNull);
+    // RED on HEAD: the offstage WallDevicesPage reaches `snapshot!` with a
+    // null snapshot and throws a null-check TypeError during build.
+    expect(tester.takeException(), isNull);
 
-      // Home is the ACTIVE destination on wall, so WallPanelHomePage performs
-      // its single active load here; the offstage Devices adds 0.
-      expect(api.inventoryLoadCalls, 1);
-      expect(find.byType(WallPanelShell), findsOneWidget);
+    // Home is the ACTIVE destination on wall, so WallPanelHomePage performs
+    // its single active load here; the offstage Devices adds 0.
+    expect(api.inventoryLoadCalls, 1);
+    expect(find.byType(WallPanelShell), findsOneWidget);
 
-      // Activation of Dispositivos loads the wall Devices exactly once.
-      final beforeDevices = api.inventoryLoadCalls;
-      await tapDeferred(tester, 'Dispositivos');
-      expect(api.inventoryLoadCalls - beforeDevices, 1);
-      expect(
-        find.byKey(const ValueKey('wall-device-dev_triple_01')),
-        findsOneWidget,
-      );
-      expect(tester.takeException(), isNull);
+    // Activation of Dispositivos loads the wall Devices exactly once.
+    final beforeDevices = api.inventoryLoadCalls;
+    await tapDeferred(tester, 'Dispositivos');
+    expect(api.inventoryLoadCalls - beforeDevices, 1);
+    expect(
+      find.byKey(const ValueKey('wall-device-dev_triple_01')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
 
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
+    debugDefaultTargetPlatformOverride = null;
+  });
 
-  testWidgets(
-    'F3C-OFFSTAGE-NULL-02 activation after offstage creation loads exactly once',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _DeferredDeviceApi();
-      final surface = await _pumpShellDeferred(
-        tester,
-        api,
-        AppSurfaceMode.desktop,
-      );
+  testWidgets('activation after offstage creation loads exactly once', (
+    tester,
+  ) async {
+    useLinuxPlatform();
+    final api = _DeferredDeviceApi();
+    final surface = await _pumpShellDeferred(
+      tester,
+      api,
+      AppSurfaceMode.desktop,
+    );
 
-      await tapDeferred(tester, 'Dispositivos');
-      expect(api.inventoryLoadCalls, 1);
-      await tapDeferred(tester, 'Inicio');
+    await tapDeferred(tester, 'Dispositivos');
+    expect(api.inventoryLoadCalls, 1);
+    await tapDeferred(tester, 'Inicio');
 
-      api.inventoryLoadCalls = 0;
-      await surface.setMode(AppSurfaceMode.wallPanel);
-      await settleDeferred(tester);
-      await settleDeferred(tester);
+    api.inventoryLoadCalls = 0;
+    await surface.setMode(AppSurfaceMode.wallPanel);
+    await settleDeferred(tester);
+    await settleDeferred(tester);
 
-      // RED on HEAD: the offstage wall Devices null-dereferences on build.
-      expect(tester.takeException(), isNull);
-      expect(api.inventoryLoadCalls, 1);
+    // RED on HEAD: the offstage wall Devices null-dereferences on build.
+    expect(tester.takeException(), isNull);
+    expect(api.inventoryLoadCalls, 1);
 
-      // Activation loads the preserved offstage wall Devices exactly once.
-      final before = api.inventoryLoadCalls;
-      await tapDeferred(tester, 'Dispositivos');
-      expect(api.inventoryLoadCalls - before, 1);
-      expect(
-        find.byKey(const ValueKey('wall-device-dev_triple_01')),
-        findsOneWidget,
-      );
-      expect(tester.takeException(), isNull);
+    // Activation loads the preserved offstage wall Devices exactly once.
+    final before = api.inventoryLoadCalls;
+    await tapDeferred(tester, 'Dispositivos');
+    expect(api.inventoryLoadCalls - before, 1);
+    expect(
+      find.byKey(const ValueKey('wall-device-dev_triple_01')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
 
-      // Tap-away/tap-back keeps the loaded controller alive offstage: +0 more.
-      final frozen = api.inventoryLoadCalls;
-      await tapDeferred(tester, 'Inicio');
-      await tapDeferred(tester, 'Dispositivos');
-      expect(api.inventoryLoadCalls, frozen);
-      expect(
-        find.byKey(const ValueKey('wall-device-dev_triple_01')),
-        findsOneWidget,
-      );
-      expect(tester.takeException(), isNull);
+    // Tap-away/tap-back keeps the loaded controller alive offstage: +0 more.
+    final frozen = api.inventoryLoadCalls;
+    await tapDeferred(tester, 'Inicio');
+    await tapDeferred(tester, 'Dispositivos');
+    expect(api.inventoryLoadCalls, frozen);
+    expect(
+      find.byKey(const ValueKey('wall-device-dev_triple_01')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
 
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
+    debugDefaultTargetPlatformOverride = null;
+  });
 
-  testWidgets(
-    'F3C-OFFSTAGE-NO-DUPLICATE rebuilds and resize do not add loads after activation',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _DeferredDeviceApi();
-      final surface = await _pumpShellDeferred(
-        tester,
-        api,
-        AppSurfaceMode.desktop,
-      );
+  testWidgets('rebuilds and resize do not add loads after activation', (
+    tester,
+  ) async {
+    useLinuxPlatform();
+    final api = _DeferredDeviceApi();
+    final surface = await _pumpShellDeferred(
+      tester,
+      api,
+      AppSurfaceMode.desktop,
+    );
 
-      await tapDeferred(tester, 'Dispositivos');
-      expect(api.inventoryLoadCalls, 1);
-      await tapDeferred(tester, 'Inicio');
+    await tapDeferred(tester, 'Dispositivos');
+    expect(api.inventoryLoadCalls, 1);
+    await tapDeferred(tester, 'Inicio');
 
-      api.inventoryLoadCalls = 0;
-      await surface.setMode(AppSurfaceMode.wallPanel);
-      await settleDeferred(tester);
-      await settleDeferred(tester);
+    api.inventoryLoadCalls = 0;
+    await surface.setMode(AppSurfaceMode.wallPanel);
+    await settleDeferred(tester);
+    await settleDeferred(tester);
 
-      // RED on HEAD: the offstage wall Devices null-dereferences on build.
-      expect(tester.takeException(), isNull);
-      expect(api.inventoryLoadCalls, 1);
+    // RED on HEAD: the offstage wall Devices null-dereferences on build.
+    expect(tester.takeException(), isNull);
+    expect(api.inventoryLoadCalls, 1);
 
-      await tapDeferred(tester, 'Dispositivos');
-      expect(api.inventoryLoadCalls, 2);
+    await tapDeferred(tester, 'Dispositivos');
+    expect(api.inventoryLoadCalls, 2);
 
-      // Bare rebuilds add no loads.
-      final frozen = api.inventoryLoadCalls;
-      await settleDeferred(tester);
-      await settleDeferred(tester);
-      expect(api.inventoryLoadCalls, frozen);
+    // Bare rebuilds add no loads.
+    final frozen = api.inventoryLoadCalls;
+    await settleDeferred(tester);
+    await settleDeferred(tester);
+    expect(api.inventoryLoadCalls, frozen);
 
-      // Pure geometry changes (still a non-compact wall panel) add no loads.
-      await tester.binding.setSurfaceSize(const Size(900, 900));
-      await settleDeferred(tester);
-      await settleDeferred(tester);
-      await tester.binding.setSurfaceSize(const Size(1280, 800));
-      await settleDeferred(tester);
-      await settleDeferred(tester);
-      expect(api.inventoryLoadCalls, frozen);
-      expect(tester.takeException(), isNull);
+    // Pure geometry changes (still a non-compact wall panel) add no loads.
+    await tester.binding.setSurfaceSize(const Size(900, 900));
+    await settleDeferred(tester);
+    await settleDeferred(tester);
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    await settleDeferred(tester);
+    await settleDeferred(tester);
+    expect(api.inventoryLoadCalls, frozen);
+    expect(tester.takeException(), isNull);
 
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
+    debugDefaultTargetPlatformOverride = null;
+  });
 
   testWidgets(
-    'F3C-OFFSTAGE-ROUNDTRIP desktop->wall->desktop->wall keeps canonical state and no duplicate inactive loads',
+    'desktop->wall->desktop->wall keeps canonical state and no duplicate inactive loads',
     (tester) async {
       useLinuxPlatform();
       final api = _DeferredDeviceApi();
@@ -616,48 +613,45 @@ void main() {
     },
   );
 
-  testWidgets(
-    'F3C-WALL-AREAS-DEFERRED-01 wall areas offstage creation does not crash',
-    (tester) async {
-      // Direct-mount scope: WallAreasPage is only reached via Navigator.push
-      // from WallDevicesPage, so production never caches it offstage through
-      // LazyPageHost. The lifecycle still must not null-dereference when the
-      // page is created under a disabled TickerMode.
-      final repo = _DeferredAreasRepo();
-      final api = ApiClient(baseUrl: 'http://deferred.test');
+  testWidgets('wall areas offstage creation does not crash', (tester) async {
+    // Direct-mount scope: WallAreasPage is only reached via Navigator.push
+    // from WallDevicesPage, so production never caches it offstage through
+    // LazyPageHost. The lifecycle still must not null-dereference when the
+    // page is created under a disabled TickerMode.
+    final repo = _DeferredAreasRepo();
+    final api = ApiClient(baseUrl: 'http://deferred.test');
 
-      // Created offstage: TickerMode disabled -> no load starts. RED on HEAD:
-      // build falls through to `areas!` with a null list and throws.
-      await tester.pumpWidget(
-        MaterialApp(
-          home: _TickerToggle(
-            enabled: false,
-            child: WallAreasPage(api: api, repository: repo),
-          ),
+    // Created offstage: TickerMode disabled -> no load starts. RED on HEAD:
+    // build falls through to `areas!` with a null list and throws.
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _TickerToggle(
+          enabled: false,
+          child: WallAreasPage(api: api, repository: repo),
         ),
-      );
-      await tester.pump();
-      expect(tester.takeException(), isNull);
-      expect(repo.areaLoadCalls, 0);
-      expect(repo.deviceLoadCalls, 0);
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(repo.areaLoadCalls, 0);
+    expect(repo.deviceLoadCalls, 0);
 
-      // Activation (TickerMode enabled) starts exactly one areas + devices load.
-      await tester.pumpWidget(
-        MaterialApp(
-          home: _TickerToggle(
-            enabled: true,
-            child: WallAreasPage(api: api, repository: repo),
-          ),
+    // Activation (TickerMode enabled) starts exactly one areas + devices load.
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _TickerToggle(
+          enabled: true,
+          child: WallAreasPage(api: api, repository: repo),
         ),
-      );
-      await tester.pump();
-      expect(repo.areaLoadCalls, 1);
-      expect(repo.deviceLoadCalls, 1);
-      await tester.pump(const Duration(milliseconds: 250));
-      expect(find.byKey(const ValueKey('wall-area-sala')), findsOneWidget);
-      expect(tester.takeException(), isNull);
+      ),
+    );
+    await tester.pump();
+    expect(repo.areaLoadCalls, 1);
+    expect(repo.deviceLoadCalls, 1);
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.byKey(const ValueKey('wall-area-sala')), findsOneWidget);
+    expect(tester.takeException(), isNull);
 
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
+    debugDefaultTargetPlatformOverride = null;
+  });
 }

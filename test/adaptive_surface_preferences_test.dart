@@ -32,21 +32,21 @@ class _FakeSettingsApi extends ApiClient {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('F3A-P01: missing preference leaves value auto', () async {
+  test(': missing preference leaves value auto', () async {
     SharedPreferences.setMockInitialValues({});
     final controller = AdaptiveSurfaceModeController();
     await controller.load();
     expect(controller.value, AppSurfaceMode.auto);
   });
 
-  test('F3A-P02: corrupt stored string falls back to auto', () async {
+  test(': corrupt stored string falls back to auto', () async {
     SharedPreferences.setMockInitialValues({'adaptive_surface_mode': 'bogus'});
     final controller = AdaptiveSurfaceModeController();
     await controller.load();
     expect(controller.value, AppSurfaceMode.auto);
   });
 
-  test('F3A-P03: setMode persists for a new controller', () async {
+  test(': setMode persists for a new controller', () async {
     SharedPreferences.setMockInitialValues({});
     final controller = AdaptiveSurfaceModeController();
     await controller.setMode(AppSurfaceMode.wallPanel);
@@ -55,7 +55,7 @@ void main() {
     expect(fresh.value, AppSurfaceMode.wallPanel);
   });
 
-  test('F3A-P04: setMode notifies listeners and updates value', () async {
+  test(': setMode notifies listeners and updates value', () async {
     SharedPreferences.setMockInitialValues({});
     final controller = AdaptiveSurfaceModeController();
     var notifications = 0;

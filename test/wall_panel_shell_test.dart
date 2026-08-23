@@ -18,7 +18,7 @@ void main() {
   }
 
   testWidgets(
-    'F3A-W01: wall panel renders a dock, no rail, all labels, and the page',
+    ': wall panel renders a dock, no rail, all labels, and the page',
     (WidgetTester tester) async {
       await tester.pumpWidget(harness(onSelected: (_) {}));
 
@@ -37,35 +37,33 @@ void main() {
     },
   );
 
-  testWidgets(
-    'F3A-W02: every dock destination is at least 64 logical px tall',
-    (WidgetTester tester) async {
-      await tester.pumpWidget(harness(onSelected: (_) {}));
+  testWidgets(': every dock destination is at least 64 logical px tall', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(harness(onSelected: (_) {}));
 
-      final items = find.descendant(
-        of: find.byType(FloatingDock),
-        matching: find.byType(InkWell),
-      );
-      expect(items, findsNWidgets(5));
-      for (var i = 0; i < 5; i++) {
-        expect(tester.getSize(items.at(i)).height, greaterThanOrEqualTo(64));
-      }
-    },
-  );
+    final items = find.descendant(
+      of: find.byType(FloatingDock),
+      matching: find.byType(InkWell),
+    );
+    expect(items, findsNWidgets(5));
+    for (var i = 0; i < 5; i++) {
+      expect(tester.getSize(items.at(i)).height, greaterThanOrEqualTo(64));
+    }
+  });
 
-  testWidgets(
-    'F3A-W03: tapping a destination invokes onSelected with its index',
-    (WidgetTester tester) async {
-      int? selected;
-      await tester.pumpWidget(harness(onSelected: (i) => selected = i));
+  testWidgets(': tapping a destination invokes onSelected with its index', (
+    WidgetTester tester,
+  ) async {
+    int? selected;
+    await tester.pumpWidget(harness(onSelected: (i) => selected = i));
 
-      await tester.tap(find.text('Rutinas'));
-      await tester.pump();
-      expect(selected, 2);
-    },
-  );
+    await tester.tap(find.text('Rutinas'));
+    await tester.pump();
+    expect(selected, 2);
+  });
 
-  testWidgets('F3A-W04: the dock is wrapped in a SafeArea', (
+  testWidgets(': the dock is wrapped in a SafeArea', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(harness(onSelected: (_) {}));

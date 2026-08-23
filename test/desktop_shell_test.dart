@@ -23,7 +23,7 @@ void main() {
   }
 
   testWidgets(
-    'F3A-D01: expanded desktop shell shows an extended rail, all labels, and the page',
+    ': expanded desktop shell shows an extended rail, all labels, and the page',
     (WidgetTester tester) async {
       await tester.pumpWidget(
         harness(windowClass: AppWindowClass.expanded, onSelected: (_) {}),
@@ -45,7 +45,7 @@ void main() {
   );
 
   testWidgets(
-    'F3A-D02: medium desktop shell keeps the rail, tooltips the icons, and taps select',
+    ': medium desktop shell keeps the rail, tooltips the icons, and taps select',
     (WidgetTester tester) async {
       int? selected;
       await tester.pumpWidget(
@@ -64,7 +64,7 @@ void main() {
     },
   );
 
-  testWidgets('F3A-D03: tapping the Cámaras label selects index 4', (
+  testWidgets(': tapping the Cámaras label selects index 4', (
     WidgetTester tester,
   ) async {
     int? selected;
@@ -80,7 +80,7 @@ void main() {
     expect(selected, 4);
   });
 
-  testWidgets('F3A-D04: rail exposes the current selection', (
+  testWidgets(': rail exposes the current selection', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(

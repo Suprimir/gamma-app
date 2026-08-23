@@ -721,7 +721,7 @@ void main() {
 }
 
 void f2cDeleteRepoTests() {
-  group('F2-C deleteArea repository', () {
+  group('deleteArea repository', () {
     test('performs repository DELETE and clears cache', () async {
       final fake = FakeApiClient();
       final repository = HttpDeviceInventoryRepository(fake);

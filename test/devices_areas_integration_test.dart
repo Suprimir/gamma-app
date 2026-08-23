@@ -227,78 +227,73 @@ void main() {
     await settle(tester);
   }
 
-  testWidgets(
-    'F3C-INTEGRATION-01 wall panel top-level dispositivos opens wall devices',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _FinalDeviceApi();
-      await _pumpShell(tester, api, AppSurfaceMode.wallPanel);
-
-      await tapDispositivos(tester);
-      await tester.pumpAndSettle();
-
-      // The wall surface must mount the touch-first wall page, never the
-      // mobile composition ('ESPACIOS') or the desktop master/detail.
-      expect(find.byType(WallDevicesPage), findsOneWidget);
-      expect(find.text('ESPACIOS'), findsNothing);
-      expect(
-        find.byKey(const ValueKey('wall-device-dev_triple_01')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('wall-device-dev_fan_01')),
-        findsOneWidget,
-      );
-
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
-
-  testWidgets(
-    'F3C-INTEGRATION-02 desktop top-level dispositivos opens desktop master detail',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _FinalDeviceApi();
-      await _pumpShell(tester, api, AppSurfaceMode.desktop);
-
-      await tapDispositivos(tester);
-
-      expect(find.byType(DesktopDevicesPage), findsOneWidget);
-      expect(find.text('Selecciona un dispositivo'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('desktop-device-dev_fan_01')),
-        findsOneWidget,
-      );
-
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
-
-  testWidgets(
-    'F3C-INTEGRATION-03 mobile top-level dispositivos keeps sequential flow',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _FinalDeviceApi();
-      await _pumpShell(tester, api, AppSurfaceMode.mobile);
-
-      await tapDispositivos(tester);
-
-      expect(find.byType(DesktopDevicesPage), findsNothing);
-      expect(find.byType(WallDevicesPage), findsNothing);
-      expect(find.text('ESPACIOS'), findsOneWidget);
-      expect(find.text('INFRAESTRUCTURA'), findsOneWidget);
-
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
-
-  testWidgets('F3C-INTEGRATION-04 desktop dispositivos reaches desktop areas', (
+  testWidgets('wall panel top-level dispositivos opens wall devices', (
     tester,
   ) async {
+    useLinuxPlatform();
+    final api = _FinalDeviceApi();
+    await _pumpShell(tester, api, AppSurfaceMode.wallPanel);
+
+    await tapDispositivos(tester);
+    await tester.pumpAndSettle();
+
+    // The wall surface must mount the touch-first wall page, never the
+    // mobile composition ('ESPACIOS') or the desktop master/detail.
+    expect(find.byType(WallDevicesPage), findsOneWidget);
+    expect(find.text('ESPACIOS'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('wall-device-dev_triple_01')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('wall-device-dev_fan_01')),
+      findsOneWidget,
+    );
+
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('desktop top-level dispositivos opens desktop master detail', (
+    tester,
+  ) async {
+    useLinuxPlatform();
+    final api = _FinalDeviceApi();
+    await _pumpShell(tester, api, AppSurfaceMode.desktop);
+
+    await tapDispositivos(tester);
+
+    expect(find.byType(DesktopDevicesPage), findsOneWidget);
+    expect(find.text('Selecciona un dispositivo'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('desktop-device-dev_fan_01')),
+      findsOneWidget,
+    );
+
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('mobile top-level dispositivos keeps sequential flow', (
+    tester,
+  ) async {
+    useLinuxPlatform();
+    final api = _FinalDeviceApi();
+    await _pumpShell(tester, api, AppSurfaceMode.mobile);
+
+    await tapDispositivos(tester);
+
+    expect(find.byType(DesktopDevicesPage), findsNothing);
+    expect(find.byType(WallDevicesPage), findsNothing);
+    expect(find.text('ESPACIOS'), findsOneWidget);
+    expect(find.text('INFRAESTRUCTURA'), findsOneWidget);
+
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('desktop dispositivos reaches desktop areas', (tester) async {
     useLinuxPlatform();
     final api = _FinalDeviceApi();
     await _pumpShell(tester, api, AppSurfaceMode.desktop);
@@ -317,9 +312,7 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('F3C-INTEGRATION-05 wall dispositivos reaches wall areas', (
-    tester,
-  ) async {
+  testWidgets('wall dispositivos reaches wall areas', (tester) async {
     useLinuxPlatform();
     final api = _FinalDeviceApi();
     await _pumpShell(tester, api, AppSurfaceMode.wallPanel);
@@ -337,23 +330,20 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets(
-    'F3C-INTEGRATION-06 wall top-level does not double-fetch inventory',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _FinalDeviceApi();
-      await _pumpShell(tester, api, AppSurfaceMode.wallPanel);
+  testWidgets('wall top-level does not double-fetch inventory', (tester) async {
+    useLinuxPlatform();
+    final api = _FinalDeviceApi();
+    await _pumpShell(tester, api, AppSurfaceMode.wallPanel);
 
-      // The wall home (index 0) already fetched once; entering Dispositivos
-      // must add exactly ONE repository load. A second, independently-owned
-      // controller (DevicesPage + WallDevicesPage) would add two.
-      final before = api.loadCalls;
-      await tapDispositivos(tester);
-      await tester.pumpAndSettle();
+    // The wall home (index 0) already fetched once; entering Dispositivos
+    // must add exactly ONE repository load. A second, independently-owned
+    // controller (DevicesPage + WallDevicesPage) would add two.
+    final before = api.loadCalls;
+    await tapDispositivos(tester);
+    await tester.pumpAndSettle();
 
-      expect(api.loadCalls, before + 1);
+    expect(api.loadCalls, before + 1);
 
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
+    debugDefaultTargetPlatformOverride = null;
+  });
 }

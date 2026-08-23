@@ -16,7 +16,7 @@ import 'fixtures/areas_fake_repo.dart';
 /// activación con teclado real, rename/create/delete honesto (409) y fallback
 /// estrecho sin overflow.
 void main() {
-  testWidgets('F3C-AREAS-DESKTOP-01 selection by opaque id', (tester) async {
+  testWidgets('selection by opaque id', (tester) async {
     final repo = AreasFakeRepo(
       areas: const [
         HomeArea(id: 'area_SALA', name: 'Sala'),
@@ -57,9 +57,7 @@ void main() {
     expect(selected, findsOneWidget);
   });
 
-  testWidgets('F3C-AREAS-DESKTOP-02 real keyboard Enter activates row', (
-    tester,
-  ) async {
+  testWidgets('real keyboard Enter activates row', (tester) async {
     final repo = AreasFakeRepo(
       areas: const [HomeArea(id: 'area_SALA', name: 'Sala')],
     );
@@ -74,7 +72,7 @@ void main() {
     expect(find.widgetWithText(FilledButton, 'Guardar'), findsOneWidget);
   });
 
-  testWidgets('F3C-AREAS-DESKTOP-02b Space activates row too', (tester) async {
+  testWidgets('b Space activates row too', (tester) async {
     final repo = AreasFakeRepo(
       areas: const [HomeArea(id: 'area_SALA', name: 'Sala')],
     );
@@ -88,9 +86,7 @@ void main() {
     expect(_nameFieldText(tester), 'Sala');
   });
 
-  testWidgets('F3C-AREAS-DESKTOP-03 rename keeps opaque id and converges', (
-    tester,
-  ) async {
+  testWidgets('rename keeps opaque id and converges', (tester) async {
     final repo = AreasFakeRepo(
       areas: const [
         HomeArea(id: 'area_SALA', name: 'Sala'),
@@ -118,7 +114,7 @@ void main() {
     );
   });
 
-  testWidgets('F3C-AREAS-DESKTOP-04 create via master button', (tester) async {
+  testWidgets('create via master button', (tester) async {
     final repo = AreasFakeRepo(
       areas: const [HomeArea(id: 'area_SALA', name: 'Sala')],
     );
@@ -135,9 +131,7 @@ void main() {
     expect(find.text('Terraza'), findsOneWidget);
   });
 
-  testWidgets('F3C-AREAS-DESKTOP-05 delete confirmation + 409 truthfulness', (
-    tester,
-  ) async {
+  testWidgets('delete confirmation + 409 truthfulness', (tester) async {
     final repo = AreasFakeRepo(
       areas: const [
         HomeArea(id: 'area_SALA', name: 'Sala'),
@@ -193,9 +187,7 @@ void main() {
     expect(find.text('Selecciona un área'), findsOneWidget);
   });
 
-  testWidgets('F3C-AREAS-DESKTOP-06 narrow fallback no overflow', (
-    tester,
-  ) async {
+  testWidgets('narrow fallback no overflow', (tester) async {
     final repo = AreasFakeRepo(
       areas: const [
         HomeArea(id: 'area_SALA', name: 'Sala'),

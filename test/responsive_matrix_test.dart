@@ -16,9 +16,7 @@ import 'package:gamma_app/features/devices/wall_devices_page.dart';
 /// desktop keep the master/detail split, wall renders cards, and both a
 /// composition change and a live resize preserve selection without refetch.
 void main() {
-  testWidgets('F3C-RESPONSIVE-01 compact mobile stays a sequential list', (
-    tester,
-  ) async {
+  testWidgets('compact mobile stays a sequential list', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -44,9 +42,7 @@ void main() {
     expect(find.byType(DesktopDevicesPage), findsNothing);
   });
 
-  testWidgets('F3C-RESPONSIVE-02 narrow desktop falls back to list+push', (
-    tester,
-  ) async {
+  testWidgets('narrow desktop falls back to list+push', (tester) async {
     final repo = _MatrixFakeRepo(devices: const [_mTriple, _mFan]);
     await pumpDesktop(tester, repo, size: const Size(700, 900));
 
@@ -65,9 +61,7 @@ void main() {
     expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
   });
 
-  testWidgets('F3C-RESPONSIVE-03 expanded desktop shows master and detail', (
-    tester,
-  ) async {
+  testWidgets('expanded desktop shows master and detail', (tester) async {
     final repo = _MatrixFakeRepo(devices: const [_mTriple, _mFan]);
     await pumpDesktop(tester, repo, size: const Size(1440, 900));
 
@@ -79,9 +73,7 @@ void main() {
     expect(find.text('Selecciona un dispositivo'), findsOneWidget);
   });
 
-  testWidgets('F3C-RESPONSIVE-04 large desktop detail pane is bounded', (
-    tester,
-  ) async {
+  testWidgets('large desktop detail pane is bounded', (tester) async {
     final repo = _MatrixFakeRepo(devices: const [_mTriple, _mFan]);
     final controller = await pumpDesktop(
       tester,
@@ -113,9 +105,7 @@ void main() {
     expect(find.text('Canal 1'), findsOneWidget);
   });
 
-  testWidgets('F3C-RESPONSIVE-05 wall page renders cards without overflow', (
-    tester,
-  ) async {
+  testWidgets('wall page renders cards without overflow', (tester) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -145,9 +135,7 @@ void main() {
     );
   });
 
-  testWidgets('F3C-RESPONSIVE-06 composition change preserves selection', (
-    tester,
-  ) async {
+  testWidgets('composition change preserves selection', (tester) async {
     final repo = _MatrixFakeRepo(devices: const [_mTriple, _mFan]);
     final controller = AdaptiveFeatureController(repo)..loadDevices();
     await tester.pump();
@@ -178,35 +166,34 @@ void main() {
     expect(controller.selectedDevice, isNotNull);
   });
 
-  testWidgets(
-    'F3C-RESPONSIVE-07 resize across threshold keeps selection and no refetch',
-    (tester) async {
-      final repo = _MatrixFakeRepo(devices: const [_mTriple, _mFan]);
-      final controller = await pumpDesktop(
-        tester,
-        repo,
-        size: const Size(1440, 900),
-      );
+  testWidgets('resize across threshold keeps selection and no refetch', (
+    tester,
+  ) async {
+    final repo = _MatrixFakeRepo(devices: const [_mTriple, _mFan]);
+    final controller = await pumpDesktop(
+      tester,
+      repo,
+      size: const Size(1440, 900),
+    );
 
-      await tester.tap(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-      );
-      await tester.pumpAndSettle();
-      expect(controller.selectedDeviceId, 'dev_triple_01');
-      final loadsBefore = repo.loadCount;
+    await tester.tap(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+    );
+    await tester.pumpAndSettle();
+    expect(controller.selectedDeviceId, 'dev_triple_01');
+    final loadsBefore = repo.loadCount;
 
-      // Cross the feature threshold: master/detail -> narrow fallback.
-      tester.view.physicalSize = const Size(700, 900);
-      await tester.pumpAndSettle();
+    // Cross the feature threshold: master/detail -> narrow fallback.
+    tester.view.physicalSize = const Size(700, 900);
+    await tester.pumpAndSettle();
 
-      expect(repo.loadCount, loadsBefore);
-      expect(controller.selectedDeviceId, 'dev_triple_01');
-      expect(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-        findsOneWidget,
-      );
-    },
-  );
+    expect(repo.loadCount, loadsBefore);
+    expect(controller.selectedDeviceId, 'dev_triple_01');
+    expect(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+      findsOneWidget,
+    );
+  });
 }
 
 Future<AdaptiveFeatureController> pumpDesktop(

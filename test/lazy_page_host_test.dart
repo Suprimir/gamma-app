@@ -47,7 +47,7 @@ void main() {
     );
   }
 
-  testWidgets('F3A-L01: only index 0 is built at startup', (tester) async {
+  testWidgets(': only index 0 is built at startup', (tester) async {
     final invocations = List.generate(5, (_) => 0);
     final keys = List.generate(5, (_) => GlobalKey<_FakePageState>());
     final index = ValueNotifier<int>(0);
@@ -64,9 +64,7 @@ void main() {
     expect(find.byType(LazyPageHost), findsOneWidget);
   });
 
-  testWidgets('F3A-L02: switching to index 1 builds it exactly once', (
-    tester,
-  ) async {
+  testWidgets(': switching to index 1 builds it exactly once', (tester) async {
     final invocations = List.generate(5, (_) => 0);
     final keys = List.generate(5, (_) => GlobalKey<_FakePageState>());
     final index = ValueNotifier<int>(0);
@@ -84,7 +82,7 @@ void main() {
     expect(keys[1].currentState, isNotNull);
   });
 
-  testWidgets('F3A-L03: returning to index 0 preserves State', (tester) async {
+  testWidgets(': returning to index 0 preserves State', (tester) async {
     final invocations = List.generate(2, (_) => 0);
     final keys = List.generate(2, (_) => GlobalKey<_FakePageState>());
     final index = ValueNotifier<int>(0);
@@ -107,9 +105,7 @@ void main() {
     expect(stateA.counter, 1);
   });
 
-  testWidgets('F3A-L04: returning to index 1 does not rebuild it', (
-    tester,
-  ) async {
+  testWidgets(': returning to index 1 does not rebuild it', (tester) async {
     final invocations = List.generate(2, (_) => 0);
     final keys = List.generate(2, (_) => GlobalKey<_FakePageState>());
     final index = ValueNotifier<int>(0);
@@ -134,7 +130,7 @@ void main() {
     expect(stateB.counter, 1);
   });
 
-  testWidgets('F3A-L05: unvisited indexes are never built', (tester) async {
+  testWidgets(': unvisited indexes are never built', (tester) async {
     final invocations = List.generate(5, (_) => 0);
     final keys = List.generate(5, (_) => GlobalKey<_FakePageState>());
     final index = ValueNotifier<int>(0);

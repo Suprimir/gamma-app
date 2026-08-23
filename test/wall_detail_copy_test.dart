@@ -1,70 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:gamma_app/adaptive/adaptive_feature_controller.dart';
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/data/device_inventory.dart';
 import 'package:gamma_app/features/devices/wall_devices_page.dart';
-import 'package:gamma_app/features/wall_home/wall_panel_home_page.dart';
 
-/// F3-C Phase 5: touch-first Wall Panel Devices — large tappable cards,
-/// simplified detail reusing DeviceDetailView, no raw technical vocabulary,
-/// no physical controls, wall home attention entry.
+/// F3-C final: the wall device detail must be household-first. On HEAD
+/// _WallDeviceDetailPage wraps the generic DeviceDetailView unchanged, so raw
+/// technical vocabulary ('ENDPOINTS / CANALES', 'ID Gamma', 'ID proveedor',
+/// capabilities), fully visible integration metadata and mobile-sized
+/// controls all leak into the wall surface. These tests are RED.
 void main() {
-  testWidgets('F3C-WALL-01 large card summary in household language', (
-    tester,
-  ) async {
-    final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
-    await pumpWall(tester, repo);
-
-    final triple = find.byKey(const ValueKey('wall-device-dev_triple_01'));
-    expect(triple, findsOneWidget);
-    expect(find.text('Interruptor triple'), findsOneWidget);
-    expect(
-      find.descendant(
-        of: triple,
-        matching: find.text('Habitación física: Pasillo'),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: triple, matching: find.text('Sin configurar')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: triple, matching: find.text('3 controles')),
-      findsOneWidget,
-    );
-
-    final fan = find.byKey(const ValueKey('wall-device-dev_fan_01'));
-    expect(fan, findsOneWidget);
-    expect(find.text('Ventilador estudio'), findsOneWidget);
-    expect(
-      find.descendant(
-        of: fan,
-        matching: find.text('Habitación física: Pasillo'),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: fan, matching: find.text('Configurado')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: fan, matching: find.text('1 control')),
-      findsOneWidget,
-    );
-
-    // Raw provider/endpoint/DP vocabulary never reaches the wall list, even
-    // though the fixtures carry provider IDs.
-    expect(find.textContaining('tuya-'), findsNothing);
-    expect(find.textContaining('endpoint'), findsNothing);
-    expect(find.textContaining('DP'), findsNothing);
-  });
-
-  testWidgets('F3C-WALL-02 card opens simplified detail and back returns', (
-    tester,
-  ) async {
+  testWidgets('primary wall detail is human-first', (tester) async {
     final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
     await pumpWall(tester, repo);
 
@@ -72,72 +19,77 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Configurar dispositivo'), findsOneWidget);
-    expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
+
+    // Household vocabulary is the primary content of the wall detail.
+    expect(find.text('Nombre'), findsOneWidget);
+    expect(find.text('Habitación física'), findsOneWidget);
     expect(find.text('Controles'), findsOneWidget);
-    expect(find.text('Canal 1'), findsOneWidget);
-    expect(find.text('Canal 2'), findsOneWidget);
-    expect(find.text('Canal 3'), findsOneWidget);
 
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-
-    expect(find.text('Configurar dispositivo'), findsNothing);
-    expect(
-      find.byKey(const ValueKey('wall-device-dev_triple_01')),
-      findsOneWidget,
-    );
-    expect(find.text('Interruptor triple'), findsOneWidget);
+    // Technical vocabulary never surfaces in the primary wall view.
+    expect(find.text('ENDPOINTS / CANALES'), findsNothing);
+    expect(find.text('ID proveedor'), findsNothing);
+    expect(find.text('ID Gamma'), findsNothing);
+    expect(find.textContaining('on_off'), findsNothing);
   });
 
-  testWidgets('F3C-WALL-03 touch target at least 72 dp high', (tester) async {
+  testWidgets('technical info collapsed by default', (tester) async {
     final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
     await pumpWall(tester, repo);
-
-    final card = find.byKey(const ValueKey('wall-device-dev_triple_01'));
-    final size = tester.getSize(card);
-    expect(size.height, greaterThanOrEqualTo(72));
-    expect(size.width, greaterThanOrEqualTo(64));
-  });
-
-  testWidgets('F3C-WALL-04 multi-gang independence on wall', (tester) async {
-    final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
-    await pumpWall(tester, repo);
-    final controller = _wallController(tester);
 
     await tester.tap(find.text('Interruptor triple'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Canal 1'), findsOneWidget);
-    expect(find.text('Canal 2'), findsOneWidget);
-    expect(find.text('Canal 3'), findsOneWidget);
-
-    await repo.assignEndpointSemanticRole('dev_triple_01', 'relay_1', 'fan');
-    await controller.loadDevices();
-    await tester.pumpAndSettle();
-
-    expect(repo.roleWrites, [('dev_triple_01', 'relay_1', 'fan')]);
-    final updated = repo.devices.firstWhere((d) => d.id == 'dev_triple_01');
-    expect(
-      updated.endpoints.firstWhere((e) => e.id == 'relay_1').semanticRole,
-      'fan',
-    );
-    expect(
-      updated.endpoints.firstWhere((e) => e.id == 'relay_2').semanticRole,
-      isNull,
-    );
-    expect(
-      updated.endpoints.firstWhere((e) => e.id == 'relay_3').semanticRole,
-      isNull,
-    );
-
-    expect(find.text('Canal 1'), findsOneWidget);
-    expect(find.text('Canal 2'), findsOneWidget);
-    expect(find.text('Canal 3'), findsOneWidget);
+    // A technical section exists but stays collapsed: raw metadata (IDs,
+    // provider gateway fields) is hidden until explicitly expanded.
+    expect(find.text('Información técnica'), findsOneWidget);
+    expect(find.text('ID Gamma'), findsNothing);
+    expect(find.text('ID proveedor'), findsNothing);
+    expect(find.text('Modelo'), findsNothing);
   });
 
-  testWidgets('F3C-WALL-05 no ON/OFF controls on list or detail', (
-    tester,
-  ) async {
+  testWidgets('wall detail interactive controls >= 64dp', (tester) async {
+    final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
+    await pumpWall(tester, repo);
+
+    await tester.tap(find.text('Interruptor triple'));
+    await tester.pumpAndSettle();
+
+    final rename = find.byTooltip('Cambiar nombre');
+    final renameSize = tester.getSize(rename);
+    expect(renameSize.height, greaterThanOrEqualTo(64));
+    expect(renameSize.width, greaterThanOrEqualTo(64));
+
+    final physicalArea = find.descendant(
+      of: find.byKey(const Key('physical-area-dropdown')),
+      matching: find.byType(DropdownButtonFormField<String?>),
+    );
+    final areaSize = tester.getSize(physicalArea);
+    expect(areaSize.height, greaterThanOrEqualTo(64));
+  });
+
+  testWidgets('labels not clipped at large scale', (tester) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
+    await pumpWall(tester, repo);
+
+    await tester.tap(find.text('Interruptor triple'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    for (final label in [
+      'Nombre',
+      'Habitación física',
+      'Controles',
+      'Qué controla',
+      'Habitación que controla',
+    ]) {
+      expect(find.textContaining(label), findsWidgets);
+    }
+  });
+
+  testWidgets('no power controls on wall detail', (tester) async {
     final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
     await pumpWall(tester, repo);
 
@@ -152,38 +104,6 @@ void main() {
     expect(find.byIcon(Icons.power_settings_new), findsNothing);
     expect(find.textContaining('ON'), findsNothing);
     expect(find.textContaining('OFF'), findsNothing);
-  });
-
-  testWidgets('F3C-WALL-06 wall home attention opens wall devices', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
-    await tester.pumpWidget(
-      MaterialApp(
-        home: WallPanelHomePage(
-          api: ApiClient(baseUrl: 'http://127.0.0.1:8420'),
-          repository: repo,
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
-
-    expect(find.text('Necesita atención'), findsOneWidget);
-    await tester.tap(find.text('Necesita atención'));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(WallDevicesPage), findsOneWidget);
-    expect(find.text('Dispositivos'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('wall-device-dev_triple_01')),
-      findsOneWidget,
-    );
-    expect(find.text('Interruptor triple'), findsOneWidget);
   });
 }
 
@@ -207,19 +127,6 @@ Future<void> pumpWall(
   await tester.pump(const Duration(milliseconds: 150));
 }
 
-/// The page owns its AdaptiveFeatureController; reach it through its
-/// ListenableBuilder without exposing test-only API in production.
-AdaptiveFeatureController _wallController(WidgetTester tester) {
-  final builder = tester.widget<ListenableBuilder>(
-    find.byWidgetPredicate(
-      (widget) =>
-          widget is ListenableBuilder &&
-          widget.listenable is AdaptiveFeatureController,
-    ),
-  );
-  return builder.listenable as AdaptiveFeatureController;
-}
-
 const _wallTriple = PhysicalDevice(
   id: 'dev_triple_01',
   name: 'Interruptor triple',
@@ -227,7 +134,8 @@ const _wallTriple = PhysicalDevice(
   provider: 'Tuya',
   providerDeviceId: 'tuya-bf8a••••',
   model: 'TS0013',
-  provisioningState: DeviceProvisioningState.discovered,
+  manufacturer: 'MockCo',
+  provisioningState: DeviceProvisioningState.configured,
   online: true,
   health: DeviceHealthState.online,
   physicalAreaId: 'pasillo',
@@ -263,6 +171,7 @@ const _wallFan = PhysicalDevice(
   provider: 'Tuya',
   providerDeviceId: 'tuya-a911••••',
   model: 'TS011F',
+  manufacturer: 'MockCo',
   provisioningState: DeviceProvisioningState.configured,
   online: true,
   health: DeviceHealthState.online,
@@ -290,7 +199,6 @@ class _WallFakeRepo implements DeviceInventoryRepository {
   ];
 
   List<PhysicalDevice> devices;
-  final roleWrites = <(String, String, String?)>[];
 
   @override
   bool get supportsIdentify => false;
@@ -349,7 +257,6 @@ class _WallFakeRepo implements DeviceInventoryRepository {
     String endpointId,
     String? role,
   ) async {
-    roleWrites.add((deviceId, endpointId, role));
     final index = _indexOf(deviceId);
     final current = devices[index];
     final updated = current.copyWith(

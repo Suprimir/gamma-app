@@ -19,9 +19,7 @@ import 'package:gamma_app/features/devices/devices_page.dart';
 /// previously-selected device is discarded once selection moved — the shared
 /// state stays stale until an extra repository load. These tests are RED.
 void main() {
-  testWidgets('F3C-CONVERGENCE-RACE-01 rename response after selection moved', (
-    tester,
-  ) async {
+  testWidgets('rename response after selection moved', (tester) async {
     final repo = _RaceFakeRepo(devices: const [_raceTriple, _raceFan]);
     final controller = await pumpDesktop(tester, repo);
     expect(repo.loadCalls, 1);
@@ -85,123 +83,115 @@ void main() {
     );
   });
 
-  testWidgets(
-    'F3C-CONVERGENCE-RACE-02 endpoint role response after selection moved',
-    (tester) async {
-      final repo = _RaceFakeRepo(devices: const [_raceTriple, _raceFan]);
-      final controller = await pumpDesktop(tester, repo);
-      expect(repo.loadCalls, 1);
+  testWidgets('endpoint role response after selection moved', (tester) async {
+    final repo = _RaceFakeRepo(devices: const [_raceTriple, _raceFan]);
+    final controller = await pumpDesktop(tester, repo);
+    expect(repo.loadCalls, 1);
 
-      await tester.tap(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-      );
-      await tester.pumpAndSettle();
-      expect(controller.selectedDeviceId, 'dev_triple_01');
+    await tester.tap(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+    );
+    await tester.pumpAndSettle();
+    expect(controller.selectedDeviceId, 'dev_triple_01');
 
-      // Set relay_1's semantic role; the fake holds the aggregate in flight.
-      final dropdowns = find.byType(DropdownButtonFormField<String?>);
-      expect(dropdowns, findsNWidgets(7));
-      await tester.ensureVisible(dropdowns.at(2));
-      await tester.tap(dropdowns.at(2));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Luz').last);
-      await tester.pumpAndSettle();
-      expect(repo.pendingMutation, isNotNull);
+    // Set relay_1's semantic role; the fake holds the aggregate in flight.
+    final dropdowns = find.byType(DropdownButtonFormField<String?>);
+    expect(dropdowns, findsNWidgets(7));
+    await tester.ensureVisible(dropdowns.at(2));
+    await tester.tap(dropdowns.at(2));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Luz').last);
+    await tester.pumpAndSettle();
+    expect(repo.pendingMutation, isNotNull);
 
-      // Selection moves to the fan while the role write is still pending.
-      controller.selectDevice('dev_fan_01');
-      await tester.pump();
+    // Selection moves to the fan while the role write is still pending.
+    controller.selectDevice('dev_fan_01');
+    await tester.pump();
 
-      // Backend resolves with the canonical aggregate: relay_1 is now a fan.
-      final relayFan = _raceTriple.endpoints.first.copyWith(
-        semanticRole: 'fan',
-      );
-      final aggregate = _raceTriple.copyWith(
-        endpoints: [
-          for (final endpoint in _raceTriple.endpoints)
-            endpoint.id == 'relay_1' ? relayFan : endpoint,
-        ],
-      );
-      repo.pendingMutation!.complete(aggregate);
-      await tester.pump();
-      await tester.pump();
+    // Backend resolves with the canonical aggregate: relay_1 is now a fan.
+    final relayFan = _raceTriple.endpoints.first.copyWith(semanticRole: 'fan');
+    final aggregate = _raceTriple.copyWith(
+      endpoints: [
+        for (final endpoint in _raceTriple.endpoints)
+          endpoint.id == 'relay_1' ? relayFan : endpoint,
+      ],
+    );
+    repo.pendingMutation!.complete(aggregate);
+    await tester.pump();
+    await tester.pump();
 
-      // The aggregate converged despite the moved selection; siblings frozen.
-      final converged = controller.snapshot!.devices.firstWhere(
-        (device) => device.id == 'dev_triple_01',
-      );
-      expect(
-        converged.endpoints.firstWhere((e) => e.id == 'relay_1').semanticRole,
-        'fan',
-      );
-      expect(
-        converged.endpoints.firstWhere((e) => e.id == 'relay_2').semanticRole,
-        isNull,
-      );
-      expect(
-        converged.endpoints.firstWhere((e) => e.id == 'relay_3').semanticRole,
-        isNull,
-      );
-      expect(controller.selectedDeviceId, 'dev_fan_01');
-      expect(repo.loadCalls, 1);
+    // The aggregate converged despite the moved selection; siblings frozen.
+    final converged = controller.snapshot!.devices.firstWhere(
+      (device) => device.id == 'dev_triple_01',
+    );
+    expect(
+      converged.endpoints.firstWhere((e) => e.id == 'relay_1').semanticRole,
+      'fan',
+    );
+    expect(
+      converged.endpoints.firstWhere((e) => e.id == 'relay_2').semanticRole,
+      isNull,
+    );
+    expect(
+      converged.endpoints.firstWhere((e) => e.id == 'relay_3').semanticRole,
+      isNull,
+    );
+    expect(controller.selectedDeviceId, 'dev_fan_01');
+    expect(repo.loadCalls, 1);
 
-      // Reselecting the triple shows the converged role, not the stale one.
-      controller.selectDevice('dev_triple_01');
-      await tester.pumpAndSettle();
-      final roleDropdowns = find.byType(DropdownButtonFormField<String?>);
-      final roleButton = tester.widget<DropdownButton<String?>>(
-        find.descendant(
-          of: roleDropdowns.at(2),
-          matching: find.byType(DropdownButton<String?>),
-        ),
-      );
-      expect(roleButton.value, 'fan');
-    },
-  );
+    // Reselecting the triple shows the converged role, not the stale one.
+    controller.selectDevice('dev_triple_01');
+    await tester.pumpAndSettle();
+    final roleDropdowns = find.byType(DropdownButtonFormField<String?>);
+    final roleButton = tester.widget<DropdownButton<String?>>(
+      find.descendant(
+        of: roleDropdowns.at(2),
+        matching: find.byType(DropdownButton<String?>),
+      ),
+    );
+    expect(roleButton.value, 'fan');
+  });
 
-  testWidgets(
-    'F3C-CONVERGENCE-FAILURE-RACE-01 mutation fails after selection moved',
-    (tester) async {
-      final repo = _RaceFakeRepo(devices: const [_raceTriple, _raceFan]);
-      final controller = await pumpDesktop(tester, repo);
+  testWidgets('mutation fails after selection moved', (tester) async {
+    final repo = _RaceFakeRepo(devices: const [_raceTriple, _raceFan]);
+    final controller = await pumpDesktop(tester, repo);
 
-      await tester.tap(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-      );
-      await tester.pumpAndSettle();
-      expect(controller.selectedDeviceId, 'dev_triple_01');
+    await tester.tap(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+    );
+    await tester.pumpAndSettle();
+    expect(controller.selectedDeviceId, 'dev_triple_01');
 
-      // Start the rename through the repository path the detail dialog uses;
-      // the fake holds the response in flight (Completer).
-      final mutation = repo.renameDevice('dev_triple_01', 'Luz sala');
-      expect(repo.pendingMutation, isNotNull);
+    // Start the rename through the repository path the detail dialog uses;
+    // the fake holds the response in flight (Completer).
+    final mutation = repo.renameDevice('dev_triple_01', 'Luz sala');
+    expect(repo.pendingMutation, isNotNull);
 
-      controller.selectDevice('dev_fan_01');
-      await tester.pump();
+    controller.selectDevice('dev_fan_01');
+    await tester.pump();
 
-      // Backend rejects with a 422; the error must never fabricate a canonical
-      // A' nor clobber the selection.
-      repo.pendingMutation!.completeError(
-        ApiException(422, {'detail': 'El nombre ya está en uso'}),
-      );
-      final error = await mutation.then<Object?>(
-        (_) => null,
-        onError: (Object e) => e,
-      );
-      expect(error, isA<ApiException>());
-      await tester.pump();
+    // Backend rejects with a 422; the error must never fabricate a canonical
+    // A' nor clobber the selection.
+    repo.pendingMutation!.completeError(
+      ApiException(422, {'detail': 'El nombre ya está en uso'}),
+    );
+    final error = await mutation.then<Object?>(
+      (_) => null,
+      onError: (Object e) => e,
+    );
+    expect(error, isA<ApiException>());
+    await tester.pump();
 
-      expect(controller.selectedDeviceId, 'dev_fan_01');
-      expect(
-        controller.snapshot!.devices
-            .firstWhere((device) => device.id == 'dev_triple_01')
-            .userName,
-        isNull,
-      );
-      // Failure path never triggers a reload either.
-      expect(repo.loadCalls, 1);
-    },
-  );
+    expect(controller.selectedDeviceId, 'dev_fan_01');
+    expect(
+      controller.snapshot!.devices
+          .firstWhere((device) => device.id == 'dev_triple_01')
+          .userName,
+      isNull,
+    );
+    // Failure path never triggers a reload either.
+    expect(repo.loadCalls, 1);
+  });
 }
 
 Future<AdaptiveFeatureController> pumpDesktop(

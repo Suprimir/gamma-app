@@ -16,9 +16,7 @@ import 'package:gamma_app/features/devices/wall_devices_page.dart';
 /// three independent controlled areas, endpoint-scoped role/user_name
 /// mutations and a physical-area change that never writes endpoint areas.
 void main() {
-  testWidgets('F3C-MULTIGANG-01 model preserves physical vs controlled', (
-    tester,
-  ) async {
+  testWidgets('model preserves physical vs controlled', (tester) async {
     final repo = _MultiGangFakeRepo(devices: const [_triple, _fan]);
     final controller = await pumpDesktop(tester, repo);
 
@@ -46,7 +44,7 @@ void main() {
     expect(canonical.endpoints[2].controlledAreaId, 'patio');
   });
 
-  testWidgets('F3C-MULTIGANG-02 mobile endpoint independence', (tester) async {
+  testWidgets('mobile endpoint independence', (tester) async {
     final repo = _MultiGangFakeRepo(devices: const [_triple, _fan]);
     await pumpMobileDevices(tester, repo);
 
@@ -88,9 +86,7 @@ void main() {
     expect(find.text('Canal 3'), findsOneWidget);
   });
 
-  testWidgets('F3C-MULTIGANG-03 desktop endpoint independence via UI', (
-    tester,
-  ) async {
+  testWidgets('desktop endpoint independence via UI', (tester) async {
     final repo = _MultiGangFakeRepo(devices: const [_triple, _fan]);
     final controller = await pumpDesktop(tester, repo);
     await tester.tap(
@@ -180,7 +176,7 @@ void main() {
     );
   });
 
-  testWidgets('F3C-MULTIGANG-04 wall endpoint independence', (tester) async {
+  testWidgets('wall endpoint independence', (tester) async {
     final repo = _MultiGangFakeRepo(devices: const [_triple, _fan]);
     await pumpWall(tester, repo);
     final controller = _wallController(tester);
@@ -232,41 +228,40 @@ void main() {
     expect(find.text('Canal 3'), findsOneWidget);
   });
 
-  testWidgets(
-    'F3C-MULTIGANG-05 physical area change never writes endpoint areas',
-    (tester) async {
-      final repo = _MultiGangFakeRepo(devices: const [_triple, _fan]);
-      final controller = await pumpDesktop(tester, repo);
-      await tester.tap(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-      );
-      await tester.pumpAndSettle();
+  testWidgets('physical area change never writes endpoint areas', (
+    tester,
+  ) async {
+    final repo = _MultiGangFakeRepo(devices: const [_triple, _fan]);
+    final controller = await pumpDesktop(tester, repo);
+    await tester.tap(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+    );
+    await tester.pumpAndSettle();
 
-      await repo.assignPhysicalArea('dev_triple_01', 'cocina');
-      await controller.loadDevices();
-      await tester.pumpAndSettle();
+    await repo.assignPhysicalArea('dev_triple_01', 'cocina');
+    await controller.loadDevices();
+    await tester.pumpAndSettle();
 
-      final updated = repo.devices.firstWhere((d) => d.id == 'dev_triple_01');
-      expect(updated.physicalAreaId, 'cocina');
-      expect(
-        updated.endpoints.firstWhere((e) => e.id == 'relay_1').controlledAreaId,
-        'sala',
-      );
-      expect(
-        updated.endpoints.firstWhere((e) => e.id == 'relay_2').controlledAreaId,
-        'comedor',
-      );
-      expect(
-        updated.endpoints.firstWhere((e) => e.id == 'relay_3').controlledAreaId,
-        'patio',
-      );
+    final updated = repo.devices.firstWhere((d) => d.id == 'dev_triple_01');
+    expect(updated.physicalAreaId, 'cocina');
+    expect(
+      updated.endpoints.firstWhere((e) => e.id == 'relay_1').controlledAreaId,
+      'sala',
+    );
+    expect(
+      updated.endpoints.firstWhere((e) => e.id == 'relay_2').controlledAreaId,
+      'comedor',
+    );
+    expect(
+      updated.endpoints.firstWhere((e) => e.id == 'relay_3').controlledAreaId,
+      'patio',
+    );
 
-      // UI keeps showing the three independent channels.
-      expect(find.text('Canal 1'), findsOneWidget);
-      expect(find.text('Canal 2'), findsOneWidget);
-      expect(find.text('Canal 3'), findsOneWidget);
-    },
-  );
+    // UI keeps showing the three independent channels.
+    expect(find.text('Canal 1'), findsOneWidget);
+    expect(find.text('Canal 2'), findsOneWidget);
+    expect(find.text('Canal 3'), findsOneWidget);
+  });
 }
 
 Future<AdaptiveFeatureController> pumpDesktop(

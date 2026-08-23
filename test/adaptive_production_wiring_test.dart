@@ -539,401 +539,387 @@ void main() {
     await settle(tester);
   }
 
-  testWidgets(
-    'F3C-RESELECT-AFTER-MUTATION desktop reselect never shows stale device',
-    (tester) async {
-      final repo = _ProdFakeRepo(devices: const [_prodTriple, _prodFan]);
-      final controller = await pumpDesktop(tester, repo);
-      final loadsAtStart = repo.loadCalls;
-      expect(loadsAtStart, 1);
+  testWidgets('desktop reselect never shows stale device', (tester) async {
+    final repo = _ProdFakeRepo(devices: const [_prodTriple, _prodFan]);
+    final controller = await pumpDesktop(tester, repo);
+    final loadsAtStart = repo.loadCalls;
+    expect(loadsAtStart, 1);
 
-      await tester.tap(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-      );
-      await tester.pumpAndSettle();
-      expect(controller.selectedDeviceId, 'dev_triple_01');
+    await tester.tap(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+    );
+    await tester.pumpAndSettle();
+    expect(controller.selectedDeviceId, 'dev_triple_01');
 
-      await tester.tap(find.byTooltip('Cambiar nombre'));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.descendant(
-          of: find.byType(AlertDialog),
-          matching: find.byType(TextField),
-        ),
-        'Luz   Sala',
-      );
-      await tester.tap(find.text('Guardar'));
-      await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Cambiar nombre'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'Luz   Sala',
+    );
+    await tester.tap(find.text('Guardar'));
+    await tester.pumpAndSettle();
 
-      expect(repo.renamedDevices, contains(('dev_triple_01', 'Luz   Sala')));
-      final converged = controller.snapshot!.devices.firstWhere(
-        (device) => device.id == 'dev_triple_01',
-      );
-      expect(converged.userName, 'Luz Sala');
+    expect(repo.renamedDevices, contains(('dev_triple_01', 'Luz   Sala')));
+    final converged = controller.snapshot!.devices.firstWhere(
+      (device) => device.id == 'dev_triple_01',
+    );
+    expect(converged.userName, 'Luz Sala');
 
-      // Reselect fan then triple: the detail must read the canonical value,
-      // never the stale provider name.
-      controller.selectDevice('dev_fan_01');
-      await tester.pumpAndSettle();
-      controller.selectDevice('dev_triple_01');
-      await tester.pumpAndSettle();
-      expect(
-        controller.snapshot!.devices
-            .firstWhere((device) => device.id == 'dev_triple_01')
-            .userName,
-        'Luz Sala',
-      );
-      expect(
-        find.descendant(
-          of: find.byType(DeviceDetailView),
-          matching: find.text('Luz Sala'),
-        ),
-        findsOneWidget,
-      );
+    // Reselect fan then triple: the detail must read the canonical value,
+    // never the stale provider name.
+    controller.selectDevice('dev_fan_01');
+    await tester.pumpAndSettle();
+    controller.selectDevice('dev_triple_01');
+    await tester.pumpAndSettle();
+    expect(
+      controller.snapshot!.devices
+          .firstWhere((device) => device.id == 'dev_triple_01')
+          .userName,
+      'Luz Sala',
+    );
+    expect(
+      find.descendant(
+        of: find.byType(DeviceDetailView),
+        matching: find.text('Luz Sala'),
+      ),
+      findsOneWidget,
+    );
 
-      // No extra load during the whole flow: initial 1, rename 0, reselect 0.
-      expect(repo.loadCalls, loadsAtStart);
-    },
-  );
+    // No extra load during the whole flow: initial 1, rename 0, reselect 0.
+    expect(repo.loadCalls, loadsAtStart);
+  });
 
-  testWidgets(
-    'F3C-MODE-SWITCH-AFTER-MUTATION desktop -> wall -> desktop keeps mutated selection',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _ProdFinalDeviceApi();
-      final surface = await _pumpShell(tester, api, AppSurfaceMode.desktop);
-      expect(api.loadCalls, 0);
+  testWidgets('desktop -> wall -> desktop keeps mutated selection', (
+    tester,
+  ) async {
+    useLinuxPlatform();
+    final api = _ProdFinalDeviceApi();
+    final surface = await _pumpShell(tester, api, AppSurfaceMode.desktop);
+    expect(api.loadCalls, 0);
 
-      await tapDestination(tester, 'Dispositivos');
-      expect(api.loadCalls, 1);
+    await tapDestination(tester, 'Dispositivos');
+    expect(api.loadCalls, 1);
 
-      await tester.tap(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-      );
-      await settle(tester);
-      await settle(tester);
-      expect(
-        tester
-            .widget<DesktopDevicesPage>(find.byType(DesktopDevicesPage))
-            .controller
-            .selectedDeviceId,
-        'dev_triple_01',
-      );
-
-      await tester.tap(find.byTooltip('Cambiar nombre'));
-      await settle(tester);
-      await tester.enterText(
-        find.descendant(
-          of: find.byType(AlertDialog),
-          matching: find.byType(TextField),
-        ),
-        'Luz   Sala',
-      );
-      await settle(tester);
-      await tester.tap(find.text('Guardar'));
-      await settle(tester);
-      await settle(tester);
-
-      // Rename converged with zero extra loads.
-      expect(api.loadCalls, 1);
-      final feature = tester
+    await tester.tap(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+    );
+    await settle(tester);
+    await settle(tester);
+    expect(
+      tester
           .widget<DesktopDevicesPage>(find.byType(DesktopDevicesPage))
-          .controller;
-      expect(feature.selectedDeviceId, 'dev_triple_01');
-      expect(
-        feature.snapshot!.devices
-            .firstWhere((device) => device.id == 'dev_triple_01')
-            .userName,
-        'Luz Sala',
-      );
+          .controller
+          .selectedDeviceId,
+      'dev_triple_01',
+    );
 
-      // Wall phase: the wall surface's own controller reloads the repository
-      // and must observe the persisted renamed value.
-      await surface.setMode(AppSurfaceMode.wallPanel);
-      await settle(tester);
-      await settle(tester);
-      // ONE production load on the wall switch: the active WallDevicesPage
-      // owns a fresh controller. The offstage home stays inert (its load is
-      // deferred until the wall home is activated).
-      expect(api.loadCalls, 2);
-      expect(find.byType(WallPanelShell), findsOneWidget);
-      final wallCard = find.byKey(const ValueKey('wall-device-dev_triple_01'));
-      expect(wallCard, findsOneWidget);
-      expect(
-        find.descendant(of: wallCard, matching: find.text('Luz Sala')),
-        findsOneWidget,
-      );
+    await tester.tap(find.byTooltip('Cambiar nombre'));
+    await settle(tester);
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'Luz   Sala',
+    );
+    await settle(tester);
+    await tester.tap(find.text('Guardar'));
+    await settle(tester);
+    await settle(tester);
 
-      // Back to desktop: same selection, same converged snapshot, no stale
-      // copy anywhere. No new load (the offstage home never loaded on wall).
-      await surface.setMode(AppSurfaceMode.desktop);
-      await settle(tester);
-      await settle(tester);
-      expect(api.loadCalls, 2);
-      expect(find.byType(DesktopShell), findsOneWidget);
-      final back = tester
-          .widget<DesktopDevicesPage>(find.byType(DesktopDevicesPage))
-          .controller;
-      expect(back.selectedDeviceId, 'dev_triple_01');
-      expect(
-        back.snapshot!.devices
-            .firstWhere((device) => device.id == 'dev_triple_01')
-            .userName,
-        'Luz Sala',
-      );
-      expect(find.text('Luz Sala'), findsWidgets);
-      expect(find.text('Selecciona un dispositivo'), findsNothing);
-      expect(find.text('Interruptor triple'), findsNothing);
+    // Rename converged with zero extra loads.
+    expect(api.loadCalls, 1);
+    final feature = tester
+        .widget<DesktopDevicesPage>(find.byType(DesktopDevicesPage))
+        .controller;
+    expect(feature.selectedDeviceId, 'dev_triple_01');
+    expect(
+      feature.snapshot!.devices
+          .firstWhere((device) => device.id == 'dev_triple_01')
+          .userName,
+      'Luz Sala',
+    );
 
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
+    // Wall phase: the wall surface's own controller reloads the repository
+    // and must observe the persisted renamed value.
+    await surface.setMode(AppSurfaceMode.wallPanel);
+    await settle(tester);
+    await settle(tester);
+    // ONE production load on the wall switch: the active WallDevicesPage
+    // owns a fresh controller. The offstage home stays inert (its load is
+    // deferred until the wall home is activated).
+    expect(api.loadCalls, 2);
+    expect(find.byType(WallPanelShell), findsOneWidget);
+    final wallCard = find.byKey(const ValueKey('wall-device-dev_triple_01'));
+    expect(wallCard, findsOneWidget);
+    expect(
+      find.descendant(of: wallCard, matching: find.text('Luz Sala')),
+      findsOneWidget,
+    );
 
-  testWidgets(
-    'F3C-RESIZE-AFTER-MUTATION resize across threshold keeps selection and mutated state',
-    (tester) async {
-      final repo = _ProdFakeRepo(devices: const [_prodTriple, _prodFan]);
-      final controller = await pumpDesktop(
-        tester,
-        repo,
-        size: const Size(1440, 900),
-      );
-      expect(repo.loadCalls, 1);
+    // Back to desktop: same selection, same converged snapshot, no stale
+    // copy anywhere. No new load (the offstage home never loaded on wall).
+    await surface.setMode(AppSurfaceMode.desktop);
+    await settle(tester);
+    await settle(tester);
+    expect(api.loadCalls, 2);
+    expect(find.byType(DesktopShell), findsOneWidget);
+    final back = tester
+        .widget<DesktopDevicesPage>(find.byType(DesktopDevicesPage))
+        .controller;
+    expect(back.selectedDeviceId, 'dev_triple_01');
+    expect(
+      back.snapshot!.devices
+          .firstWhere((device) => device.id == 'dev_triple_01')
+          .userName,
+      'Luz Sala',
+    );
+    expect(find.text('Luz Sala'), findsWidgets);
+    expect(find.text('Selecciona un dispositivo'), findsNothing);
+    expect(find.text('Interruptor triple'), findsNothing);
 
-      await tester.tap(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-      );
-      await tester.pumpAndSettle();
-      expect(controller.selectedDeviceId, 'dev_triple_01');
+    debugDefaultTargetPlatformOverride = null;
+  });
 
-      await tester.tap(find.byTooltip('Cambiar nombre'));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.descendant(
-          of: find.byType(AlertDialog),
-          matching: find.byType(TextField),
-        ),
-        'Luz   Sala',
-      );
-      await tester.tap(find.text('Guardar'));
-      await tester.pumpAndSettle();
-      expect(repo.loadCalls, 1);
+  testWidgets('resize across threshold keeps selection and mutated state', (
+    tester,
+  ) async {
+    final repo = _ProdFakeRepo(devices: const [_prodTriple, _prodFan]);
+    final controller = await pumpDesktop(
+      tester,
+      repo,
+      size: const Size(1440, 900),
+    );
+    expect(repo.loadCalls, 1);
 
-      // Narrow fallback: list+push. Resizing alone must not push or fetch.
-      tester.view.physicalSize = const Size(700, 900);
-      await tester.pumpAndSettle();
-      expect(repo.loadCalls, 1);
-      expect(controller.selectedDeviceId, 'dev_triple_01');
-      expect(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-        findsOneWidget,
-      );
-      expect(find.text('Configurar dispositivo'), findsNothing);
-      expect(find.text('Luz Sala'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+    );
+    await tester.pumpAndSettle();
+    expect(controller.selectedDeviceId, 'dev_triple_01');
 
-      // Back to wide: master/detail restored with the mutated name.
-      tester.view.physicalSize = const Size(1440, 900);
-      await tester.pumpAndSettle();
-      expect(repo.loadCalls, 1);
-      expect(controller.selectedDeviceId, 'dev_triple_01');
-      expect(
-        find.descendant(
-          of: find.byType(DeviceDetailView),
-          matching: find.text('Luz Sala'),
-        ),
-        findsOneWidget,
-      );
-    },
-  );
+    await tester.tap(find.byTooltip('Cambiar nombre'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'Luz   Sala',
+    );
+    await tester.tap(find.text('Guardar'));
+    await tester.pumpAndSettle();
+    expect(repo.loadCalls, 1);
 
-  testWidgets(
-    'F3C-F3A-REGRESSION lazy host invariants through production shell',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _ProdFinalDeviceApi();
-      final surface = await _pumpShell(tester, api, AppSurfaceMode.desktop);
+    // Narrow fallback: list+push. Resizing alone must not push or fetch.
+    tester.view.physicalSize = const Size(700, 900);
+    await tester.pumpAndSettle();
+    expect(repo.loadCalls, 1);
+    expect(controller.selectedDeviceId, 'dev_triple_01');
+    expect(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+      findsOneWidget,
+    );
+    expect(find.text('Configurar dispositivo'), findsNothing);
+    expect(find.text('Luz Sala'), findsOneWidget);
 
-      // Destination 0 (Inicio) is built at mount; desktop renders Dashboard.
-      expect(find.byType(AdaptiveHomePage), findsOneWidget);
-      expect(find.byType(DashboardPage), findsOneWidget);
+    // Back to wide: master/detail restored with the mutated name.
+    tester.view.physicalSize = const Size(1440, 900);
+    await tester.pumpAndSettle();
+    expect(repo.loadCalls, 1);
+    expect(controller.selectedDeviceId, 'dev_triple_01');
+    expect(
+      find.descendant(
+        of: find.byType(DeviceDetailView),
+        matching: find.text('Luz Sala'),
+      ),
+      findsOneWidget,
+    );
+  });
 
-      await tapDestination(tester, 'Dispositivos');
-      expect(find.byType(DevicesPage), findsOneWidget);
-      expect(find.byType(DesktopDevicesPage), findsOneWidget);
-      final devicesState = tester.state(find.byType(DevicesPage));
+  testWidgets('lazy host invariants through production shell', (tester) async {
+    useLinuxPlatform();
+    final api = _ProdFinalDeviceApi();
+    final surface = await _pumpShell(tester, api, AppSurfaceMode.desktop);
 
-      // An unvisited destination stays unbuilt.
-      expect(find.byType(RoutinesPage), findsNothing);
+    // Destination 0 (Inicio) is built at mount; desktop renders Dashboard.
+    expect(find.byType(AdaptiveHomePage), findsOneWidget);
+    expect(find.byType(DashboardPage), findsOneWidget);
 
-      // Round trip Inicio -> Dispositivos preserves the same State.
-      await tapDestination(tester, 'Inicio');
-      expect(find.byType(AdaptiveHomePage), findsOneWidget);
-      expect(find.byType(DevicesPage), findsNothing);
-      await tapDestination(tester, 'Dispositivos');
-      expect(find.byType(DevicesPage), findsOneWidget);
-      expect(tester.state(find.byType(DevicesPage)), same(devicesState));
+    await tapDestination(tester, 'Dispositivos');
+    expect(find.byType(DevicesPage), findsOneWidget);
+    expect(find.byType(DesktopDevicesPage), findsOneWidget);
+    final devicesState = tester.state(find.byType(DevicesPage));
 
-      // Surface switch preserves the visited page State (F3-A lifecycle).
-      await surface.setMode(AppSurfaceMode.wallPanel);
-      await settle(tester);
-      expect(find.byType(WallPanelShell), findsOneWidget);
-      expect(find.byType(DevicesPage), findsOneWidget);
-      expect(tester.state(find.byType(DevicesPage)), same(devicesState));
+    // An unvisited destination stays unbuilt.
+    expect(find.byType(RoutinesPage), findsNothing);
 
-      await surface.setMode(AppSurfaceMode.desktop);
-      await settle(tester);
-      expect(find.byType(DesktopShell), findsOneWidget);
-      expect(find.byType(DevicesPage), findsOneWidget);
-      expect(tester.state(find.byType(DevicesPage)), same(devicesState));
+    // Round trip Inicio -> Dispositivos preserves the same State.
+    await tapDestination(tester, 'Inicio');
+    expect(find.byType(AdaptiveHomePage), findsOneWidget);
+    expect(find.byType(DevicesPage), findsNothing);
+    await tapDestination(tester, 'Dispositivos');
+    expect(find.byType(DevicesPage), findsOneWidget);
+    expect(tester.state(find.byType(DevicesPage)), same(devicesState));
 
-      // Tapping Rutinas finally creates it.
-      await tapDestination(tester, 'Rutinas');
-      expect(find.byType(RoutinesPage), findsOneWidget);
+    // Surface switch preserves the visited page State (F3-A lifecycle).
+    await surface.setMode(AppSurfaceMode.wallPanel);
+    await settle(tester);
+    expect(find.byType(WallPanelShell), findsOneWidget);
+    expect(find.byType(DevicesPage), findsOneWidget);
+    expect(tester.state(find.byType(DevicesPage)), same(devicesState));
 
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
+    await surface.setMode(AppSurfaceMode.desktop);
+    await settle(tester);
+    expect(find.byType(DesktopShell), findsOneWidget);
+    expect(find.byType(DevicesPage), findsOneWidget);
+    expect(tester.state(find.byType(DevicesPage)), same(devicesState));
 
-  testWidgets(
-    'F3C-F3B-REGRESSION wall home drill-down still works from production shell',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _ProdFinalDeviceApi();
-      await _pumpShell(tester, api, AppSurfaceMode.wallPanel);
+    // Tapping Rutinas finally creates it.
+    await tapDestination(tester, 'Rutinas');
+    expect(find.byType(RoutinesPage), findsOneWidget);
 
-      // Wall home is destination 0; the area grid renders canonical areas.
-      await tapDestination(tester, 'Inicio');
-      expect(find.byType(WallPanelHomePage), findsOneWidget);
-      expect(find.text('Mi casa'), findsOneWidget);
-      expect(find.byKey(const ValueKey('wall-area-sala')), findsOneWidget);
+    debugDefaultTargetPlatformOverride = null;
+  });
 
-      // The legacy catalog location never fabricates an area card.
-      expect(find.text('Cocina'), findsNothing);
+  testWidgets('wall home drill-down still works from production shell', (
+    tester,
+  ) async {
+    useLinuxPlatform();
+    final api = _ProdFinalDeviceApi();
+    await _pumpShell(tester, api, AppSurfaceMode.wallPanel);
 
-      await tester.tap(find.byKey(const ValueKey('wall-area-sala')));
-      await tester.pumpAndSettle();
-      expect(find.byType(WallAreaOverviewPage), findsOneWidget);
-      expect(find.text('Sala'), findsOneWidget);
-      expect(find.text('1 control'), findsOneWidget);
-      expect(find.text('Canal 1'), findsOneWidget);
+    // Wall home is destination 0; the area grid renders canonical areas.
+    await tapDestination(tester, 'Inicio');
+    expect(find.byType(WallPanelHomePage), findsOneWidget);
+    expect(find.text('Mi casa'), findsOneWidget);
+    expect(find.byKey(const ValueKey('wall-area-sala')), findsOneWidget);
 
-      await tester.pageBack();
-      await tester.pumpAndSettle();
-      expect(find.byType(WallAreaOverviewPage), findsNothing);
-      expect(find.text('Mi casa'), findsOneWidget);
+    // The legacy catalog location never fabricates an area card.
+    expect(find.text('Cocina'), findsNothing);
 
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
+    await tester.tap(find.byKey(const ValueKey('wall-area-sala')));
+    await tester.pumpAndSettle();
+    expect(find.byType(WallAreaOverviewPage), findsOneWidget);
+    expect(find.text('Sala'), findsOneWidget);
+    expect(find.text('1 control'), findsOneWidget);
+    expect(find.text('Canal 1'), findsOneWidget);
 
-  testWidgets(
-    'F3C-F3B-REGRESSION canonical empty areas stay authoritative (no legacy fallback)',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _ProdFinalDeviceApi()..areaDtos = [];
-      await _pumpShell(tester, api, AppSurfaceMode.wallPanel);
-      await tapDestination(tester, 'Inicio');
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(WallAreaOverviewPage), findsNothing);
+    expect(find.text('Mi casa'), findsOneWidget);
 
-      expect(find.byType(WallPanelHomePage), findsOneWidget);
-      expect(find.text('Aún no hay habitaciones configuradas'), findsOneWidget);
-      expect(find.byKey(const ValueKey('wall-area-sala')), findsNothing);
-      // The legacy catalog ships a 'Cocina' location; it must never repopulate
-      // the canonical areas path.
-      expect(find.text('Cocina'), findsNothing);
+    debugDefaultTargetPlatformOverride = null;
+  });
 
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
+  testWidgets('canonical empty areas stay authoritative (no legacy fallback)', (
+    tester,
+  ) async {
+    useLinuxPlatform();
+    final api = _ProdFinalDeviceApi()..areaDtos = [];
+    await _pumpShell(tester, api, AppSurfaceMode.wallPanel);
+    await tapDestination(tester, 'Inicio');
 
-  testWidgets(
-    'F3C-DESKTOP-AREAS-INTEGRATION desktop areas reachable and usable from production',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _ProdFinalDeviceApi();
-      await _pumpShell(tester, api, AppSurfaceMode.desktop);
+    expect(find.byType(WallPanelHomePage), findsOneWidget);
+    expect(find.text('Aún no hay habitaciones configuradas'), findsOneWidget);
+    expect(find.byKey(const ValueKey('wall-area-sala')), findsNothing);
+    // The legacy catalog ships a 'Cocina' location; it must never repopulate
+    // the canonical areas path.
+    expect(find.text('Cocina'), findsNothing);
 
-      await tapDestination(tester, 'Dispositivos');
-      expect(find.text('Habitaciones'), findsOneWidget);
-      await tester.tap(find.text('Habitaciones'));
-      await settle(tester);
-      await settle(tester);
+    debugDefaultTargetPlatformOverride = null;
+  });
 
-      expect(find.byType(DesktopAreasPage), findsOneWidget);
-      expect(find.text('Selecciona un área'), findsOneWidget);
+  testWidgets('desktop areas reachable and usable from production', (
+    tester,
+  ) async {
+    useLinuxPlatform();
+    final api = _ProdFinalDeviceApi();
+    await _pumpShell(tester, api, AppSurfaceMode.desktop);
 
-      await tester.tap(find.byKey(const ValueKey('desktop-area-sala')));
-      await settle(tester);
-      expect(find.text('Selecciona un área'), findsNothing);
-      expect(find.widgetWithText(TextField, 'Sala'), findsOneWidget);
+    await tapDestination(tester, 'Dispositivos');
+    expect(find.text('Habitaciones'), findsOneWidget);
+    await tester.tap(find.text('Habitaciones'));
+    await settle(tester);
+    await settle(tester);
 
-      // Round trip back to the Devices master list.
-      await tester.binding.handlePopRoute();
-      await settle(tester);
-      await settle(tester);
+    expect(find.byType(DesktopAreasPage), findsOneWidget);
+    expect(find.text('Selecciona un área'), findsOneWidget);
 
-      expect(find.byType(DesktopAreasPage), findsNothing);
-      expect(find.text('Habitaciones'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('desktop-device-dev_fan_01')),
-        findsOneWidget,
-      );
+    await tester.tap(find.byKey(const ValueKey('desktop-area-sala')));
+    await settle(tester);
+    expect(find.text('Selecciona un área'), findsNothing);
+    expect(find.widgetWithText(TextField, 'Sala'), findsOneWidget);
 
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
+    // Round trip back to the Devices master list.
+    await tester.binding.handlePopRoute();
+    await settle(tester);
+    await settle(tester);
 
-  testWidgets(
-    'F3C-MUTATION-FAILURE-CONVERGENCE wall detail failure keeps canonical state',
-    (tester) async {
-      final repo = _ProdFakeRepo(devices: const [_prodTriple, _prodFan]);
-      await pumpWall(tester, repo);
+    expect(find.byType(DesktopAreasPage), findsNothing);
+    expect(find.text('Habitaciones'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('desktop-device-dev_fan_01')),
+      findsOneWidget,
+    );
 
-      await tester.tap(find.byKey(const ValueKey('wall-device-dev_triple_01')));
-      await tester.pumpAndSettle();
-      expect(find.text('Configurar dispositivo'), findsOneWidget);
+    debugDefaultTargetPlatformOverride = null;
+  });
 
-      repo.failRename = true;
-      await tester.tap(find.byTooltip('Cambiar nombre'));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.descendant(
-          of: find.byType(AlertDialog),
-          matching: find.byType(TextField),
-        ),
-        'Luz sala',
-      );
-      await tester.tap(find.text('Guardar'));
-      await tester.pumpAndSettle();
+  testWidgets('wall detail failure keeps canonical state', (tester) async {
+    final repo = _ProdFakeRepo(devices: const [_prodTriple, _prodFan]);
+    await pumpWall(tester, repo);
 
-      expect(repo.renamedDevices, contains(('dev_triple_01', 'Luz sala')));
-      // The server detail surfaces in a SnackBar; no false success.
-      expect(find.text('no se pudo renombrar'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('wall-device-dev_triple_01')));
+    await tester.pumpAndSettle();
+    expect(find.text('Configurar dispositivo'), findsOneWidget);
 
-      // Canonical state is untouched: the repo device and the visible wall
-      // detail keep the old name, never converging to the failed value.
-      expect(
-        repo.devices
-            .firstWhere((device) => device.id == 'dev_triple_01')
-            .userName,
-        isNull,
-      );
-      expect(find.text('Interruptor triple'), findsWidgets);
-      expect(find.text('Luz sala'), findsNothing);
+    repo.failRename = true;
+    await tester.tap(find.byTooltip('Cambiar nombre'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'Luz sala',
+    );
+    await tester.tap(find.text('Guardar'));
+    await tester.pumpAndSettle();
 
-      // Back to the wall list: the card still shows the canonical old name.
-      await tester.pageBack();
-      await tester.pumpAndSettle();
-      expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('wall-device-dev_triple_01')),
-          matching: find.text('Interruptor triple'),
-        ),
-        findsOneWidget,
-      );
-    },
-  );
+    expect(repo.renamedDevices, contains(('dev_triple_01', 'Luz sala')));
+    // The server detail surfaces in a SnackBar; no false success.
+    expect(find.text('no se pudo renombrar'), findsOneWidget);
+
+    // Canonical state is untouched: the repo device and the visible wall
+    // detail keep the old name, never converging to the failed value.
+    expect(
+      repo.devices
+          .firstWhere((device) => device.id == 'dev_triple_01')
+          .userName,
+      isNull,
+    );
+    expect(find.text('Interruptor triple'), findsWidgets);
+    expect(find.text('Luz sala'), findsNothing);
+
+    // Back to the wall list: the card still shows the canonical old name.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('wall-device-dev_triple_01')),
+        matching: find.text('Interruptor triple'),
+      ),
+      findsOneWidget,
+    );
+  });
 }

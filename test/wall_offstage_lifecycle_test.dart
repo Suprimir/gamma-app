@@ -249,123 +249,112 @@ void main() {
     await settle(tester);
   }
 
-  testWidgets(
-    'F3C-OFFSTAGE-HOME-NO-LOAD wall switch does not fetch offstage home',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _OffstageDeviceApi();
-      final surface = await _pumpShell(tester, api, AppSurfaceMode.desktop);
+  testWidgets('wall switch does not fetch offstage home', (tester) async {
+    useLinuxPlatform();
+    final api = _OffstageDeviceApi();
+    final surface = await _pumpShell(tester, api, AppSurfaceMode.desktop);
 
-      // Home is visited/cached (DashboardPage — no inventory fetch), then
-      // Devices becomes active and fetches once.
-      await tapDestination(tester, 'Inicio');
-      expect(api.inventoryLoadCalls, 0);
-      await tapDestination(tester, 'Dispositivos');
-      expect(api.inventoryLoadCalls, 1);
+    // Home is visited/cached (DashboardPage — no inventory fetch), then
+    // Devices becomes active and fetches once.
+    await tapDestination(tester, 'Inicio');
+    expect(api.inventoryLoadCalls, 0);
+    await tapDestination(tester, 'Dispositivos');
+    expect(api.inventoryLoadCalls, 1);
 
-      // Baseline for the switch: only composition may add loads from here.
-      api.inventoryLoadCalls = 0;
-      await surface.setMode(AppSurfaceMode.wallPanel);
-      await settle(tester);
-      await settle(tester);
+    // Baseline for the switch: only composition may add loads from here.
+    api.inventoryLoadCalls = 0;
+    await surface.setMode(AppSurfaceMode.wallPanel);
+    await settle(tester);
+    await settle(tester);
 
-      // Exactly ONE new inventory load: the active WallDevicesPage. The
-      // offstage Home must NOT rebuild into WallPanelHomePage and fetch.
-      expect(api.inventoryLoadCalls, 1);
-      expect(find.byType(WallPanelShell), findsOneWidget);
+    // Exactly ONE new inventory load: the active WallDevicesPage. The
+    // offstage Home must NOT rebuild into WallPanelHomePage and fetch.
+    expect(api.inventoryLoadCalls, 1);
+    expect(find.byType(WallPanelShell), findsOneWidget);
 
-      // Home becomes active now: the Wall Home performs its FIRST load HERE.
-      final beforeHome = api.inventoryLoadCalls;
-      await tapDestination(tester, 'Inicio');
-      expect(api.inventoryLoadCalls - beforeHome, 1);
-      expect(find.byType(WallPanelHomePage), findsOneWidget);
-      expect(find.text('Mi casa'), findsOneWidget);
-      expect(find.byKey(const ValueKey('wall-area-sala')), findsOneWidget);
+    // Home becomes active now: the Wall Home performs its FIRST load HERE.
+    final beforeHome = api.inventoryLoadCalls;
+    await tapDestination(tester, 'Inicio');
+    expect(api.inventoryLoadCalls - beforeHome, 1);
+    expect(find.byType(WallPanelHomePage), findsOneWidget);
+    expect(find.text('Mi casa'), findsOneWidget);
+    expect(find.byKey(const ValueKey('wall-area-sala')), findsOneWidget);
 
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
+    debugDefaultTargetPlatformOverride = null;
+  });
 
-  testWidgets(
-    'F3C-ACTIVE-WALL-DEVICES-SINGLE-LOAD active wall devices loads once',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _OffstageDeviceApi();
-      final surface = await _pumpShell(tester, api, AppSurfaceMode.desktop);
+  testWidgets('active wall devices loads once', (tester) async {
+    useLinuxPlatform();
+    final api = _OffstageDeviceApi();
+    final surface = await _pumpShell(tester, api, AppSurfaceMode.desktop);
 
-      await tapDestination(tester, 'Inicio');
-      await tapDestination(tester, 'Dispositivos');
-      expect(api.inventoryLoadCalls, 1);
+    await tapDestination(tester, 'Inicio');
+    await tapDestination(tester, 'Dispositivos');
+    expect(api.inventoryLoadCalls, 1);
 
-      // Baseline for the switch.
-      api.inventoryLoadCalls = 0;
-      await surface.setMode(AppSurfaceMode.wallPanel);
-      await settle(tester);
-      await settle(tester);
+    // Baseline for the switch.
+    api.inventoryLoadCalls = 0;
+    await surface.setMode(AppSurfaceMode.wallPanel);
+    await settle(tester);
+    await settle(tester);
 
-      // Only the active WallDevicesPage loads: 1, not 2.
-      expect(api.inventoryLoadCalls, 1);
-      expect(find.byType(WallDevicesPage), findsOneWidget);
+    // Only the active WallDevicesPage loads: 1, not 2.
+    expect(api.inventoryLoadCalls, 1);
+    expect(find.byType(WallDevicesPage), findsOneWidget);
 
-      // Back to desktop adds no inventory load (both controllers loaded).
-      await surface.setMode(AppSurfaceMode.desktop);
-      await settle(tester);
-      await settle(tester);
-      expect(api.inventoryLoadCalls, 1);
+    // Back to desktop adds no inventory load (both controllers loaded).
+    await surface.setMode(AppSurfaceMode.desktop);
+    await settle(tester);
+    await settle(tester);
+    expect(api.inventoryLoadCalls, 1);
 
-      // A second wall switch adds the same single bounded load (never 2).
-      api.inventoryLoadCalls = 0;
-      await surface.setMode(AppSurfaceMode.wallPanel);
-      await settle(tester);
-      await settle(tester);
-      expect(api.inventoryLoadCalls, 1);
+    // A second wall switch adds the same single bounded load (never 2).
+    api.inventoryLoadCalls = 0;
+    await surface.setMode(AppSurfaceMode.wallPanel);
+    await settle(tester);
+    await settle(tester);
+    expect(api.inventoryLoadCalls, 1);
 
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
+    debugDefaultTargetPlatformOverride = null;
+  });
 
-  testWidgets(
-    'F3C-WALL-HOME-LOADS-WHEN-ACTIVE wall home loads when it becomes active',
-    (tester) async {
-      useLinuxPlatform();
-      final api = _OffstageDeviceApi();
-      final surface = await _pumpShell(tester, api, AppSurfaceMode.desktop);
+  testWidgets('wall home loads when it becomes active', (tester) async {
+    useLinuxPlatform();
+    final api = _OffstageDeviceApi();
+    final surface = await _pumpShell(tester, api, AppSurfaceMode.desktop);
 
-      // Home active (DashboardPage, no inventory), Devices active (one load).
-      await tapDestination(tester, 'Inicio');
-      expect(api.inventoryLoadCalls, 0);
-      await tapDestination(tester, 'Dispositivos');
-      expect(api.inventoryLoadCalls, 1);
+    // Home active (DashboardPage, no inventory), Devices active (one load).
+    await tapDestination(tester, 'Inicio');
+    expect(api.inventoryLoadCalls, 0);
+    await tapDestination(tester, 'Dispositivos');
+    expect(api.inventoryLoadCalls, 1);
 
-      // Baseline for the switch.
-      api.inventoryLoadCalls = 0;
-      await surface.setMode(AppSurfaceMode.wallPanel);
-      await settle(tester);
-      await settle(tester);
+    // Baseline for the switch.
+    api.inventoryLoadCalls = 0;
+    await surface.setMode(AppSurfaceMode.wallPanel);
+    await settle(tester);
+    await settle(tester);
 
-      // The switch loads only the active wall Devices (1); offstage Home: 0.
-      expect(api.inventoryLoadCalls, 1);
+    // The switch loads only the active wall Devices (1); offstage Home: 0.
+    expect(api.inventoryLoadCalls, 1);
 
-      // Activating Home triggers the Wall Home's first load (+1, not consumed
-      // offstage at the switch).
-      final beforeHome = api.inventoryLoadCalls;
-      await tapDestination(tester, 'Inicio');
-      await settle(tester);
-      expect(api.inventoryLoadCalls - beforeHome, 1);
+    // Activating Home triggers the Wall Home's first load (+1, not consumed
+    // offstage at the switch).
+    final beforeHome = api.inventoryLoadCalls;
+    await tapDestination(tester, 'Inicio');
+    await settle(tester);
+    expect(api.inventoryLoadCalls - beforeHome, 1);
 
-      // The Wall Home projection renders canonical areas, never legacy ones.
-      expect(find.byType(WallPanelHomePage), findsOneWidget);
-      expect(find.text('Mi casa'), findsOneWidget);
-      expect(find.byKey(const ValueKey('wall-area-sala')), findsOneWidget);
-      expect(find.text('Cocina'), findsNothing);
+    // The Wall Home projection renders canonical areas, never legacy ones.
+    expect(find.byType(WallPanelHomePage), findsOneWidget);
+    expect(find.text('Mi casa'), findsOneWidget);
+    expect(find.byKey(const ValueKey('wall-area-sala')), findsOneWidget);
+    expect(find.text('Cocina'), findsNothing);
 
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
+    debugDefaultTargetPlatformOverride = null;
+  });
 
-  testWidgets('F3C-NO-LOAD-ON-RESIZE resize alone never fetches inventory', (
-    tester,
-  ) async {
+  testWidgets('resize alone never fetches inventory', (tester) async {
     useLinuxPlatform();
     final api = _OffstageDeviceApi();
     await _pumpShell(tester, api, AppSurfaceMode.desktop);

@@ -12,7 +12,7 @@ import 'fixtures/areas_fake_repo.dart';
 /// formulario grande compartido, creación por diálogo, eliminación secundaria
 /// con confirmación y navegación desde Dispositivos.
 void main() {
-  testWidgets('F3C-AREAS-WALL-01 large area cards no overflow', (tester) async {
+  testWidgets('large area cards no overflow', (tester) async {
     final repo = AreasFakeRepo(
       areas: const [
         HomeArea(id: 'area_SALA', name: 'Sala'),
@@ -39,9 +39,7 @@ void main() {
     expect(createSize.height, greaterThanOrEqualTo(72));
   });
 
-  testWidgets('F3C-AREAS-WALL-02 open detail and rename via large form', (
-    tester,
-  ) async {
+  testWidgets('open detail and rename via large form', (tester) async {
     final repo = AreasFakeRepo(
       areas: const [
         HomeArea(id: 'area_SALA', name: 'Sala'),
@@ -64,7 +62,7 @@ void main() {
     expect(find.text('Sala principal'), findsOneWidget);
   });
 
-  testWidgets('F3C-AREAS-WALL-03 create area via dialog', (tester) async {
+  testWidgets('create area via dialog', (tester) async {
     final repo = AreasFakeRepo(
       areas: const [HomeArea(id: 'area_SALA', name: 'Sala')],
     );
@@ -82,7 +80,7 @@ void main() {
     expect(find.text('Patio'), findsOneWidget);
   });
 
-  testWidgets('F3C-AREAS-WALL-04 delete secondary + confirmed', (tester) async {
+  testWidgets('delete secondary + confirmed', (tester) async {
     final repo = AreasFakeRepo(
       areas: const [
         HomeArea(id: 'area_SALA', name: 'Sala'),
@@ -126,9 +124,7 @@ void main() {
     expect(find.byKey(const ValueKey('wall-area-area_COCINA')), findsOneWidget);
   });
 
-  testWidgets('F3C-AREAS-WALL-05 wall devices to areas navigation', (
-    tester,
-  ) async {
+  testWidgets('wall devices to areas navigation', (tester) async {
     final repo = AreasFakeRepo(
       areas: const [
         HomeArea(id: 'area_SALA', name: 'Sala'),

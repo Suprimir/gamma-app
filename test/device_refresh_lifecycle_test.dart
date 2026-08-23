@@ -20,47 +20,41 @@ import 'fixtures/areas_fake_repo.dart';
 /// retry, refresh failures keeping the snapshot, truthful mutation errors,
 /// stale-selection cleanup, safe disposal and no polling.
 void main() {
-  testWidgets(
-    'F3C-LIFECYCLE-01 initial error shows user-facing message and retry',
-    (tester) async {
-      tester.view.physicalSize = const Size(800, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
-      final repo = _LifecycleFakeRepo(devices: const [_lcTriple, _lcFan])
-        ..loadError = Exception('backend boom');
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: DevicesPage(
-              api: ApiClient(baseUrl: 'http://127.0.0.1:8420'),
-              repository: repo,
-            ),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      // The raw exception never leaks to the user.
-      expect(
-        find.text('No se pudieron cargar los dispositivos'),
-        findsOneWidget,
-      );
-      expect(find.text('Reintentar'), findsOneWidget);
-      expect(find.textContaining('backend boom'), findsNothing);
-
-      repo.loadError = null;
-      await tester.tap(find.text('Reintentar'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('No se pudieron cargar los dispositivos'), findsNothing);
-      expect(find.text('Dispositivos'), findsOneWidget);
-    },
-  );
-
-  testWidgets('F3C-LIFECYCLE-02 refresh failure retains the snapshot', (
+  testWidgets('initial error shows user-facing message and retry', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final repo = _LifecycleFakeRepo(devices: const [_lcTriple, _lcFan])
+      ..loadError = Exception('backend boom');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DevicesPage(
+            api: ApiClient(baseUrl: 'http://127.0.0.1:8420'),
+            repository: repo,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The raw exception never leaks to the user.
+    expect(find.text('No se pudieron cargar los dispositivos'), findsOneWidget);
+    expect(find.text('Reintentar'), findsOneWidget);
+    expect(find.textContaining('backend boom'), findsNothing);
+
+    repo.loadError = null;
+    await tester.tap(find.text('Reintentar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('No se pudieron cargar los dispositivos'), findsNothing);
+    expect(find.text('Dispositivos'), findsOneWidget);
+  });
+
+  testWidgets('refresh failure retains the snapshot', (tester) async {
     final repo = _LifecycleFakeRepo(devices: const [_lcTriple, _lcFan]);
     final controller = await pumpDesktop(tester, repo);
     expect(repo.loadCount, 1);
@@ -89,7 +83,7 @@ void main() {
     );
   });
 
-  testWidgets('F3C-LIFECYCLE-03 mutation 4xx is truthful', (tester) async {
+  testWidgets('mutation 4xx is truthful', (tester) async {
     final repo = _LifecycleFakeRepo(devices: const [_lcTriple, _lcFan]);
     final controller = await pumpDesktop(tester, repo);
 
@@ -125,9 +119,7 @@ void main() {
     expect(controller.selectedDeviceId, 'dev_triple_01');
   });
 
-  testWidgets('F3C-LIFECYCLE-04 stale selected object clears on wall', (
-    tester,
-  ) async {
+  testWidgets('stale selected object clears on wall', (tester) async {
     final repo = _LifecycleFakeRepo(devices: const [_lcTriple, _lcFan]);
     await pumpWall(tester, repo);
 
@@ -151,9 +143,7 @@ void main() {
     );
   });
 
-  testWidgets('F3C-LIFECYCLE-05 area deleted during selection clears it', (
-    tester,
-  ) async {
+  testWidgets('area deleted during selection clears it', (tester) async {
     final repo = AreasFakeRepo(
       areas: const [
         HomeArea(id: 'area_SALA', name: 'Sala'),
@@ -175,7 +165,7 @@ void main() {
     expect(find.text('Selecciona un área'), findsOneWidget);
   });
 
-  testWidgets('F3C-LIFECYCLE-06 controller disposal is safe', (tester) async {
+  testWidgets('controller disposal is safe', (tester) async {
     final repo = _LifecycleFakeRepo(devices: const [_lcTriple, _lcFan]);
     final controller = AdaptiveFeatureController(repo)..loadDevices();
     await tester.pump();
@@ -195,24 +185,21 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-    'F3C-LIFECYCLE-06b dispose during in-flight load never notifies',
-    (tester) async {
-      final repo = _LifecycleFakeRepo(devices: const [_lcTriple]);
-      repo.pendingLoad = Completer<DeviceInventorySnapshot>();
-      final controller = AdaptiveFeatureController(repo);
-      final loading = controller.loadDevices();
-      await tester.pump();
+  testWidgets('b dispose during in-flight load never notifies', (tester) async {
+    final repo = _LifecycleFakeRepo(devices: const [_lcTriple]);
+    repo.pendingLoad = Completer<DeviceInventorySnapshot>();
+    final controller = AdaptiveFeatureController(repo);
+    final loading = controller.loadDevices();
+    await tester.pump();
 
-      controller.dispose();
-      repo.pendingLoad!.complete(repo._snapshot());
-      await loading;
+    controller.dispose();
+    repo.pendingLoad!.complete(repo._snapshot());
+    await loading;
 
-      expect(tester.takeException(), isNull);
-    },
-  );
+    expect(tester.takeException(), isNull);
+  });
 
-  testWidgets('F3C-LIFECYCLE-07 no polling after load', (tester) async {
+  testWidgets('no polling after load', (tester) async {
     final repo = _LifecycleFakeRepo(devices: const [_lcTriple]);
     final controller = AdaptiveFeatureController(repo)..loadDevices();
     await tester.pump();

@@ -7,7 +7,7 @@ import 'package:gamma_app/data/device_inventory.dart';
 import 'package:gamma_app/features/devices/devices_page.dart';
 
 void main() {
-  testWidgets('F3C-MOBILE compact list to device detail remains sequential', (
+  testWidgets('compact list to device detail remains sequential', (
     WidgetTester tester,
   ) async {
     // Compact phone geometry: no split pane, plain push navigation.
@@ -50,7 +50,7 @@ void main() {
     expect(find.text('Nuevos dispositivos'), findsOneWidget);
   });
 
-  testWidgets('F3C-MOBILE compact area list to editor remains sequential', (
+  testWidgets('compact area list to editor remains sequential', (
     WidgetTester tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);

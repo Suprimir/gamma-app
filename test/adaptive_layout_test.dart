@@ -5,33 +5,33 @@ import 'package:gamma_app/adaptive/adaptive_layout.dart';
 
 void main() {
   group('F3-A window class boundaries', () {
-    test('F3A-W01 599px is compact', () {
+    test('599px is compact', () {
       expect(AppWindowClass.fromWidth(599), AppWindowClass.compact);
     });
 
-    test('F3A-W02 600px is medium', () {
+    test('600px is medium', () {
       expect(AppWindowClass.fromWidth(600), AppWindowClass.medium);
     });
 
-    test('F3A-W03 839px is medium', () {
+    test('839px is medium', () {
       expect(AppWindowClass.fromWidth(839), AppWindowClass.medium);
     });
 
-    test('F3A-W04 840px is expanded', () {
+    test('840px is expanded', () {
       expect(AppWindowClass.fromWidth(840), AppWindowClass.expanded);
     });
 
-    test('F3A-W05 1199px is expanded', () {
+    test('1199px is expanded', () {
       expect(AppWindowClass.fromWidth(1199), AppWindowClass.expanded);
     });
 
-    test('F3A-W06 1200px is large', () {
+    test('1200px is large', () {
       expect(AppWindowClass.fromWidth(1200), AppWindowClass.large);
     });
   });
 
   group('F3-A auto-selection matrix', () {
-    test('F3A-S01 compact Linux resolves to mobile', () {
+    test('compact Linux resolves to mobile', () {
       final result = resolveEffectiveAppSurface(
         windowClass: AppWindowClass.compact,
         mode: AppSurfaceMode.auto,
@@ -40,7 +40,7 @@ void main() {
       expect(result, EffectiveAppSurface.mobile);
     });
 
-    test('F3A-S02 expanded Linux resolves to desktop', () {
+    test('expanded Linux resolves to desktop', () {
       final result = resolveEffectiveAppSurface(
         windowClass: AppWindowClass.expanded,
         mode: AppSurfaceMode.auto,
@@ -49,7 +49,7 @@ void main() {
       expect(result, EffectiveAppSurface.desktop);
     });
 
-    test('F3A-S03 compact Android resolves to mobile', () {
+    test('compact Android resolves to mobile', () {
       final result = resolveEffectiveAppSurface(
         windowClass: AppWindowClass.compact,
         mode: AppSurfaceMode.auto,
@@ -58,7 +58,7 @@ void main() {
       expect(result, EffectiveAppSurface.mobile);
     });
 
-    test('F3A-S04 expanded Android resolves to mobile', () {
+    test('expanded Android resolves to mobile', () {
       final result = resolveEffectiveAppSurface(
         windowClass: AppWindowClass.expanded,
         mode: AppSurfaceMode.auto,
@@ -67,7 +67,7 @@ void main() {
       expect(result, EffectiveAppSurface.mobile);
     });
 
-    test('F3A-S05 explicit desktop wins on any valid width', () {
+    test('explicit desktop wins on any valid width', () {
       final result = resolveEffectiveAppSurface(
         windowClass: AppWindowClass.compact,
         mode: AppSurfaceMode.desktop,
@@ -76,7 +76,7 @@ void main() {
       expect(result, EffectiveAppSurface.desktop);
     });
 
-    test('F3A-S06 explicit wallPanel wins on any valid width', () {
+    test('explicit wallPanel wins on any valid width', () {
       final result = resolveEffectiveAppSurface(
         windowClass: AppWindowClass.compact,
         mode: AppSurfaceMode.wallPanel,
@@ -85,7 +85,7 @@ void main() {
       expect(result, EffectiveAppSurface.wallPanel);
     });
 
-    test('F3A-S07 auto never yields wallPanel for any class/platform', () {
+    test('auto never yields wallPanel for any class/platform', () {
       for (final windowClass in AppWindowClass.values) {
         for (final platform in TargetPlatform.values) {
           final result = resolveEffectiveAppSurface(
@@ -102,7 +102,7 @@ void main() {
       }
     });
 
-    test('F3A-S08 explicit mobile wins on large Linux', () {
+    test('explicit mobile wins on large Linux', () {
       final result = resolveEffectiveAppSurface(
         windowClass: AppWindowClass.large,
         mode: AppSurfaceMode.mobile,
@@ -111,7 +111,7 @@ void main() {
       expect(result, EffectiveAppSurface.mobile);
     });
 
-    test('F3A-S09 explicit desktop wins on compact Linux', () {
+    test('explicit desktop wins on compact Linux', () {
       final result = resolveEffectiveAppSurface(
         windowClass: AppWindowClass.compact,
         mode: AppSurfaceMode.desktop,

@@ -42,7 +42,7 @@ class WallAreaControl {
 
 /// Projects a canonical inventory snapshot into the Wall Home model.
 ///
-/// Counting policy (frozen in `test/f3b_wall_home_baseline_test.dart`):
+/// Counting policy (frozen in `test/wall_home_baseline_test.dart`):
 /// - Area identity = canonical `HomeArea.id`; display = `HomeArea.name`.
 /// - logical control count per Area = user-facing endpoints whose
 ///   `controlled_area_id` matches the Area.

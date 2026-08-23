@@ -18,10 +18,10 @@ import 'package:gamma_app/data/device_inventory.dart';
 ///     is a deterministic no-op (never duplicated, never fabricated).
 ///   * SELECTED-REPLACEMENT — the focused device still converges in place.
 ///
-/// On HEAD F3C-CONVERGENCE-KNOWN-UNSELECTED fails (the guard discards B'); the
+/// On HEAD the known-unselected convergence case fails (the guard discards B'); the
 /// other two cases already hold and freeze the surrounding behavior.
 void main() {
-  // F3C-CONVERGENCE-KNOWN-UNSELECTED
+  // known device, not selected
   test(
     'known device not selected still converges into the snapshot in place',
     () async {
@@ -48,7 +48,7 @@ void main() {
     },
   );
 
-  // F3C-CONVERGENCE-UNKNOWN-ID
+  // unknown id outside the snapshot
   test('unknown id is a deterministic no-op (never duplicated)', () async {
     final repo = _UnitFakeRepo(devices: const [_unitA, _unitB]);
     final controller = AdaptiveFeatureController(repo);
@@ -70,7 +70,7 @@ void main() {
     expect(controller.selectedDeviceId, 'dev_a_01');
   });
 
-  // F3C-CONVERGENCE-SELECTED-REPLACEMENT
+  // selected device replacement
   test('selected device still converges in place', () async {
     final repo = _UnitFakeRepo(devices: const [_unitA, _unitB]);
     final controller = AdaptiveFeatureController(repo);

@@ -9,7 +9,7 @@ import 'package:gamma_app/features/devices/devices_page.dart';
 import 'package:gamma_app/app/lazy_page_host.dart';
 
 void main() {
-  testWidgets('F3A-L06: shell keeps visited pages alive across tab switches', (
+  testWidgets(': shell keeps visited pages alive across tab switches', (
     WidgetTester tester,
   ) async {
     MediaKit.ensureInitialized();

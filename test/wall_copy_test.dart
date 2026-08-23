@@ -12,9 +12,7 @@ import 'package:gamma_app/features/devices/wall_devices_page.dart';
 /// renders the desktop wording 'Usar también para todos los canales'. This
 /// test is RED until the wall branch uses 'controles'.
 void main() {
-  testWidgets('F3C-WALL-CONTROLES-COPY primary wall detail uses controles', (
-    tester,
-  ) async {
+  testWidgets('primary wall detail uses controles', (tester) async {
     final repo = _WallCopyFakeRepo(
       devices: const [_wallCopyTriple, _wallCopyFan],
     );

@@ -7,7 +7,7 @@ import 'package:gamma_app/app/navigation_destinations.dart';
 
 void main() {
   testWidgets(
-    'F3A-M01: mobile shell renders five destinations and hosts the page slot',
+    ': mobile shell renders five destinations and hosts the page slot',
     (WidgetTester tester) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -37,7 +37,7 @@ void main() {
   );
 
   testWidgets(
-    'F3A-M02: tapping a destination label invokes onSelected with its index',
+    ': tapping a destination label invokes onSelected with its index',
     (WidgetTester tester) async {
       int? selected;
       await tester.pumpWidget(

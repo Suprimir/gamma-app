@@ -8,7 +8,7 @@ import 'fixtures/deviceplatform_fixtures.dart';
 /// F2-C API/model contract tests: F2-B naming fields parse append-only,
 /// Areas come from the real AreaStore DTO, IDs stay opaque.
 void main() {
-  group('F2-C device model', () {
+  group('device model', () {
     test('parses F2-B device naming fields', () {
       final dto = <String, dynamic>{
         'device_id': 'dev_1',
@@ -78,7 +78,7 @@ void main() {
     });
   });
 
-  group('F2-C HomeArea', () {
+  group('HomeArea', () {
     test('parses AreaStore DTO with opaque id and aliases', () {
       final area = HomeArea.fromJson(const {
         'id': 'area_SALA',
@@ -102,7 +102,7 @@ void main() {
     });
   });
 
-  group('F2-C fixtures', () {
+  group('fixtures', () {
     test('multi-gang fixture keeps physical vs controlled independent', () {
       final inventory = deviceplatformInventoryJson;
       final devices = (inventory['devices'] as List)

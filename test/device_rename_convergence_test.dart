@@ -16,9 +16,7 @@ import 'package:gamma_app/features/devices/devices_page.dart';
 /// never show stale values. On HEAD the controller has no such API and
 /// DeviceDetailView only mutates its local copy — these tests are RED.
 void main() {
-  testWidgets('F3C-MUT-CONV-01 device rename converges to controller', (
-    tester,
-  ) async {
+  testWidgets('device rename converges to controller', (tester) async {
     final repo = _ConvFakeRepo(devices: const [_triple, _fan]);
     final controller = await pumpDesktop(tester, repo);
     final loadsBefore = repo.loadCalls;
@@ -68,7 +66,7 @@ void main() {
     );
   });
 
-  testWidgets('F3C-MUT-CONV-02 endpoint rename converges', (tester) async {
+  testWidgets('endpoint rename converges', (tester) async {
     final repo = _ConvFakeRepo(devices: const [_triple, _fan]);
     final controller = await pumpDesktop(tester, repo);
     final loadsBefore = repo.loadCalls;
@@ -121,9 +119,7 @@ void main() {
     );
   });
 
-  testWidgets('F3C-MUT-CONV-03 controlled area mutation converges', (
-    tester,
-  ) async {
+  testWidgets('controlled area mutation converges', (tester) async {
     final repo = _ConvFakeRepo(devices: const [_triple, _fan]);
     final controller = await pumpDesktop(tester, repo);
     final loadsBefore = repo.loadCalls;
@@ -160,7 +156,7 @@ void main() {
     expect(repo.loadCalls, loadsBefore);
   });
 
-  testWidgets('F3C-MUT-CONV-04 semantic role set converges', (tester) async {
+  testWidgets('semantic role set converges', (tester) async {
     final repo = _ConvFakeRepo(devices: const [_triple, _fan]);
     final controller = await pumpDesktop(tester, repo);
     final loadsBefore = repo.loadCalls;
@@ -202,48 +198,47 @@ void main() {
     expect(repo.loadCalls, loadsBefore);
   });
 
-  testWidgets(
-    'F3C-MUT-CONV-05 semantic role clear converges to provider result',
-    (tester) async {
-      final repo = _ConvFakeRepo(devices: const [_triple, _fan]);
-      final controller = await pumpDesktop(tester, repo);
+  testWidgets('semantic role clear converges to provider result', (
+    tester,
+  ) async {
+    final repo = _ConvFakeRepo(devices: const [_triple, _fan]);
+    final controller = await pumpDesktop(tester, repo);
 
-      await tester.tap(
-        find.byKey(const ValueKey('desktop-device-dev_triple_01')),
-      );
-      await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+    );
+    await tester.pumpAndSettle();
 
-      // Set a user override first.
-      final dropdowns = find.byType(DropdownButtonFormField<String?>);
-      await tester.ensureVisible(dropdowns.at(2));
-      await tester.tap(dropdowns.at(2));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Luz').last);
-      await tester.pumpAndSettle();
-      expect(repo.roleWrites, contains(('dev_triple_01', 'relay_1', 'light')));
+    // Set a user override first.
+    final dropdowns = find.byType(DropdownButtonFormField<String?>);
+    await tester.ensureVisible(dropdowns.at(2));
+    await tester.tap(dropdowns.at(2));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Luz').last);
+    await tester.pumpAndSettle();
+    expect(repo.roleWrites, contains(('dev_triple_01', 'relay_1', 'light')));
 
-      // Clear the override; the backend answers with a provider-effective role.
-      final loadsBefore = repo.loadCalls;
-      await tester.ensureVisible(dropdowns.at(2));
-      await tester.tap(dropdowns.at(2));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Sin configurar').last);
-      await tester.pumpAndSettle();
+    // Clear the override; the backend answers with a provider-effective role.
+    final loadsBefore = repo.loadCalls;
+    await tester.ensureVisible(dropdowns.at(2));
+    await tester.tap(dropdowns.at(2));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sin configurar').last);
+    await tester.pumpAndSettle();
 
-      expect(repo.roleWrites, contains(('dev_triple_01', 'relay_1', null)));
+    expect(repo.roleWrites, contains(('dev_triple_01', 'relay_1', null)));
 
-      final converged = controller.snapshot!.devices.firstWhere(
-        (device) => device.id == 'dev_triple_01',
-      );
-      final relay1 = converged.endpoints.firstWhere((e) => e.id == 'relay_1');
-      expect(relay1.semanticRole, 'light');
-      expect(relay1.semanticRole, isNotNull);
-      expect(relay1.semanticRole, isNot('unknown'));
-      expect(repo.loadCalls, loadsBefore);
-    },
-  );
+    final converged = controller.snapshot!.devices.firstWhere(
+      (device) => device.id == 'dev_triple_01',
+    );
+    final relay1 = converged.endpoints.firstWhere((e) => e.id == 'relay_1');
+    expect(relay1.semanticRole, 'light');
+    expect(relay1.semanticRole, isNotNull);
+    expect(relay1.semanticRole, isNot('unknown'));
+    expect(repo.loadCalls, loadsBefore);
+  });
 
-  testWidgets('F3C-MUT-CONV-06 failure keeps canonical state', (tester) async {
+  testWidgets('failure keeps canonical state', (tester) async {
     final repo = _ConvFakeRepo(devices: const [_triple, _fan]);
     final controller = await pumpDesktop(tester, repo);
     final loadsBefore = repo.loadCalls;
