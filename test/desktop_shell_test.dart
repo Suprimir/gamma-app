@@ -2,35 +2,41 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:gamma_app/adaptive/adaptive_layout.dart';
+import 'package:gamma_app/app/desktop_drawer.dart';
 import 'package:gamma_app/app/desktop_shell.dart';
-import 'package:gamma_app/app/floating_dock.dart';
 import 'package:gamma_app/app/navigation_destinations.dart';
+import 'package:gamma_app/data/api_client.dart';
 
 void main() {
   Widget harness({
     required AppWindowClass windowClass,
     required ValueChanged<int> onSelected,
+    int currentIndex = 0,
   }) {
     return MaterialApp(
       home: DesktopShell(
         destinations: appDestinations,
-        currentIndex: 0,
+        currentIndex: currentIndex,
         onSelected: onSelected,
         windowClass: windowClass,
+        api: ApiClient(baseUrl: 'http://127.0.0.1:8420'),
         page: const Text('workspace'),
       ),
     );
   }
 
   testWidgets(
-    ': expanded desktop shell shows an extended rail, all labels, and the page',
+    ': expanded desktop shell stays icon-only with tooltips and the page',
     (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
       await tester.pumpWidget(
         harness(windowClass: AppWindowClass.expanded, onSelected: (_) {}),
       );
 
-      expect(find.byType(NavigationRail), findsOneWidget);
-      expect(find.byType(FloatingDock), findsNothing);
+      expect(find.byType(DesktopSidebar), findsOneWidget);
       for (final label in [
         'Inicio',
         'Dispositivos',
@@ -38,15 +44,29 @@ void main() {
         'Ajustes',
         'Cámaras',
       ]) {
-        expect(find.text(label), findsOneWidget);
+        expect(find.byTooltip(label), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byType(DesktopSidebar),
+            matching: find.text(label),
+          ),
+          findsNothing,
+        );
       }
       expect(find.text('workspace'), findsOneWidget);
+
+      final sidebar = tester.getSize(find.byType(DesktopSidebar));
+      expect(sidebar.width, DesktopSidebar.kCollapsedWidth);
     },
   );
 
   testWidgets(
-    ': medium desktop shell keeps the rail, tooltips the icons, and taps select',
+    ': medium desktop shell starts collapsed with icon tooltips, taps select',
     (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(800, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
       int? selected;
       await tester.pumpWidget(
         harness(
@@ -55,8 +75,20 @@ void main() {
         ),
       );
 
-      expect(find.byType(NavigationRail), findsOneWidget);
-      expect(find.byType(Tooltip), findsNWidgets(5));
+      expect(find.byType(DesktopSidebar), findsOneWidget);
+      expect(
+        tester.getSize(find.byType(DesktopSidebar)).width,
+        DesktopSidebar.kCollapsedWidth,
+      );
+      for (final label in [
+        'Inicio',
+        'Dispositivos',
+        'Rutinas',
+        'Ajustes',
+        'Cámaras',
+      ]) {
+        expect(find.byTooltip(label), findsOneWidget);
+      }
 
       await tester.tap(find.byIcon(Icons.auto_awesome_outlined));
       await tester.pump();
@@ -64,9 +96,39 @@ void main() {
     },
   );
 
-  testWidgets(': tapping the Cámaras label selects index 4', (
+  testWidgets(': no hamburger, sidebar stays collapsed icon-only', (
     WidgetTester tester,
   ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      harness(windowClass: AppWindowClass.expanded, onSelected: (_) {}),
+    );
+
+    expect(find.byIcon(Icons.menu), findsNothing);
+    expect(
+      tester.getSize(find.byType(DesktopSidebar)).width,
+      DesktopSidebar.kCollapsedWidth,
+    );
+    expect(find.byTooltip('Dispositivos'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(DesktopSidebar),
+        matching: find.text('Dispositivos'),
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets(': tapping the Cámaras icon selects index 4', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
     int? selected;
     await tester.pumpWidget(
       harness(
@@ -75,19 +137,67 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Cámaras'));
+    await tester.tap(find.byIcon(Icons.videocam_outlined));
     await tester.pump();
     expect(selected, 4);
   });
 
-  testWidgets(': rail exposes the current selection', (
+  testWidgets(': tapping Ajustes icon selects index 3', (
     WidgetTester tester,
   ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    int? selected;
     await tester.pumpWidget(
-      harness(windowClass: AppWindowClass.large, onSelected: (_) {}),
+      harness(
+        windowClass: AppWindowClass.expanded,
+        onSelected: (i) => selected = i,
+      ),
     );
 
-    final rail = tester.widget<NavigationRail>(find.byType(NavigationRail));
-    expect(rail.selectedIndex, 0);
+    await tester.tap(find.byIcon(Icons.settings_outlined));
+    await tester.pump();
+    expect(selected, 3);
+  });
+
+  testWidgets(': tapping Rutinas icon selects index 2', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    int? selected;
+    await tester.pumpWidget(
+      harness(
+        windowClass: AppWindowClass.expanded,
+        onSelected: (i) => selected = i,
+      ),
+    );
+
+    await tester.tap(find.byIcon(Icons.auto_awesome_outlined));
+    await tester.pump();
+    expect(selected, 2);
+  });
+
+  testWidgets(': sidebar exposes the current selection', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      harness(
+        windowClass: AppWindowClass.large,
+        onSelected: (_) {},
+        currentIndex: 1,
+      ),
+    );
+
+    final sidebar = tester.widget<DesktopSidebar>(find.byType(DesktopSidebar));
+    expect(sidebar.selectedIndex, 1);
   });
 }

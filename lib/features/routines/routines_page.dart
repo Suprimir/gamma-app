@@ -1,16 +1,27 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../data/api_client.dart';
+import '../../adaptive/adaptive_scope.dart';
+import 'routine_actions.dart';
 import 'routines_editor_page.dart';
 import '../../ui/shared_widgets.dart';
 import '../../ui/app_colors.dart';
 
 class RoutinesPage extends StatefulWidget {
-  const RoutinesPage({super.key, required this.api});
+  const RoutinesPage({
+    super.key,
+    required this.api,
+    this.showBackButton = false,
+  });
 
   final ApiClient api;
+
+  /// Shows a Volver affordance on top: the page has no AppBar, so pushed
+  /// routes (off the rail) would otherwise have no way back.
+  final bool showBackButton;
 
   @override
   State<RoutinesPage> createState() => _RoutinesPageState();
@@ -62,23 +73,76 @@ class _RoutinesPageState extends State<RoutinesPage> {
   }
 
   Future<void> _openEditor([String? id]) async {
+    // La lista sí vive dentro del AppAdaptiveScope; la ruta pusheada no,
+    // así que el flag táctil se captura acá y se pasa explícito.
+    final wallLayout = AppAdaptiveScope.maybeOf(context)?.isWallPanel ?? false;
     final saved = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (_) => RoutinesEditorPage(api: widget.api, routineId: id),
+        builder: (_) => RoutinesEditorPage(
+          api: widget.api,
+          routineId: id,
+          wallLayout: wallLayout,
+        ),
       ),
     );
-    if (saved == true && mounted) _load();
+    if (saved == true && mounted) {
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Rutina guardada.')));
+      }
+    }
+  }
+
+  /// Enciende o apaga una rutina persistiendo `enabled` con el mismo PUT de
+  /// edición. Sin `enabled` en el modelo el switch no tendría dónde vivir.
+  Future<void> _toggleEnabled(Map<String, dynamic> routine, bool value) async {
+    final id = routine['id'].toString();
+    try {
+      await widget.api.updateRoutine(id, {
+        'nombre': routine['nombre']?.toString() ?? '',
+        'descripcion': routine['descripcion']?.toString() ?? '',
+        'activadores':
+            (routine['activadores'] as List?)?.cast<String>() ?? const [],
+        'acciones':
+            (routine['acciones'] as List?)?.cast<Map<String, dynamic>>() ??
+            const [],
+        'enabled': value,
+      });
+      if (!mounted) return;
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(value ? 'Rutina activada.' : 'Rutina desactivada.'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        await _load();
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('No se pudo cambiar: $e')));
+        }
+      }
+    }
   }
 
   Future<void> _confirmDelete(Map<String, dynamic> routine) async {
     final id = routine['id'].toString();
+    final name = routine['nombre']?.toString().trim() ?? '';
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Eliminar rutina'),
-        content: const Text(
-          '¿Eliminar esta rutina? Esta acción no se puede deshacer.',
+        content: Text(
+          name.isEmpty
+              ? '¿Eliminar esta rutina? Esta acción no se puede deshacer.'
+              : '¿Eliminar "$name"? Esta acción no se puede deshacer.',
         ),
         actions: [
           _DialogButton(
@@ -98,7 +162,13 @@ class _RoutinesPageState extends State<RoutinesPage> {
     if (ok != true || !mounted) return;
     try {
       await widget.api.deleteRoutine(id);
-      if (mounted) _load();
+      if (!mounted) return;
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Rutina eliminada.')));
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -122,6 +192,13 @@ class _RoutinesPageState extends State<RoutinesPage> {
     return SafeArea(
       child: CustomScrollView(
         slivers: [
+          if (widget.showBackButton)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(20, 20, 20, 0),
+                child: WallBackButton(),
+              ),
+            ),
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
@@ -138,13 +215,13 @@ class _RoutinesPageState extends State<RoutinesPage> {
                     ),
                   ),
                   ToolButton(
-                    icon: Icons.refresh,
+                    icon: CupertinoIcons.refresh,
                     label: 'Actualizar',
                     onTap: () => _load(refresh: true),
                   ),
                   const SizedBox(width: 10),
                   ToolButton(
-                    icon: Icons.add,
+                    icon: CupertinoIcons.add,
                     label: 'Nueva rutina',
                     filled: true,
                     onTap: () => _openEditor(),
@@ -169,21 +246,17 @@ class _RoutinesPageState extends State<RoutinesPage> {
           else
             SliverPadding(
               padding: const EdgeInsets.all(20),
-              sliver: SliverGrid(
-                gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 320,
-                  mainAxisSpacing: 14,
-                  crossAxisSpacing: 14,
-                  mainAxisExtent: MediaQuery.textScalerOf(
-                    context,
-                  ).scale(compact ? 300 : 330),
-                ),
+              sliver: SliverList(
                 delegate: SliverChildBuilderDelegate(
-                  (context, i) => _RoutineCard(
-                    routine: _routines[i],
-                    compact: compact,
-                    onEdit: () => _openEditor(_routines[i]['id'].toString()),
-                    onDelete: () => _confirmDelete(_routines[i]),
+                  (context, i) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _RoutineCard(
+                      routine: _routines[i],
+                      compact: compact,
+                      onEdit: () => _openEditor(_routines[i]['id'].toString()),
+                      onDelete: () => _confirmDelete(_routines[i]),
+                      onToggle: (value) => _toggleEnabled(_routines[i], value),
+                    ),
                   ),
                   childCount: _routines.length,
                 ),
@@ -195,335 +268,240 @@ class _RoutinesPageState extends State<RoutinesPage> {
   }
 }
 
+/// Fila horizontal de rutina según la referencia: icono por categoría,
+/// nombre + «trigger» · N acciones · estado, switch encender/apagar y menú ⋯
+/// (Editar / Eliminar). El tap en la tarjeta abre el editor.
 class _RoutineCard extends StatelessWidget {
   const _RoutineCard({
     required this.routine,
     required this.compact,
     required this.onEdit,
     required this.onDelete,
+    required this.onToggle,
   });
 
   final Map<String, dynamic> routine;
   final bool compact;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final ValueChanged<bool> onToggle;
 
   @override
   Widget build(BuildContext context) {
-    final activadores =
-        (routine['activadores'] as List?)?.cast<String>() ?? const [];
-    final count = (routine['acciones'] as List?)?.length ?? 0;
-    final countLabel = '$count ${count == 1 ? 'acción' : 'acciones'}';
-    final validationErrors =
-        (routine['validation_errors'] as List?)?.cast<String>() ?? const [];
-    final triggers = activadores.take(3).toList();
-    final extra = activadores.length - triggers.length;
+    final enabled = routineEnabled(routine);
+    final tile = _tileStyle(routine, enabled);
+    final iconBox = compact ? 48.0 : 56.0;
+    final iconSize = compact ? 24.0 : 27.0;
 
-    // Medidas compactas para móvil; las de escritorio quedan como estaban.
-    final pad = compact ? 16.0 : 22.0;
-    final iconBox = compact ? 44.0 : 52.0;
-    final iconSize = compact ? 23.0 : 27.0;
-    final titleSize = compact ? 18.0 : 20.0;
-    final buttonH = compact ? 48.0 : 56.0;
-    final triggerH = compact ? 34.0 : 40.0;
-
-    return Container(
-      padding: EdgeInsets.all(pad),
-      decoration: BoxDecoration(
-        color: Colors.white,
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onEdit,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.border),
-        boxShadow: const [
-          BoxShadow(
-            color: AppColors.shadow,
-            blurRadius: 20,
-            offset: Offset(0, 6),
+        child: Container(
+          padding: EdgeInsets.all(compact ? 12 : 16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppColors.border),
+            boxShadow: const [
+              BoxShadow(
+                color: AppColors.shadow,
+                blurRadius: 20,
+                offset: Offset(0, 6),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+          child: Row(
             children: [
               Container(
                 width: iconBox,
                 height: iconBox,
                 decoration: BoxDecoration(
-                  color: AppColors.accentTint,
+                  color: tile.background,
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: Icon(
-                  Icons.auto_awesome,
-                  size: iconSize,
-                  color: AppColors.accent,
-                ),
+                child: Icon(tile.icon, size: iconSize, color: tile.foreground),
               ),
-              const Spacer(),
-              Flexible(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  height: compact ? 28 : 32,
-                  decoration: BoxDecoration(
-                    color: AppColors.surfaceSoft,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    countLabel,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: compact ? 12 : 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textDim,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: ClipRect(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    routine['nombre']?.toString() ?? '',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: titleSize,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.02,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    routine['descripcion']?.toString() ?? '',
-                    maxLines: compact ? 1 : 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      height: 1.5,
-                      color: AppColors.textDim,
-                    ),
-                  ),
-                  if (validationErrors.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      height: 28,
-                      decoration: BoxDecoration(
-                        color: AppColors.red.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: AppColors.red.withValues(alpha: 0.32),
-                        ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      routine['nombre']?.toString() ?? '',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: compact ? 16 : 18,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.02,
+                        color: enabled ? AppColors.text : AppColors.textDim,
                       ),
-                      alignment: Alignment.center,
-                      child: const Text(
-                        'Requiere revisión',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      routineSubtitle(routine),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        height: 1.4,
+                        color: AppColors.textDim,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 4),
+              Switch(
+                value: enabled,
+                activeThumbColor: AppColors.accent,
+                onChanged: onToggle,
+              ),
+              PopupMenuButton<String>(
+                icon: const Icon(
+                  CupertinoIcons.ellipsis,
+                  color: AppColors.textDim,
+                ),
+                tooltip: 'Opciones',
+                onSelected: (value) {
+                  if (value == 'edit') onEdit();
+                  if (value == 'delete') onDelete();
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: 'edit',
+                    child: Row(
+                      children: [
+                        Icon(CupertinoIcons.pencil_outline, size: 18),
+                        SizedBox(width: 10),
+                        Text('Editar'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(
+                          CupertinoIcons.trash,
+                          size: 18,
                           color: AppColors.red,
                         ),
-                      ),
+                        SizedBox(width: 10),
+                        Text(
+                          'Eliminar',
+                          style: TextStyle(color: AppColors.red),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ],
               ),
-            ),
-          ),
-
-          if (triggers.isNotEmpty) ...[
-            SizedBox(
-              height: triggerH,
-              child: ClipRect(
-                child: Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    for (final trigger in triggers)
-                      _triggerPill(
-                        '«$trigger»',
-                        mic: true,
-                        height: triggerH,
-                        compact: compact,
-                      ),
-                    if (extra > 0)
-                      _triggerPill(
-                        '+$extra',
-                        height: triggerH,
-                        compact: compact,
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-          ],
-          Row(
-            children: [
-              Expanded(
-                child: _cardButton(
-                  label: 'Editar',
-                  filled: true,
-                  danger: false,
-                  icon: Icons.edit_outlined,
-                  height: buttonH,
-                  compact: compact,
-                  onTap: onEdit,
-                ),
-              ),
-              const SizedBox(width: 10),
-              if (compact)
-                // En móvil: cuadrado compacto solo con el icono de basura;
-                // el resto del ancho queda para el botón de Editar.
-                SizedBox(
-                  width: buttonH,
-                  height: buttonH,
-                  child: _cardButton(
-                    label: 'Eliminar',
-                    filled: false,
-                    danger: true,
-                    icon: Icons.delete_outline,
-                    height: buttonH,
-                    compact: compact,
-                    iconOnly: true,
-                    onTap: onDelete,
-                  ),
-                )
-              else
-                Expanded(
-                  child: _cardButton(
-                    label: 'Eliminar',
-                    filled: false,
-                    danger: true,
-                    icon: Icons.delete_outline,
-                    height: buttonH,
-                    compact: compact,
-                    onTap: onDelete,
-                  ),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  static Widget _triggerPill(
-    String text, {
-    bool mic = false,
-    required double height,
-    bool compact = false,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      height: height,
-      decoration: BoxDecoration(
-        color: AppColors.surfaceRaised,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: AppColors.border),
-      ),
-      alignment: Alignment.center,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (mic) ...[
-            Container(
-              width: 22,
-              height: 22,
-              decoration: const BoxDecoration(
-                color: AppColors.accentTint,
-                shape: BoxShape.circle,
-              ),
-              alignment: Alignment.center,
-              child: const Icon(Icons.mic, size: 13, color: AppColors.accent),
-            ),
-            const SizedBox(width: 5),
-          ],
-          Flexible(
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: compact ? 11.5 : 13,
-                fontWeight: FontWeight.w600,
-                color: mic ? AppColors.text : AppColors.textDim,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static Widget _cardButton({
-    required String label,
-    required bool filled,
-    required bool danger,
-    required VoidCallback onTap,
-    required double height,
-    required bool compact,
-    bool iconOnly = false,
-    IconData? icon,
-  }) {
-    final fg = danger ? AppColors.red : AppColors.accent;
-    return SizedBox(
-      height: height,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 12),
-          decoration: BoxDecoration(
-            color: filled ? (danger ? AppColors.red : AppColors.accent) : null,
-            borderRadius: BorderRadius.circular(14),
-            border: filled
-                ? null
-                : Border.all(
-                    color: danger
-                        ? AppColors.red.withValues(alpha: 0.3)
-                        : AppColors.border,
-                  ),
-          ),
-          alignment: Alignment.center,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (icon != null) ...[
-                Icon(
-                  icon,
-                  size: compact ? 18 : 18,
-                  color: filled ? Colors.white : fg,
-                ),
-                if (!iconOnly && !compact) const SizedBox(width: 6),
-              ],
-              if (!iconOnly)
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: compact ? 12 : 14,
-                      color: filled ? Colors.white : fg,
-                    ),
-                  ),
-                ),
             ],
           ),
         ),
       ),
     );
   }
+}
+
+/// La rutina está encendida salvo `enabled: false` explícito. El backend
+/// puede no mandar el campo en rutinas viejas: ausente = encendida.
+bool routineEnabled(Map<String, dynamic> routine) {
+  final value = routine['enabled'];
+  if (value is bool) return value;
+  return true;
+}
+
+/// Subtítulo de la tarjeta: «trigger» · N acciones · desactivada.
+/// Sin `last_run` en el modelo no se inventa «última vez».
+String routineSubtitle(Map<String, dynamic> routine) {
+  final activadores =
+      (routine['activadores'] as List?)?.cast<String>() ?? const [];
+  final trigger = activadores.isNotEmpty ? activadores.first : '';
+  final count = (routine['acciones'] as List?)?.length ?? 0;
+  final countLabel = '$count ${count == 1 ? 'acción' : 'acciones'}';
+  final head = trigger.isEmpty ? countLabel : '«$trigger» · $countLabel';
+  if (!routineEnabled(routine)) return '$head · desactivada';
+  final validationErrors =
+      (routine['validation_errors'] as List?)?.cast<String>() ?? const [];
+  if (validationErrors.isNotEmpty) return '$head · requiere revisión';
+  return head;
+}
+
+/// Icono y colores del tile según la categoría dominante (primera acción).
+/// Apagada: gris parejo como en la referencia.
+({Color background, Color foreground, IconData icon}) _tileStyle(
+  Map<String, dynamic> routine,
+  bool enabled,
+) {
+  if (!enabled) {
+    return (
+      background: AppColors.surfaceSoft,
+      foreground: AppColors.textDim,
+      icon: CupertinoIcons.moon,
+    );
+  }
+  final acciones =
+      (routine['acciones'] as List?)?.cast<Map<String, dynamic>>() ?? const [];
+  final category = acciones.isNotEmpty
+      ? actionCategory(acciones.first)
+      : 'sparkles';
+  return switch (category) {
+    'device' => (
+      background: const Color(0xFFFEF3C7),
+      foreground: const Color(0xFFB45309),
+      icon: CupertinoIcons.lightbulb,
+    ),
+    'location' || 'house' => (
+      background: const Color(0xFFDBEAFE),
+      foreground: const Color(0xFF1D4ED8),
+      icon: CupertinoIcons.map,
+    ),
+    'music' => (
+      background: const Color(0xFFEDE9FE),
+      foreground: const Color(0xFF6D28D9),
+      icon: CupertinoIcons.music_note,
+    ),
+    'news' => (
+      background: const Color(0xFFFFEDD5),
+      foreground: const Color(0xFFC2410C),
+      icon: CupertinoIcons.news,
+    ),
+    'camera' => (
+      background: const Color(0xFFCCFBF1),
+      foreground: const Color(0xFF0F766E),
+      icon: CupertinoIcons.videocam,
+    ),
+    'climate' => (
+      background: const Color(0xFFCFFAFE),
+      foreground: const Color(0xFF0E7490),
+      icon: CupertinoIcons.thermometer,
+    ),
+    'wait' => (
+      background: const Color(0xFFE2E8F0),
+      foreground: const Color(0xFF475569),
+      icon: CupertinoIcons.clock,
+    ),
+    'announce' => (
+      background: const Color(0xFFFCE7F3),
+      foreground: const Color(0xFFBE185D),
+      icon: CupertinoIcons.volume_up,
+    ),
+    'runroutine' => (
+      background: const Color(0xFFE0E7FF),
+      foreground: const Color(0xFF4338CA),
+      icon: CupertinoIcons.play_circle,
+    ),
+    _ => (
+      background: AppColors.accentTint,
+      foreground: AppColors.accent,
+      icon: CupertinoIcons.sparkles,
+    ),
+  };
 }
 
 class _DialogButton extends StatelessWidget {

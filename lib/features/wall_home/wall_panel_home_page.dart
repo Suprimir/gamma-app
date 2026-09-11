@@ -1,16 +1,31 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../data/api_client.dart';
 import '../../ui/app_colors.dart';
+import '../../ui/assistant_orb.dart';
+import '../../ui/audio_waves.dart';
 import '../../adaptive/adaptive_scope.dart';
 import '../dashboard/dashboard_page.dart';
+import '../dashboard/desktop_dashboard_page.dart';
 import '../../data/device_inventory.dart';
 import '../../data/http_device_inventory_repository.dart';
+import '../../data/weather_repository.dart';
 import '../../ui/shared_widgets.dart';
-import 'wall_area_overview_page.dart';
+import '../voice/vad_model.dart';
+import 'wall_activity_bus.dart';
+import 'wall_voice_controller.dart';
 import '../devices/wall_devices_page.dart';
-import 'wall_home_clock.dart';
+import '../cameras/cameras_page.dart';
+import '../cameras/cameras_player_page.dart';
 import 'wall_home_projection.dart';
+import 'wall_quick_actions_usage.dart';
+import 'wall_area_editor.dart';
+import '../areas/area_editor.dart';
 
 /// Surface-aware Home destination.
 ///
@@ -26,7 +41,16 @@ class AdaptiveHomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     final scope = AppAdaptiveScope.of(context);
     if (scope.isWallPanel) {
-      return WallPanelHomePage(api: api);
+      // Idle sleep is a wall-only behavior (60s of true inactivity: the
+      // countdown resets on any touch anywhere and pauses during
+      // hands-free work like voice dictation).
+      return WallPanelHomePage(
+        api: api,
+        idleTimeout: const Duration(seconds: 60),
+      );
+    }
+    if (scope.isDesktopSurface) {
+      return DesktopDashboardPage(api: api);
     }
     return DashboardPage(api: api);
   }
@@ -42,16 +66,63 @@ class WallPanelHomePage extends StatefulWidget {
     super.key,
     required this.api,
     DeviceInventoryRepository? repository,
+    this.idleTimeout,
   }) : repository = repository ?? HttpDeviceInventoryRepository(api);
 
   final ApiClient api;
   final DeviceInventoryRepository repository;
 
+  /// Inactivity delay before the sleep overlay takes over. Null disables
+  /// sleep (widget tests and non-wall previews). Production wall passes 60s.
+  final Duration? idleTimeout;
+
   @override
   State<WallPanelHomePage> createState() => _WallPanelHomePageState();
 }
 
-class _WallPanelHomePageState extends State<WallPanelHomePage> {
+class _QuickActionDef {
+  const _QuickActionDef({
+    required this.key,
+    required this.icon,
+    required this.label,
+    required this.command,
+  });
+
+  final String key;
+  final IconData icon;
+  final String label;
+  final String command;
+}
+
+const _wallQuickActions = [
+  _QuickActionDef(
+    key: 'apagar',
+    icon: Icons.power_settings_new_outlined,
+    label: 'Apagar todo',
+    command: 'Apagá todas las luces',
+  ),
+  _QuickActionDef(
+    key: 'noche',
+    icon: Icons.nightlight_outlined,
+    label: 'Modo noche',
+    command: 'Activá modo noche',
+  ),
+  _QuickActionDef(
+    key: 'segura',
+    icon: Icons.shield_outlined,
+    label: 'Asegurar casa',
+    command: 'Asegurá la casa',
+  ),
+  _QuickActionDef(
+    key: 'fuera',
+    icon: Icons.home_outlined,
+    label: 'Modo fuera',
+    command: 'Activá modo fuera',
+  ),
+];
+
+class _WallPanelHomePageState extends State<WallPanelHomePage>
+    with SingleTickerProviderStateMixin {
   DeviceInventorySnapshot? _snapshot;
   WallHomeSnapshot? _wall;
   Object? _error;
@@ -62,6 +133,54 @@ class _WallPanelHomePageState extends State<WallPanelHomePage> {
 
   /// Set on the first active load; offstage pages stay inert until activated.
   bool _loadStarted = false;
+
+  /// Quick-action order by cross-surface usage (most used first).
+  List<String> _quickOrder = [for (final a in _wallQuickActions) a.key];
+  bool _quickBusy = false;
+  String? _quickBusyKey;
+
+  /// Sleep-mode state: set while the inline voice loop is active so talking
+  /// never triggers sleep, and while the sleep overlay covers the screen.
+  Timer? _idleTimer;
+  bool _sleeping = false;
+
+  /// Fullscreen sleep entry: an [OverlayEntry] (not an in-tree
+  /// Positioned.fill) so sleep covers the whole window INCLUDING the shell
+  /// side rail. The page area alone can never paint over the rail.
+  /// The SAME entry backs the interactive drag-to-sleep sheet: while
+  /// [_sheetOwned] the home gesture strip drives its reveal and completing
+  /// the gesture never flashes.
+  OverlayEntry? _sleepEntry;
+  bool _sleepEntryInserted = false;
+
+  /// Interactive drag-to-sleep: px of the sleep sheet pulled up from the
+  /// bottom edge while the home gesture strip owns the drag.
+  double _sheetLift = 0.0;
+  bool _sheetOwned = false;
+  late final AnimationController _sheet = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 280),
+  );
+
+  /// Inline voice loop (same contract as mobile/desktop): the assistant card
+  /// talks right here, with no navigation to another screen.
+  late final WallVoiceController _voice;
+  StreamSubscription<List<double>>? _speechSub;
+
+  /// Mic open or turn in flight: sleep stays off and touches don't re-arm.
+  bool get _voiceActive => _voice.listening || _voice.busy;
+
+  @override
+  void initState() {
+    super.initState();
+    _voice = WallVoiceController(widget.api)..warmUp();
+    _speechSub = VadModel.vad.onSpeechEnd.listen(_voice.onSpeechEnd);
+    _voice.addListener(_onVoiceChanged);
+    // Global activity (touches in any route/dialog/sheet) and hands-free
+    // holds (voice dictation) drive the same countdown as local touches.
+    WallActivityBus.pokes.addListener(_onBusPoke);
+    WallActivityBus.holds.addListener(_onBusHolds);
+  }
 
   @override
   void didChangeDependencies() {
@@ -78,13 +197,25 @@ class _WallPanelHomePageState extends State<WallPanelHomePage> {
       _error = null;
       _refreshError = null;
     });
+    // Fire-and-forget: warms the weather cache so the idle screen paints
+    // the temperature on its first frame instead of flashing icon-only.
+    WeatherRepository.prefetch();
     try {
       final snapshot = await widget.repository.load();
       if (!mounted) return;
       setState(() {
         _snapshot = snapshot;
         _wall = projectWallHome(snapshot);
+        // First paint never waits for plugin I/O; persisted order arrives
+        // async and re-sorts when ready.
+        _quickOrder = WallQuickActionsUsage.memoryOrder(_quickOrder);
       });
+      // Armed here (not only in finally): the persisted-order await below
+      // may never resolve where the prefs plugin is unavailable.
+      _armIdle();
+      final order = await WallQuickActionsUsage.orderedKeys(_quickOrder);
+      if (!mounted) return;
+      setState(() => _quickOrder = order);
     } catch (error) {
       if (!mounted) return;
       if (_wall == null) {
@@ -95,7 +226,254 @@ class _WallPanelHomePageState extends State<WallPanelHomePage> {
         setState(() => _refreshError = error);
       }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+        if (_wall != null) _armIdle();
+      }
+    }
+  }
+
+  Future<void> _runQuickAction(_QuickActionDef action) async {
+    if (_quickBusy) return;
+    setState(() {
+      _quickBusy = true;
+      _quickBusyKey = action.key;
+    });
+    try {
+      // Persistence is best-effort; the memory count already applied.
+      unawaited(WallQuickActionsUsage.recordUse(action.key));
+      final result = await widget.api.turn(action.command);
+      if (!mounted) return;
+      final speech = result['speech']?.toString() ?? 'Listo.';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(speech)));
+      final order = await WallQuickActionsUsage.orderedKeys(_quickOrder);
+      if (mounted) setState(() => _quickOrder = order);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('No se pudo ejecutar: $e')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _quickBusy = false;
+          _quickBusyKey = null;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    WallActivityBus.pokes.removeListener(_onBusPoke);
+    WallActivityBus.holds.removeListener(_onBusHolds);
+    _voice.removeListener(_onVoiceChanged);
+    _speechSub?.cancel();
+    _voice.dispose();
+    _idleTimer?.cancel();
+    _pillTimer?.cancel();
+    _sheet.dispose();
+    _removeSleepOverlay();
+    super.dispose();
+  }
+
+  /// While the voice loop is active sleep stays off; when it goes idle
+  /// again the countdown restarts from zero.
+  void _onVoiceChanged() {
+    if (_voiceActive) {
+      _idleTimer?.cancel();
+    } else if (!_sleeping && mounted) {
+      _armIdle();
+    }
+  }
+
+  /// Touch anywhere in the app (any route, dialog or sheet) restarts the
+  /// countdown through the global bus.
+  void _onBusPoke() => _poke();
+
+  /// A hands-free hold (e.g. voice dictation) pauses the countdown; release
+  /// restarts it from zero when nothing else is active.
+  void _onBusHolds() {
+    if (WallActivityBus.held) {
+      _idleTimer?.cancel();
+    } else if (!_sleeping && mounted) {
+      _armIdle();
+    }
+  }
+
+  /// (Re)arms the inactivity countdown. No-op when sleep is disabled
+  /// ([idleTimeout] null), while sleeping, while the voice loop is active,
+  /// or while a hands-free hold (voice dictation) is in flight.
+  void _armIdle() {
+    _idleTimer?.cancel();
+    final timeout = widget.idleTimeout;
+    if (timeout == null ||
+        _sleeping ||
+        _voiceActive ||
+        WallActivityBus.held ||
+        !mounted) {
+      return;
+    }
+    _idleTimer = Timer(timeout, () {
+      if (mounted && !_voiceActive && !WallActivityBus.held) {
+        setState(() => _sleeping = true);
+        _syncSleepOverlay();
+      }
+    });
+  }
+
+  /// Inserts (or removes) the fullscreen sleep overlay to match [_sleeping].
+  /// Insert runs post-frame: the entry must join a laid-out [Overlay].
+  void _syncSleepOverlay() {
+    if (!mounted) return;
+    if (_sleeping && _wall != null && _sleepEntry == null) {
+      final entry = _buildSleepEntry(animateEntrance: true);
+      _sleepEntry = entry;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_sleeping || _sleepEntry != entry) return;
+        Overlay.of(context).insert(entry);
+        _sleepEntryInserted = true;
+      });
+    } else if (!_sleeping) {
+      _removeSleepOverlay();
+    }
+  }
+
+  OverlayEntry _buildSleepEntry({required bool animateEntrance}) {
+    return OverlayEntry(
+      builder: (_) => _WallSleepOverlay(
+        key: const ValueKey('wall-sleep-overlay'),
+        onWake: _wake,
+        liftPx: _sheetOwned ? _sheetLift : double.infinity,
+        gesturesEnabled: !_sheetOwned,
+        animateEntrance: animateEntrance,
+      ),
+    );
+  }
+
+  void _removeSleepOverlay() {
+    if (_sleepEntryInserted) {
+      _sleepEntry?.remove();
+      _sleepEntryInserted = false;
+    }
+    _sleepEntry = null;
+    _sheetOwned = false;
+    _sheetLift = 0;
+  }
+
+  /// Tablet-style sleep entry: drags starting on the bottom gesture strip
+  /// pull the sleep sheet up following the finger (the scroll view never
+  /// competes down there). Release past ~35% (or with a fast fling) lands
+  /// in sleep; otherwise the sheet slides back down.
+  void _onSheetDragStart(DragStartDetails details) {
+    if (_sleeping ||
+        _voiceActive ||
+        _sheet.isAnimating ||
+        _sleepEntry != null ||
+        !mounted) {
+      return;
+    }
+    _sheetOwned = true;
+    _sheetLift = 0;
+    final entry = _buildSleepEntry(animateEntrance: false);
+    _sleepEntry = entry;
+    Overlay.of(context).insert(entry);
+    _sleepEntryInserted = true;
+    if (mounted) setState(() {});
+  }
+
+  void _onSheetDragUpdate(DragUpdateDetails details) {
+    if (!_sheetOwned || _sleepEntry == null) return;
+    final height = MediaQuery.sizeOf(context).height;
+    setState(() {
+      _sheetLift = (_sheetLift - details.delta.dy).clamp(0.0, height);
+    });
+    _sleepEntry?.markNeedsBuild();
+  }
+
+  void _onSheetDragEnd(DragEndDetails details) {
+    if (!_sheetOwned || _sleepEntry == null) return;
+    final height = MediaQuery.sizeOf(context).height;
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity < -600 || _sheetLift > height * 0.35) {
+      _settleSheet(target: height, complete: true);
+    } else {
+      _settleSheet(target: 0, complete: false);
+    }
+  }
+
+  void _settleSheet({required double target, required bool complete}) {
+    final animation = Tween(
+      begin: _sheetLift,
+      end: target,
+    ).animate(CurvedAnimation(parent: _sheet, curve: Curves.easeOut));
+    void listener() {
+      if (!mounted) return;
+      setState(() => _sheetLift = animation.value);
+      _sleepEntry?.markNeedsBuild();
+    }
+
+    _sheet.addListener(listener);
+    _sheet.forward(from: 0).whenComplete(() {
+      _sheet.removeListener(listener);
+      if (!mounted) return;
+      if (complete) {
+        _idleTimer?.cancel();
+        setState(() {
+          _sleeping = true;
+          _sheetOwned = false;
+          _sheetLift = 0;
+        });
+        _sleepEntry?.markNeedsBuild();
+      } else {
+        _removeSleepOverlay();
+        if (mounted) setState(() {});
+      }
+    });
+  }
+
+  void _poke() {
+    if (_sleeping || _voiceActive) return;
+    _armIdle();
+  }
+
+  /// Home gesture hint: the bottom pill fades in while the user is actively
+  /// touching/scrolling (hinting the swipe-up-to-sleep gesture) and hides
+  /// ~1.4s after the interaction ends. Never steals touches.
+  Timer? _pillTimer;
+  bool _showPill = false;
+
+  void _flashPill() {
+    if (!mounted || _sleeping) return;
+    if (!_showPill) setState(() => _showPill = true);
+    _pillTimer?.cancel();
+    _pillTimer = Timer(const Duration(milliseconds: 1400), () {
+      if (mounted) setState(() => _showPill = false);
+    });
+  }
+
+  void _wake() {
+    setState(() => _sleeping = false);
+    _syncSleepOverlay();
+    _armIdle();
+  }
+
+  /// Swipe-up entry to sleep: only a clear upward fling counts, so normal
+  /// scrolling never triggers it. Skipped while the gesture strip owns an
+  /// interactive sheet (it drives the transition itself).
+  void _handleVerticalDragEnd(DragEndDetails details) {
+    if (_sleeping || _voiceActive || _sleepEntry != null) return;
+    final velocity =
+        details.primaryVelocity ?? details.velocity.pixelsPerSecond.dy;
+    if (velocity < -500) {
+      _idleTimer?.cancel();
+      if (mounted) {
+        setState(() => _sleeping = true);
+        _syncSleepOverlay();
+      }
     }
   }
 
@@ -115,29 +493,189 @@ class _WallPanelHomePageState extends State<WallPanelHomePage> {
       );
     }
     return _WallHomeScaffold(
-      child: _WallHomeBody(
-        snapshot: _snapshot!,
-        wall: _wall!,
-        refreshError: _refreshError,
-        onRefresh: _load,
-        onOpenArea: _openArea,
-        onOpenAttention: _openAttention,
+      // Any touch restarts the sleep countdown. Sleep itself renders as a
+      // fullscreen OverlayEntry (covers the shell rail too) and consumes
+      // its own taps to wake, so the page tree stays overlay-free.
+      child: Listener(
+        onPointerDown: (_) {
+          _poke();
+          _flashPill();
+        },
+        onPointerMove: (_) => _poke(),
+        onPointerUp: (_) => _poke(),
+        child: GestureDetector(
+          onVerticalDragEnd: _handleVerticalDragEnd,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              if (notification is ScrollStartNotification ||
+                  notification is ScrollUpdateNotification ||
+                  notification is OverscrollNotification) {
+                _flashPill();
+              }
+              return false;
+            },
+            child: Stack(
+              children: [
+                _WallHomeBody(
+                  api: widget.api,
+                  snapshot: _snapshot!,
+                  wall: _wall!,
+                  refreshError: _refreshError,
+                  onRefresh: _load,
+                  onOpenArea: _showAreaMenu,
+                  onAreaLongPress: _areaLongPress,
+                  onOpenAttention: _openAttention,
+                  voice: _voice,
+                  quickOrder: _quickOrder,
+                  quickBusy: _quickBusy,
+                  quickBusyKey: _quickBusyKey,
+                  onQuickAction: _runQuickAction,
+                ),
+                // Tablet-style gesture pill: floats at the bottom of Inicio
+                // and only shows while sliding, hinting swipe-up-to-sleep.
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: IgnorePointer(
+                    child: SafeArea(
+                      top: false,
+                      child: AnimatedOpacity(
+                        duration: const Duration(milliseconds: 250),
+                        opacity: _showPill || _sheetLift > 0 ? 1.0 : 0.0,
+                        child: Center(
+                          child: Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            width: 134,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: const Color(
+                                0xFF1C1F2B,
+                              ).withValues(alpha: 0.55),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                // Dedicated gesture strip: bottom-edge drags pull the sleep
+                // sheet up following the finger, tablet-style. Transparent,
+                // 36px tall over empty scroll padding — never blocks taps.
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: 36,
+                  child: GestureDetector(
+                    key: const ValueKey('wall-sleep-gesture-strip'),
+                    behavior: HitTestBehavior.translucent,
+                    onVerticalDragStart: _onSheetDragStart,
+                    onVerticalDragUpdate: _onSheetDragUpdate,
+                    onVerticalDragEnd: _onSheetDragEnd,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
 
-  void _openArea(WallAreaSummary area) {
-    final snapshot = _snapshot;
-    if (snapshot == null) return;
+  /// Tap or long-press on a home area card: a centered menu with
+  /// Ver dispositivos / Editar / Eliminar. Mutations reload so the grid
+  /// converges on canonical data.
+  Future<void> _showAreaMenu(WallAreaSummary area) async {
+    final action = await _showWallAreaActions(context, area.name);
+    if (action == null || !mounted) return;
+    switch (action) {
+      case _WallAreaAction.view:
+        _openAreaDevices(area);
+      case _WallAreaAction.edit:
+        await _editArea(area);
+      case _WallAreaAction.delete:
+        await _deleteArea(area);
+    }
+  }
+
+  /// Deep link into the wall devices list, pre-filtered to this area.
+  void _openAreaDevices(WallAreaSummary area) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => WallAreaOverviewPage(
-          snapshot: snapshot,
-          areaId: area.areaId,
-          areaName: area.name,
+        builder: (_) => WallDevicesPage(
+          api: widget.api,
+          repository: widget.repository,
+          initialLocationId: area.areaId,
+          showBackButton: true,
         ),
       ),
     );
+  }
+
+  HomeArea? _homeArea(String areaId) {
+    final snapshot = _snapshot;
+    if (snapshot == null) return null;
+    for (final area in snapshot.areas) {
+      if (area.id == areaId) return area;
+    }
+    return null;
+  }
+
+  /// Long-press on a home area card: edit or delete it without leaving
+  /// Inicio. Mutations reload so the grid converges on canonical data.
+  Future<void> _areaLongPress(WallAreaSummary area) async {
+    await _showAreaMenu(area);
+  }
+
+  Future<void> _editArea(WallAreaSummary area) async {
+    final current = _homeArea(area.areaId);
+    final result = await showWallAreaEditor(
+      context: context,
+      api: widget.api,
+      title: 'Editar área',
+      subtitle: 'Actualizá el nombre',
+      submitLabel: 'Guardar',
+      initialName: current?.name ?? area.name,
+      initialAliases: current?.aliases ?? const [],
+    );
+    if (result == null || !mounted) return;
+    try {
+      await widget.repository.updateArea(
+        area.areaId,
+        name: result.name,
+        aliases: result.aliases,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Área actualizada.')));
+      await _load();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(areaErrorMessage(error))));
+    }
+  }
+
+  Future<void> _deleteArea(WallAreaSummary area) async {
+    final confirmed = await showAreaDeleteConfirm(context, area.name);
+    if (!confirmed || !mounted) return;
+    try {
+      await widget.repository.deleteArea(area.areaId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Área eliminada.')));
+      await _load();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(areaErrorMessage(error))));
+    }
   }
 
   void _openAttention() {
@@ -145,8 +683,11 @@ class _WallPanelHomePageState extends State<WallPanelHomePage> {
     // which surfaces the pending-device configuration.
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) =>
-            WallDevicesPage(api: widget.api, repository: widget.repository),
+        builder: (_) => WallDevicesPage(
+          api: widget.api,
+          repository: widget.repository,
+          showBackButton: true,
+        ),
       ),
     );
   }
@@ -174,18 +715,32 @@ class _WallHomeScaffold extends StatelessWidget {
 
 class _WallHomeBody extends StatelessWidget {
   const _WallHomeBody({
+    required this.api,
     required this.snapshot,
     required this.wall,
     required this.onOpenArea,
+    required this.onAreaLongPress,
     required this.onOpenAttention,
+    required this.voice,
+    required this.quickOrder,
+    required this.quickBusy,
+    required this.quickBusyKey,
+    required this.onQuickAction,
     this.refreshError,
     this.onRefresh,
   });
 
+  final ApiClient api;
   final DeviceInventorySnapshot snapshot;
   final WallHomeSnapshot wall;
   final ValueChanged<WallAreaSummary> onOpenArea;
+  final ValueChanged<WallAreaSummary> onAreaLongPress;
   final VoidCallback onOpenAttention;
+  final WallVoiceController voice;
+  final List<String> quickOrder;
+  final bool quickBusy;
+  final String? quickBusyKey;
+  final ValueChanged<_QuickActionDef> onQuickAction;
 
   /// Non-destructive refresh failure shown above the retained snapshot.
   final Object? refreshError;
@@ -193,42 +748,935 @@ class _WallHomeBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final byKey = {for (final a in _wallQuickActions) a.key: a};
+    final ordered = [
+      for (final key in quickOrder)
+        if (byKey.containsKey(key)) byKey[key]!,
+    ];
     return RefreshIndicator(
       onRefresh: () async {
         await onRefresh?.call();
       },
-      child: ListView(
+      // SingleChildScrollView + Column (not ListView): the wall home is a
+      // short screen and every section must exist eagerly at any viewport.
+      // A lazy ListView leaves below-the-fold sections unbuilt, which also
+      // breaks below-the-fold finders in widget tests.
+      child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(28, 28, 28, 120),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Mi casa',
+              style: TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.w600,
+                color: AppColors.text,
+              ),
+            ),
+            const SizedBox(height: 16),
+            _WallHeroRow(api: api, voice: voice),
+            if (refreshError != null) ...[
+              const SizedBox(height: 12),
+              _RefreshErrorBanner(onRetry: onRefresh),
+            ],
+            if (wall.attentionCount > 0) ...[
+              const SizedBox(height: 12),
+              _WallAttentionCard(
+                attentionCount: wall.attentionCount,
+                onTap: onOpenAttention,
+              ),
+            ],
+            const SizedBox(height: 20),
+            const _WallSectionTitle('Acciones rápidas'),
+            const SizedBox(height: 12),
+            _WallQuickGrid(
+              actions: ordered,
+              busy: quickBusy,
+              busyKey: quickBusyKey,
+              onTap: onQuickAction,
+            ),
+            const SizedBox(height: 20),
+            _WallCamerasSection(api: api),
+            const SizedBox(height: 20),
+            const _WallSectionTitle('Habitaciones'),
+            const SizedBox(height: 12),
+            _WallAreaGrid(
+              areas: wall.areas,
+              onOpenArea: onOpenArea,
+              onAreaLongPress: onAreaLongPress,
+              onOpenDevices: onOpenAttention,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Press-down shrink used on every wall tile: finger feedback without
+/// changing the tap handler underneath.
+class _TapScale extends StatefulWidget {
+  const _TapScale({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_TapScale> createState() => _TapScaleState();
+}
+
+class _TapScaleState extends State<_TapScale> {
+  double _scale = 1.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (_) => setState(() => _scale = 0.96),
+      onPointerUp: (_) => setState(() => _scale = 1.0),
+      onPointerCancel: (_) => setState(() => _scale = 1.0),
+      child: AnimatedScale(
+        scale: _scale,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+class _WallSectionTitle extends StatelessWidget {
+  const _WallSectionTitle(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.w700,
+        color: AppColors.text,
+      ),
+    );
+  }
+}
+
+/// Top hero row from the reference layout: assistant + music side by side,
+/// stacked on narrow widths. Floating cards with press animation.
+class _WallHeroRow extends StatelessWidget {
+  const _WallHeroRow({required this.api, required this.voice});
+
+  final ApiClient api;
+  final WallVoiceController voice;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < 640;
+        if (narrow) {
+          return Column(
+            children: [
+              _WallAssistantCard(voice: voice),
+              const SizedBox(height: 14),
+              _WallMusicCard(api: api),
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: _WallAssistantCard(voice: voice)),
+            const SizedBox(width: 14),
+            Expanded(child: _WallMusicCard(api: api)),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Wall assistant talks inline: tapping the orb toggles the same VAD-gated
+/// voice loop as mobile/desktop, with live state, waves and transcript
+/// right in the card. No navigation to another screen.
+class _WallAssistantCard extends StatelessWidget {
+  const _WallAssistantCard({required this.voice});
+
+  final WallVoiceController voice;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: ListenableBuilder(
+        listenable: voice,
+        builder: (context, _) {
+          final listening = voice.listening;
+          final error = voice.error;
+          final thought = voice.thought;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 88,
+                height: 88,
+                child: FittedBox(
+                  fit: BoxFit.cover,
+                  child: SizedBox(
+                    width: 192,
+                    height: 192,
+                    child: AssistantOrb(
+                      state: voice.state,
+                      onTap: voice.busy ? null : voice.toggle,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.auto_awesome, size: 16, color: AppColors.accent),
+                  SizedBox(width: 6),
+                  Text(
+                    'GAMMA',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.2,
+                      color: AppColors.text,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _voiceStatusCopy(voice),
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              // Fixed slot: waves / error / thought / hint all share the
+              // same height, so toggling "Te escucho…" never resizes the
+              // card ni empuja lo de abajo.
+              SizedBox(
+                height: 44,
+                child: Center(
+                  child: listening
+                      ? const AudioWaves(listening: true)
+                      : error != null
+                      ? Text(
+                          error,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: AppColors.red,
+                          ),
+                        )
+                      : thought.isNotEmpty
+                      ? Text(
+                          thought,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: AppColors.textDim,
+                          ),
+                        )
+                      : const Text(
+                          'Tocá el orbe y hablá',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: AppColors.textDim,
+                          ),
+                        ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+String _voiceStatusCopy(WallVoiceController c) {
+  if (c.error != null) return 'Algo no salió bien';
+  return switch (c.state) {
+    LoopState.listening => 'Te escucho…',
+    LoopState.processing => 'Procesando…',
+    LoopState.speaking => 'Respondiendo…',
+    LoopState.error => 'Algo no salió bien',
+    LoopState.idle => c.busy ? 'Procesando…' : '¿En qué te ayudo?',
+  };
+}
+
+class _WallMusicCard extends StatefulWidget {
+  const _WallMusicCard({required this.api});
+
+  final ApiClient api;
+
+  @override
+  State<_WallMusicCard> createState() => _WallMusicCardState();
+}
+
+class _WallMusicCardState extends State<_WallMusicCard> {
+  static const _externalUrlChannel = MethodChannel('gamma_app/external_url');
+
+  bool _loading = true;
+  bool _connecting = false;
+  bool _waitingAuth = false;
+  bool _connected = false;
+  String _account = '';
+  String? _error;
+  Timer? _oauthPoll;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStatus();
+  }
+
+  @override
+  void dispose() {
+    _oauthPoll?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadStatus() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final settings = await widget.api.spotifySettings();
+      if (!mounted) return;
+      setState(() {
+        _connected =
+            settings['authenticated'] == true &&
+            settings['client_id_configured'] == true;
+        _account = settings['account_name']?.toString() ?? '';
+      });
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _connect() async {
+    if (_connecting) return;
+    setState(() {
+      _connecting = true;
+      _error = null;
+    });
+    try {
+      final data = await widget.api.spotifyAuthStart();
+      final url = data['auth_url']?.toString();
+      if (url == null || url.isEmpty) {
+        throw StateError('URL de autorización vacía');
+      }
+      await _openExternalUrl(url);
+      if (!mounted) return;
+      setState(() => _waitingAuth = true);
+      _startPolling();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _connecting = false;
+      });
+    }
+  }
+
+  Future<void> _openExternalUrl(String url) async {
+    if (Platform.isAndroid) {
+      await _externalUrlChannel.invokeMethod<void>('openUrl', {'url': url});
+      return;
+    }
+    if (Platform.isLinux) {
+      final result = await Process.run('xdg-open', [url]);
+      if (result.exitCode != 0) {
+        final details = result.stderr.toString().trim();
+        throw StateError(
+          details.isEmpty
+              ? 'No se pudo abrir el navegador.'
+              : 'No se pudo abrir el navegador: $details',
+        );
+      }
+      return;
+    }
+    throw UnsupportedError('Abrir enlaces externos no está soportado aquí.');
+  }
+
+  void _startPolling() {
+    _oauthPoll?.cancel();
+    var attempts = 0;
+    _oauthPoll = Timer.periodic(const Duration(seconds: 2), (timer) async {
+      attempts++;
+      try {
+        final settings = await widget.api.spotifySettings();
+        if (!mounted) return;
+        final connected =
+            settings['authenticated'] == true &&
+            settings['client_id_configured'] == true;
+        if (connected) {
+          timer.cancel();
+          setState(() {
+            _connected = true;
+            _account = settings['account_name']?.toString() ?? '';
+            _connecting = false;
+            _waitingAuth = false;
+          });
+          return;
+        }
+        if (attempts >= 60) {
+          timer.cancel();
+          if (!mounted) return;
+          setState(() {
+            _connecting = false;
+            _waitingAuth = false;
+            _error = 'Tiempo de espera agotado. Intentá de nuevo.';
+          });
+        }
+      } catch (_) {
+        if (attempts >= 60) {
+          timer.cancel();
+          if (!mounted) return;
+          setState(() {
+            _connecting = false;
+            _waitingAuth = false;
+            _error = 'No se pudo confirmar la conexión.';
+          });
+        }
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141826),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const WallHomeClock(),
-          const SizedBox(height: 20),
-          const Text(
-            'Mi casa',
-            style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.w600,
-              color: AppColors.text,
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: const Color(0xFF4ADE80),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(
+              Icons.music_note,
+              size: 30,
+              color: Color(0xFF141826),
             ),
           ),
-          if (refreshError != null) ...[
+          const SizedBox(height: 14),
+          // Wrap instead of Row: the pill text must never overflow the card
+          // on narrow panels (wraps to a second line instead).
+          Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              const Text(
+                'Spotify',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: _connected ? Colors.green : Colors.white24,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  _loading
+                      ? '...'
+                      : (_connected ? 'Conectado' : 'Sin conectar'),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else if (_connected) ...[
+            if (_account.isNotEmpty)
+              Text(
+                _account,
+                style: const TextStyle(fontSize: 13, color: Colors.white70),
+              ),
+            const SizedBox(height: 4),
+            const Text(
+              'Controlala desde tu celu o la desktop.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: Colors.white70),
+            ),
+          ] else ...[
+            Text(
+              _waitingAuth
+                  ? 'Autorizá GAMMA en Spotify y se conecta sola.'
+                  : 'Conectá tu cuenta para ver tu música acá.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 13, color: Colors.white70),
+            ),
             const SizedBox(height: 12),
-            _RefreshErrorBanner(onRetry: onRefresh),
-          ],
-          if (wall.attentionCount > 0) ...[
-            const SizedBox(height: 12),
-            _WallAttentionCard(
-              attentionCount: wall.attentionCount,
-              onTap: onOpenAttention,
+            FilledButton.icon(
+              onPressed: _connecting ? null : _connect,
+              icon: _connecting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.link_rounded, size: 18),
+              label: Text(_waitingAuth ? 'Esperando...' : 'Conectar Spotify'),
             ),
           ],
-          const SizedBox(height: 16),
-          _WallAreaGrid(
-            areas: wall.areas,
-            onOpenArea: onOpenArea,
-            onOpenDevices: onOpenAttention,
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: Colors.redAccent),
+            ),
+            TextButton(
+              onPressed: _loadStatus,
+              child: const Text('Reintentar Spotify'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Four 1-tap tiles in a touch-first wrap (kept outside the rooms GridView).
+class _WallQuickGrid extends StatelessWidget {
+  const _WallQuickGrid({
+    required this.actions,
+    required this.busy,
+    required this.busyKey,
+    required this.onTap,
+  });
+
+  final List<_QuickActionDef> actions;
+  final bool busy;
+  final String? busyKey;
+  final ValueChanged<_QuickActionDef> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tileWidth = constraints.maxWidth >= 700
+            ? (constraints.maxWidth - 3 * 14) / 4
+            : (constraints.maxWidth - 14) / 2;
+        return Wrap(
+          spacing: 14,
+          runSpacing: 14,
+          children: [
+            for (final action in actions)
+              SizedBox(
+                width: tileWidth,
+                child: _TapScale(
+                  child: TextButton(
+                    onPressed: busy ? null : () => onTap(action),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 20,
+                      ),
+                      backgroundColor: Colors.white,
+                      foregroundColor: AppColors.text,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        side: const BorderSide(color: AppColors.border),
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: const BoxDecoration(
+                            color: AppColors.accentTint,
+                            shape: BoxShape.circle,
+                          ),
+                          child: busy && busyKey == action.key
+                              ? const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Icon(
+                                  action.icon,
+                                  size: 24,
+                                  color: AppColors.accent,
+                                ),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          action.label,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Live cameras strip for the wall home: sits between quick actions and
+/// rooms. The header is always visible; only the body varies (loading,
+/// empty, or live tiles). Never invents cameras.
+class _WallCamerasSection extends StatefulWidget {
+  const _WallCamerasSection({required this.api});
+
+  final ApiClient api;
+
+  @override
+  State<_WallCamerasSection> createState() => _WallCamerasSectionState();
+}
+
+class _WallCamerasSectionState extends State<_WallCamerasSection> {
+  List<Map<String, dynamic>> _cameras = [];
+  Map<String, bool?> _onlineById = {};
+  bool _loading = true;
+  bool _loadFailed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final module = await widget.api.cameraModule();
+      if (!mounted) return;
+      if (!module.enabled || module.cameras.isEmpty) {
+        setState(() {
+          _cameras = [];
+          _loading = false;
+          _loadFailed = false;
+        });
+        return;
+      }
+      Map<String, bool?> onlineById = {};
+      try {
+        final status = await widget.api.cameraStatus();
+        final list =
+            (status['statuses'] as List?)?.cast<Map<String, dynamic>>() ??
+            const [];
+        for (final entry in list) {
+          final id = entry['camera_id']?.toString();
+          if (id != null) {
+            final online = entry['online'];
+            onlineById[id] = online is bool ? online : null;
+          }
+        }
+      } catch (_) {
+        // Status is best-effort: cards still render without the dot logic.
+      }
+      if (!mounted) return;
+      setState(() {
+        _cameras = module.cameras.take(3).toList();
+        _onlineById = onlineById;
+        _loading = false;
+        _loadFailed = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _cameras = [];
+        _loading = false;
+        _loadFailed = true;
+      });
+    }
+  }
+
+  void _openAll() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CamerasPage(api: widget.api, showBackButton: true),
+      ),
+    );
+  }
+
+  void _openCamera(Map<String, dynamic> camera) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CameraPlayerPage(api: widget.api, camera: camera),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const _WallSectionTitle('Cámaras en vivo'),
+            TextButton(onPressed: _openAll, child: const Text('Ver todas ›')),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_loading)
+          const _WallCameraPlaceholders()
+        else if (_cameras.isEmpty)
+          _WallCameraEmpty(
+            loadFailed: _loadFailed,
+            onRetry: _load,
+            onOpenAll: _openAll,
+          )
+        else
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final tileWidth = constraints.maxWidth >= 700
+                  ? (constraints.maxWidth - 2 * 14) / 3
+                  : (constraints.maxWidth - 14) / 2;
+              return Wrap(
+                spacing: 14,
+                runSpacing: 14,
+                children: [
+                  for (final camera in _cameras)
+                    SizedBox(
+                      width: tileWidth,
+                      child: _WallCameraTile(
+                        camera: camera,
+                        online: _onlineById[camera['camera_id']?.toString()],
+                        snapshotUrl: widget.api.cameraSnapshotUrl(
+                          camera['camera_id'].toString(),
+                        ),
+                        onTap: () => _openCamera(camera),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+      ],
+    );
+  }
+}
+
+class _WallCameraPlaceholders extends StatelessWidget {
+  const _WallCameraPlaceholders();
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tileWidth = constraints.maxWidth >= 700
+            ? (constraints.maxWidth - 2 * 14) / 3
+            : (constraints.maxWidth - 14) / 2;
+        return Wrap(
+          spacing: 14,
+          runSpacing: 14,
+          children: [
+            for (var i = 0; i < 3; i++)
+              SizedBox(
+                width: tileWidth,
+                child: AspectRatio(
+                  aspectRatio: 16 / 10,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF141826).withValues(alpha: 0.35),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Center(
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _WallCameraEmpty extends StatelessWidget {
+  const _WallCameraEmpty({
+    required this.loadFailed,
+    required this.onRetry,
+    required this.onOpenAll,
+  });
+
+  final bool loadFailed;
+  final Future<void> Function() onRetry;
+  final VoidCallback onOpenAll;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.videocam_outlined, color: AppColors.textDim),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              loadFailed
+                  ? 'No se pudieron cargar las cámaras'
+                  : 'No hay cámaras disponibles',
+              style: const TextStyle(fontSize: 15, color: AppColors.textDim),
+            ),
+          ),
+          TextButton(
+            onPressed: loadFailed ? () => onRetry() : onOpenAll,
+            child: Text(loadFailed ? 'Reintentar' : 'Ver cámaras'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _WallCameraTile extends StatelessWidget {
+  const _WallCameraTile({
+    required this.camera,
+    required this.online,
+    required this.snapshotUrl,
+    required this.onTap,
+  });
+
+  final Map<String, dynamic> camera;
+  final bool? online;
+  final String snapshotUrl;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = camera['name']?.toString() ?? 'Cámara';
+    final dotColor = online == null
+        ? Colors.grey
+        : online!
+        ? const Color(0xFF4ADE80)
+        : const Color(0xFFF87171);
+    return _TapScale(
+      child: Material(
+        color: const Color(0xFF141826),
+        borderRadius: BorderRadius.circular(20),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: AspectRatio(
+            aspectRatio: 16 / 10,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.network(
+                  snapshotUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stack) => const Center(
+                    child: Icon(
+                      Icons.videocam_outlined,
+                      color: Colors.white24,
+                      size: 32,
+                    ),
+                  ),
+                ),
+                Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Colors.transparent, Color(0x66000000)],
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 10,
+                  right: 10,
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: dotColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  bottom: 10,
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -296,19 +1744,24 @@ class _WallAttentionCard extends StatelessWidget {
           children: [
             const Icon(Icons.warning_amber_rounded, color: AppColors.amber),
             const SizedBox(width: 16),
-            Expanded(
+            const Expanded(
               child: Text(
                 'Necesita atención',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w600,
                   color: AppColors.text,
                 ),
               ),
             ),
-            Text(
-              _attentionLabel(attentionCount),
-              style: const TextStyle(fontSize: 16, color: AppColors.textDim),
+            // Flexible so the count wraps instead of overflowing on narrow
+            // panels; the title keeps priority via Expanded above.
+            Flexible(
+              child: Text(
+                _attentionLabel(attentionCount),
+                textAlign: TextAlign.end,
+                style: const TextStyle(fontSize: 16, color: AppColors.textDim),
+              ),
             ),
           ],
         ),
@@ -325,15 +1778,56 @@ String _attentionLabel(int count) {
 /// Room-first grid with large touch tiles. Adaptive max extent, wall-only
 /// density: medium -> usually 2 columns, expanded -> 3, large -> 3-4 with the
 /// max card extent capping stretch on very wide displays.
+/// Long-press actions for a home area card.
+enum _WallAreaAction { view, edit, delete }
+
+/// Wall-styled centered menu for a tapped/long-pressed area: the area name
+/// on top with large view/edit/delete rows and a pop-in animation.
+/// Returns the choice, or null on dismiss.
+Future<_WallAreaAction?> _showWallAreaActions(
+  BuildContext context,
+  String areaName,
+) {
+  return showWallCenterDialog<_WallAreaAction>(
+    context: context,
+    builder: (dialogContext) => WallCenterDialog(
+      title: areaName,
+      subtitle: 'Elegí una acción',
+      children: [
+        WallSheetOption(
+          label: 'Ver dispositivos',
+          icon: Icons.devices_outlined,
+          onTap: () => Navigator.of(dialogContext).pop(_WallAreaAction.view),
+        ),
+        const SizedBox(height: 10),
+        WallSheetOption(
+          label: 'Editar área',
+          icon: Icons.edit_outlined,
+          onTap: () => Navigator.of(dialogContext).pop(_WallAreaAction.edit),
+        ),
+        const SizedBox(height: 10),
+        WallSheetOption(
+          label: 'Eliminar área',
+          icon: Icons.delete_outline,
+          destructive: true,
+          onTap: () => Navigator.of(dialogContext).pop(_WallAreaAction.delete),
+        ),
+      ],
+    ),
+  );
+}
+
 class _WallAreaGrid extends StatelessWidget {
   const _WallAreaGrid({
     required this.areas,
     required this.onOpenArea,
+    required this.onAreaLongPress,
     required this.onOpenDevices,
   });
 
   final List<WallAreaSummary> areas;
   final ValueChanged<WallAreaSummary> onOpenArea;
+  final ValueChanged<WallAreaSummary> onAreaLongPress;
   final VoidCallback onOpenDevices;
 
   @override
@@ -363,7 +1857,9 @@ class _WallAreaGrid extends StatelessWidget {
       physics: const NeverScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 400,
-        mainAxisExtent: 150,
+        // 160 (not 150): icon + two scaled texts must survive 1.5x text
+        // scale without clipping (see wall_home_semantics_test).
+        mainAxisExtent: 160,
         mainAxisSpacing: 18,
         crossAxisSpacing: 18,
       ),
@@ -373,57 +1869,471 @@ class _WallAreaGrid extends StatelessWidget {
         return _WallAreaCard(
           key: ValueKey('wall-area-${area.areaId}'),
           area: area,
+          pastelIndex: index,
           onTap: () => onOpenArea(area),
+          onLongPress: () => onAreaLongPress(area),
         );
       },
     );
   }
 }
 
+const _wallPastels = [
+  Color(0xFFC7D6FE),
+  Color(0xFFBFE9CF),
+  Color(0xFFF6DFA8),
+  Color(0xFFD8CBF5),
+];
+
+IconData _wallAreaIcon(String name) {
+  final lower = name.toLowerCase();
+  if (lower.contains('cocin')) return Icons.restaurant_outlined;
+  if (lower.contains('living') || lower.contains('sala')) {
+    return Icons.weekend_outlined;
+  }
+  if (lower.contains('patio') || lower.contains('jard')) {
+    return Icons.local_florist_outlined;
+  }
+  if (lower.contains('recamar') ||
+      lower.contains('dormi') ||
+      lower.contains('cuarto') ||
+      lower.contains('habita')) {
+    return Icons.bed_outlined;
+  }
+  if (lower.contains('comedor')) return Icons.table_restaurant_outlined;
+  if (lower.contains('pasillo')) return Icons.meeting_room_outlined;
+  return Icons.home_work_outlined;
+}
+
 class _WallAreaCard extends StatelessWidget {
-  const _WallAreaCard({super.key, required this.area, required this.onTap});
+  const _WallAreaCard({
+    super.key,
+    required this.area,
+    required this.pastelIndex,
+    required this.onTap,
+    required this.onLongPress,
+  });
 
   final WallAreaSummary area;
+  final int pastelIndex;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
     // The semantic label is merged onto the button; the Texts below carry the
     // visible wording and fold into one readable node via MergeSemantics.
     return MergeSemantics(
-      child: TextButton(
-        onPressed: onTap,
-        style: TextButton.styleFrom(
-          padding: const EdgeInsets.all(24),
-          alignment: Alignment.centerLeft,
-          backgroundColor: AppColors.surface,
-          foregroundColor: AppColors.text,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-            side: const BorderSide(color: AppColors.border),
+      child: _TapScale(
+        child: TextButton(
+          onPressed: onTap,
+          onLongPress: onLongPress,
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.all(20),
+            alignment: Alignment.centerLeft,
+            backgroundColor: _wallPastels[pastelIndex % _wallPastels.length],
+            foregroundColor: AppColors.text,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
           ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              area.name,
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w600,
-                color: AppColors.text,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(_wallAreaIcon(area.name), size: 26, color: AppColors.text),
+              const SizedBox(height: 6),
+              Text(
+                area.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.text,
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '${area.controlCount} '
-              '${area.controlCount == 1 ? 'control' : 'controles'}',
-              style: const TextStyle(fontSize: 16, color: AppColors.textDim),
-            ),
-          ],
+              const SizedBox(height: 4),
+              Text(
+                '${area.controlCount} '
+                '${area.controlCount == 1 ? 'control' : 'controles'}',
+                style: const TextStyle(fontSize: 14, color: AppColors.textDim),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
+}
+
+/// Fullscreen sleep screen for the wall panel: photo background with a dark
+/// veil, compact date header, huge bold clock, tap or swipe up to wake.
+///
+/// Rendered as an [OverlayEntry] so it covers the whole window, shell side
+/// rail included. Temperature is REAL ambient data from Open-Meteo
+/// (see [WeatherRepository]); while it loads or when offline only the
+/// icon + date show, never an invented number.
+///
+/// Rendered as an [OverlayEntry] so it covers the whole window, shell side
+/// rail included. Temperature is intentionally absent: the backend exposes
+/// no weather, and the wall never invents state — when the backend offers
+/// real weather, a live reading can take the header slot next to the date.
+class _WallSleepOverlay extends StatefulWidget {
+  const _WallSleepOverlay({
+    super.key,
+    required this.onWake,
+    this.liftPx = double.infinity,
+    this.gesturesEnabled = true,
+    this.animateEntrance = true,
+  });
+
+  final VoidCallback onWake;
+
+  /// Interactive reveal driven by the home gesture strip: px of the sheet
+  /// pulled up from the bottom edge. Infinity = fully presented.
+  final double liftPx;
+
+  /// False while the home page owns the drag driving [liftPx]: wake
+  /// gestures stay off so the two gesture owners never fight.
+  final bool gesturesEnabled;
+
+  /// False for gesture-driven presentations — the drag IS the entrance.
+  final bool animateEntrance;
+
+  @override
+  State<_WallSleepOverlay> createState() => _WallSleepOverlayState();
+}
+
+class _WallSleepOverlayState extends State<_WallSleepOverlay>
+    with TickerProviderStateMixin {
+  Timer? _timer;
+  DateTime _now = DateTime.now();
+
+  /// Real Culiacán weather for the header. Seeded from the prefetch cache
+  /// so the first frame already shows it (no icon-only flash).
+  late final WeatherRepository _weatherRepo = WeatherRepository();
+  WeatherReading? _weather;
+  Timer? _weatherTimer;
+
+  /// Exit/snap-back driver for the swipe-up-to-wake gesture.
+  late final AnimationController _fling = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 260),
+  );
+
+  /// Interactive upward drag in logical px (0 = resting, negative = lifted).
+  double _drag = 0.0;
+  bool _leaving = false;
+
+  double get _dragOpacity => (1 + _drag / 480).clamp(0.0, 1.0);
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleNextMinute();
+    // Prefetch cache first: the home warms it while loading, so the idle
+    // screen usually paints the temperature on frame one.
+    _weather = WeatherRepository.cached;
+    _loadWeather();
+    // Best-effort refresh every 10 minutes; failures keep the last reading.
+    _weatherTimer = Timer.periodic(
+      const Duration(minutes: 10),
+      (_) => _loadWeather(),
+    );
+  }
+
+  void _scheduleNextMinute() {
+    _timer?.cancel();
+    final now = DateTime.now();
+    _now = now;
+    final nextMinute = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      now.hour,
+      now.minute + 1,
+    );
+    final delay = nextMinute.difference(now);
+    _timer = Timer(delay, () {
+      if (!mounted) return;
+      setState(() => _now = DateTime.now());
+      _scheduleNextMinute();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _weatherTimer?.cancel();
+    _weatherRepo.close();
+    _fling.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadWeather() async {
+    final reading = await _weatherRepo.current();
+    if (!mounted || reading == null) return;
+    setState(() => _weather = reading);
+  }
+
+  /// Tablet-style wake: drag the sleep screen up (the bottom pill hints it)
+  /// and it slides away revealing home. Tap still wakes too.
+  void _onDragUpdate(DragUpdateDetails details) {
+    if (_leaving) return;
+    setState(() {
+      _drag = (_drag + details.delta.dy).clamp(-320.0, 0.0);
+    });
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    if (_leaving) return;
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity < -600 || _drag < -140) {
+      _leaving = true;
+      _animateDragTo(-MediaQuery.sizeOf(context).height, wake: true);
+    } else if (_drag != 0) {
+      _animateDragTo(0, wake: false);
+    }
+  }
+
+  void _animateDragTo(double target, {required bool wake}) {
+    final animation = Tween(begin: _drag, end: target).animate(
+      CurvedAnimation(
+        parent: _fling,
+        curve: wake ? Curves.easeIn : Curves.easeOut,
+      ),
+    );
+    void listener() {
+      if (!mounted) return;
+      setState(() => _drag = animation.value);
+    }
+
+    _fling.addListener(listener);
+    _fling.forward(from: 0).whenComplete(() {
+      _fling.removeListener(listener);
+      if (!mounted || !wake) return;
+      widget.onWake();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hour = _now.hour.toString().padLeft(2, '0');
+    final minute = _now.minute.toString().padLeft(2, '0');
+    // Interactive reveal offset: the sheet peeks from the bottom edge while
+    // the home drag owns it, fullscreen once presented.
+    final liftOffset = widget.liftPx.isInfinite
+        ? 0.0
+        : math.max(0.0, MediaQuery.sizeOf(context).height - widget.liftPx);
+    final gestures = widget.gesturesEnabled && !_leaving;
+    final content = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: gestures ? widget.onWake : null,
+      onVerticalDragUpdate: gestures ? _onDragUpdate : null,
+      onVerticalDragEnd: gestures ? _onDragEnd : null,
+      child: Transform.translate(
+        offset: Offset(0, _drag + liftOffset),
+        child: Container(
+          constraints: const BoxConstraints.expand(),
+          // Simple dark gradient fallback behind the photo (no blurred
+          // shapes); the photo covers it when the asset exists.
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFF101828), Color(0xFF1C2742)],
+            ),
+          ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // Photo background; a missing asset falls back to the
+              // gradient above instead of breaking the screen.
+              Image.asset(
+                'assets/images/Fondo1.jpg',
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stack) =>
+                    const SizedBox.shrink(),
+              ),
+              // Dark veil so white text stays legible over the photo.
+              Container(color: Colors.black.withValues(alpha: 0.35)),
+              SafeArea(
+                // Reference layout, responsive: vertical positions are a
+                // fraction of the available height (not fixed px), so the
+                // clock and hint scale with the window while the photo
+                // re-crops behind them. Lower third stays empty.
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final clockTop = constraints.maxHeight * 0.20;
+                    return Stack(
+                      children: [
+                        // Weather + date: top-left corner, 24px padding.
+                        // Big icon above, real temperature beside it and
+                        // date below, like the reference. Until the reading
+                        // arrives (or offline) only icon + date show.
+                        Positioned(
+                          top: 24,
+                          left: 24,
+                          right: 24,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    weatherIconFor(
+                                      _weather?.code,
+                                      isDay: _weather?.isDay ?? true,
+                                    ),
+                                    size: 40,
+                                    color: Colors.white,
+                                  ),
+                                  if (_weather != null) ...[
+                                    const SizedBox(width: 10),
+                                    Text(
+                                      _weather!.label,
+                                      style: const TextStyle(
+                                        fontSize: 30,
+                                        fontWeight: FontWeight.w700,
+                                        decoration: TextDecoration.none,
+                                        color: Colors.white,
+                                        shadows: [
+                                          Shadow(
+                                            blurRadius: 12,
+                                            color: Color(0x66000000),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                _sleepDateLabel(_now),
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w600,
+                                  decoration: TextDecoration.none,
+                                  color: Colors.white,
+                                  shadows: [
+                                    Shadow(
+                                      blurRadius: 12,
+                                      color: Color(0x66000000),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        // Clock: horizontally centered, upper third.
+                        Positioned(
+                          top: clockTop,
+                          left: 0,
+                          right: 0,
+                          child: Text(
+                            '$hour:$minute',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 128,
+                              fontWeight: FontWeight.w700,
+                              decoration: TextDecoration.none,
+                              letterSpacing: -2,
+                              height: 1.0,
+                              color: Colors.white,
+                              shadows: [
+                                Shadow(
+                                  blurRadius: 32,
+                                  color: Color(0x66000000),
+                                  offset: Offset(0, 6),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        // Hint right under the clock, centered with it.
+                        Positioned(
+                          top: clockTop + 152,
+                          left: 0,
+                          right: 0,
+                          child: const Text(
+                            'Deslizá hacia arriba o tocá para continuar',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 13,
+                              decoration: TextDecoration.none,
+                              color: Colors.white70,
+                            ),
+                          ),
+                        ),
+                        // Tablet-style gesture pill: hints swipe-up-to-wake.
+                        Positioned(
+                          bottom: 40,
+                          left: 0,
+                          right: 0,
+                          child: Center(
+                            child: Container(
+                              width: 134,
+                              height: 5,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.75),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!widget.animateEntrance) return content;
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOut,
+      builder: (context, opacity, child) =>
+          Opacity(opacity: opacity * _dragOpacity, child: child),
+      child: content,
+    );
+  }
+}
+
+String _sleepDateLabel(DateTime now) {
+  const weekdays = [
+    'lunes',
+    'martes',
+    'miércoles',
+    'jueves',
+    'viernes',
+    'sábado',
+    'domingo',
+  ];
+  const months = [
+    'enero',
+    'febrero',
+    'marzo',
+    'abril',
+    'mayo',
+    'junio',
+    'julio',
+    'agosto',
+    'septiembre',
+    'octubre',
+    'noviembre',
+    'diciembre',
+  ];
+  final weekday = weekdays[now.weekday - 1];
+  final capitalized = weekday[0].toUpperCase() + weekday.substring(1);
+  return '$capitalized, ${now.day} de ${months[now.month - 1]}';
 }

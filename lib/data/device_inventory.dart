@@ -288,6 +288,15 @@ class PhysicalDevice {
     this.userName,
     this.deviceClass = 'unknown',
     this.deviceClassSource = 'none',
+    // Demo-only display state (mock): optional overrides used by the desktop
+    // detail pane to preview type-specific controls. Never parsed from the
+    // backend contract; HTTP parsing leaves them null.
+    this.powerOn,
+    this.brightness,
+    this.fanSpeed,
+    this.targetTemperature,
+    this.climateMode,
+    this.sensorValue,
   });
 
   final String id;
@@ -316,6 +325,16 @@ class PhysicalDevice {
   final String deviceClass;
   final String deviceClassSource;
 
+  /// Demo-only display state (mock). Null means "unknown / not reported".
+  /// [brightness] is 0-100, [fanSpeed] is 1-3, [targetTemperature] is °C,
+  /// [climateMode] is one of cold/heat/auto/fan.
+  final bool? powerOn;
+  final int? brightness;
+  final int? fanSpeed;
+  final double? targetTemperature;
+  final String? climateMode;
+  final String? sensorValue;
+
   bool get needsConfiguration =>
       provisioningState == DeviceProvisioningState.discovered ||
       provisioningState == DeviceProvisioningState.enriched ||
@@ -342,6 +361,12 @@ class PhysicalDevice {
     Object? userName = _unset,
     String? deviceClass,
     String? deviceClassSource,
+    Object? powerOn = _unset,
+    Object? brightness = _unset,
+    Object? fanSpeed = _unset,
+    Object? targetTemperature = _unset,
+    Object? climateMode = _unset,
+    Object? sensorValue = _unset,
   }) {
     return PhysicalDevice(
       id: id,
@@ -379,6 +404,20 @@ class PhysicalDevice {
           : userName as String?,
       deviceClass: deviceClass ?? this.deviceClass,
       deviceClassSource: deviceClassSource ?? this.deviceClassSource,
+      powerOn: identical(powerOn, _unset) ? this.powerOn : powerOn as bool?,
+      brightness: identical(brightness, _unset)
+          ? this.brightness
+          : brightness as int?,
+      fanSpeed: identical(fanSpeed, _unset) ? this.fanSpeed : fanSpeed as int?,
+      targetTemperature: identical(targetTemperature, _unset)
+          ? this.targetTemperature
+          : targetTemperature as double?,
+      climateMode: identical(climateMode, _unset)
+          ? this.climateMode
+          : climateMode as String?,
+      sensorValue: identical(sensorValue, _unset)
+          ? this.sensorValue
+          : sensorValue as String?,
     );
   }
 }
@@ -522,6 +561,7 @@ class MockDeviceInventoryRepository implements DeviceInventoryRepository {
       online: true,
       health: DeviceHealthState.online,
       lastSeenLabel: 'Ahora',
+      powerOn: true,
       endpoints: [
         DeviceEndpoint(
           id: 'relay_1',
@@ -555,6 +595,8 @@ class MockDeviceInventoryRepository implements DeviceInventoryRepository {
       online: true,
       health: DeviceHealthState.online,
       lastSeenLabel: 'Hace 1 min',
+      powerOn: true,
+      brightness: 80,
       endpoints: [
         DeviceEndpoint(
           id: 'light',
@@ -576,6 +618,7 @@ class MockDeviceInventoryRepository implements DeviceInventoryRepository {
       online: true,
       health: DeviceHealthState.online,
       lastSeenLabel: 'Hace 2 min',
+      sensorValue: 'Sin movimiento',
       endpoints: [
         DeviceEndpoint(
           id: 'motion',
@@ -598,6 +641,8 @@ class MockDeviceInventoryRepository implements DeviceInventoryRepository {
       online: true,
       health: DeviceHealthState.online,
       lastSeenLabel: 'Ahora',
+      powerOn: true,
+      brightness: 60,
       endpoints: [
         DeviceEndpoint(
           id: 'light',
@@ -676,6 +721,7 @@ class MockDeviceInventoryRepository implements DeviceInventoryRepository {
       online: false,
       health: DeviceHealthState.offline,
       lastSeenLabel: 'Hace 18 min',
+      powerOn: false,
       endpoints: [
         DeviceEndpoint(
           id: 'outlet',

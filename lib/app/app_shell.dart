@@ -98,6 +98,7 @@ class _AppShellState extends State<AppShell> {
             onSelected: _select,
             page: page,
             windowClass: windowClass,
+            api: widget.api,
           ),
           EffectiveAppSurface.wallPanel => WallPanelShell(
             destinations: appDestinations,

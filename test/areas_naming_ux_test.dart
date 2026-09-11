@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -35,7 +36,7 @@ void main() {
       final repo = _FakeRepo(areas: const []);
       await tester.pumpWidget(MaterialApp(home: AreasPage(repository: repo)));
       await tester.pumpAndSettle();
-      await tester.tap(find.byIcon(Icons.add));
+      await tester.tap(find.byIcon(CupertinoIcons.add));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField).first, 'Patio');
       await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
@@ -71,7 +72,7 @@ void main() {
       );
       await tester.pumpWidget(MaterialApp(home: AreasPage(repository: repo)));
       await tester.pumpAndSettle();
-      await tester.tap(find.byIcon(Icons.delete_outline).first);
+      await tester.tap(find.byIcon(CupertinoIcons.trash).first);
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Eliminar'));
       await tester.pumpAndSettle();
@@ -94,7 +95,7 @@ void main() {
       );
       await tester.pumpWidget(MaterialApp(home: AreasPage(repository: repo)));
       await tester.pumpAndSettle();
-      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.tap(find.byIcon(CupertinoIcons.trash));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Eliminar'));
       await tester.pumpAndSettle();
@@ -123,7 +124,7 @@ void main() {
         ],
       );
       await _pumpDetail(tester, repo);
-      await tester.tap(find.byIcon(Icons.edit_outlined).first);
+      await tester.tap(find.byIcon(CupertinoIcons.pencil_outline).first);
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), 'Mi interruptor');
       await tester.tap(find.widgetWithText(FilledButton, 'Guardar'));
@@ -146,7 +147,7 @@ void main() {
         ],
       );
       await _pumpDetail(tester, repo);
-      await tester.tap(find.byIcon(Icons.edit_outlined).first);
+      await tester.tap(find.byIcon(CupertinoIcons.pencil_outline).first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Restablecer nombre'));
       await tester.pumpAndSettle();
@@ -217,7 +218,7 @@ void main() {
         ],
       );
       await _pumpDetail(tester, repo);
-      await tester.tap(find.byIcon(Icons.edit_outlined).last);
+      await tester.tap(find.byIcon(CupertinoIcons.pencil_outline).last);
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), 'Luz de techo');
       await tester.tap(find.widgetWithText(FilledButton, 'Guardar'));
@@ -585,7 +586,7 @@ void f2cClosureHardeningTests() {
         ],
       );
       await _pumpDetail(tester, repo);
-      await tester.tap(find.byIcon(Icons.edit_outlined).last);
+      await tester.tap(find.byIcon(CupertinoIcons.pencil_outline).last);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Restablecer nombre'));
       await tester.pumpAndSettle();
@@ -768,7 +769,7 @@ void f2cReferentialHardeningTests() {
       await tester.pumpWidget(MaterialApp(home: AreasPage(repository: repo)));
       await tester.pumpAndSettle();
       final loadsBefore = repo.areaLoadCalls;
-      await tester.tap(find.byIcon(Icons.delete_outline).first);
+      await tester.tap(find.byIcon(CupertinoIcons.trash).first);
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Eliminar'));
       await tester.pumpAndSettle();
@@ -793,7 +794,7 @@ void f2cReferentialHardeningTests() {
             ..listFailAfterLoads = 1;
       await tester.pumpWidget(MaterialApp(home: AreasPage(repository: repo)));
       await tester.pumpAndSettle();
-      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.tap(find.byIcon(CupertinoIcons.trash));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Eliminar'));
       await tester.pumpAndSettle();

@@ -10,6 +10,7 @@ import 'package:gamma_app/adaptive/adaptive_scope.dart';
 import 'package:gamma_app/adaptive/adaptive_surface_preferences.dart';
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/app/app_shell.dart';
+import 'package:gamma_app/app/desktop_drawer.dart';
 import 'package:gamma_app/features/dashboard/dashboard_page.dart';
 import 'package:gamma_app/features/areas/desktop_areas_page.dart';
 import 'package:gamma_app/features/devices/desktop_devices_page.dart';
@@ -529,10 +530,16 @@ void main() {
     if (dockLabel.evaluate().isNotEmpty) {
       await tester.tap(dockLabel);
     } else {
+      // Desktop sidebar uses admin labels for the shared destinations.
+      final sidebarLabel = switch (label) {
+        'Rutinas' => 'Automatizaciones',
+        'Ajustes' => 'Configuración',
+        _ => label,
+      };
       await tester.tap(
         find.descendant(
-          of: find.byType(NavigationRail),
-          matching: find.text(label),
+          of: find.byType(DesktopSidebar),
+          matching: find.text(sidebarLabel),
         ),
       );
     }

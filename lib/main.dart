@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'data/api_client.dart';
+import 'features/wall_home/wall_activity_bus.dart';
 import 'ui/app_colors.dart';
 import 'app/app_shell.dart';
 
@@ -36,6 +37,30 @@ class GammaApp extends StatelessWidget {
         scaffoldBackgroundColor: AppColors.bg,
       ),
       home: AppShell(api: api),
+      // Above the Navigator: every touch anywhere (pages, pushed routes,
+      // dialogs, sheets, touch keyboard) funnels through here and resets
+      // the wall sleep countdown. Only WallPanelHomePage subscribes.
+      builder: (context, child) =>
+          _WallActivityProbe(child: child ?? const SizedBox.shrink()),
+    );
+  }
+}
+
+/// Global touch probe for the wall idle countdown. Pointer events bubble up
+/// from whatever route is on top, so a single Listener here sees activity
+/// the per-page listeners can never see (e.g. the add-device dialog).
+class _WallActivityProbe extends StatelessWidget {
+  const _WallActivityProbe({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (_) => WallActivityBus.poke(),
+      onPointerMove: (_) => WallActivityBus.poke(),
+      onPointerUp: (_) => WallActivityBus.poke(),
+      child: child,
     );
   }
 }

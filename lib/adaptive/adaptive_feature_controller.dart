@@ -33,6 +33,13 @@ class AdaptiveFeatureController extends ChangeNotifier {
   bool _discovering = false;
   String? _selectedDeviceId;
 
+  /// Ids created through [addLocalDevice] ("Agregar dispositivo") that the
+  /// backend doesn't know yet. Every canonical reload re-appends them, so a
+  /// locally created device is never wiped from the list (e.g. when coming
+  /// back from its detail after turning it off: it must stay visible as
+  /// "Apagado", never disappear).
+  final Set<String> _localOnlyIds = {};
+
   List<HomeArea>? _areas;
   Object? _areasError;
   bool _areasLoading = false;
@@ -74,7 +81,9 @@ class AdaptiveFeatureController extends ChangeNotifier {
     _deviceError = null;
     _notify();
     try {
+      final previousLocals = _localOnlyDevices();
       _snapshot = await _repository.load();
+      _restoreLocalDevices(previousLocals);
       _clearStaleSelection();
     } catch (error) {
       _deviceError = error;
@@ -92,7 +101,9 @@ class AdaptiveFeatureController extends ChangeNotifier {
     _discovering = true;
     _notify();
     try {
+      final previousLocals = _localOnlyDevices();
       _snapshot = await _repository.discover();
+      _restoreLocalDevices(previousLocals);
       _clearStaleSelection();
       return true;
     } finally {
@@ -114,8 +125,242 @@ class AdaptiveFeatureController extends ChangeNotifier {
     _selectedDeviceId = null;
   }
 
+  /// Local-only devices (by id) in the current snapshot, with their latest
+  /// local state (including power converges applied from a detail page).
+  Map<String, PhysicalDevice> _localOnlyDevices() {
+    final snapshot = _snapshot;
+    if (snapshot == null || _localOnlyIds.isEmpty) return const {};
+    final byId = {for (final device in snapshot.devices) device.id: device};
+    return {
+      for (final id in _localOnlyIds)
+        if (byId.containsKey(id)) id: byId[id]!,
+    };
+  }
+
+  /// Re-appends local-only devices missing from a freshly loaded snapshot.
+  /// When the backend finally returns one of them, the backend version wins
+  /// and the id leaves the local-only set.
+  void _restoreLocalDevices(Map<String, PhysicalDevice> locals) {
+    final snapshot = _snapshot;
+    if (snapshot == null || locals.isEmpty) return;
+    final freshIds = snapshot.devices.map((device) => device.id).toSet();
+    final missing = <PhysicalDevice>[
+      for (final entry in locals.entries)
+        if (!freshIds.contains(entry.key)) entry.value,
+    ];
+    for (final id in locals.keys) {
+      if (freshIds.contains(id)) _localOnlyIds.remove(id);
+    }
+    if (missing.isEmpty) return;
+    _snapshot = DeviceInventorySnapshot(
+      areas: snapshot.areas,
+      devices: List.unmodifiable([...snapshot.devices, ...missing]),
+      gateways: snapshot.gateways,
+      lastDiscoveryLabel: snapshot.lastDiscoveryLabel,
+    );
+  }
+
+  // ---- Dirty buffer for batched Save (Slice C) ----
+  String? _pendingLocationId;
+  bool? _pendingPower;
+  int? _pendingBrightness;
+  int? _pendingFanSpeed;
+  double? _pendingTargetTemperature;
+  String? _pendingClimateMode;
+
+  /// Device-level detail type chosen in the desktop detail pane (light /
+  /// switch / fan / ...), not yet saved. [_pendingRole] is the matching
+  /// backend semantic role when the type has one (null for outlet/climate,
+  /// which stay local-only).
+  String? _pendingType;
+  String? _pendingRole;
+
+  String? get pendingLocationId => _pendingLocationId;
+  String? get pendingLocation => _pendingLocationId;
+  bool? get pendingPower => _pendingPower;
+  int? get pendingBrightness => _pendingBrightness;
+  int? get pendingFanSpeed => _pendingFanSpeed;
+  double? get pendingTargetTemperature => _pendingTargetTemperature;
+  String? get pendingClimateMode => _pendingClimateMode;
+  String? get pendingType => _pendingType;
+  bool get hasPendingChanges =>
+      _pendingLocationId != null ||
+      _pendingPower != null ||
+      _pendingBrightness != null ||
+      _pendingFanSpeed != null ||
+      _pendingTargetTemperature != null ||
+      _pendingClimateMode != null ||
+      _pendingType != null;
+
+  void markPendingLocation(String? locationId) {
+    _pendingLocationId = locationId;
+    _notify();
+  }
+
+  /// Buffers a device-level type change; [role] is the backend semantic role
+  /// (or null when the type has no contract role). Notifies so the detail
+  /// controls react instantly, before saving.
+  void markPendingType(String? type, String? role) {
+    _pendingType = type;
+    _pendingRole = role;
+    _notify();
+  }
+
+  void markPendingPower(bool? power) {
+    _pendingPower = power;
+    _notify();
+  }
+
+  void markPendingBrightness(int? brightness) {
+    _pendingBrightness = brightness;
+    _notify();
+  }
+
+  void markPendingFanSpeed(int? speed) {
+    _pendingFanSpeed = speed;
+    _notify();
+  }
+
+  void markPendingTargetTemperature(double? temperature) {
+    _pendingTargetTemperature = temperature;
+    _notify();
+  }
+
+  void markPendingClimateMode(String? mode) {
+    _pendingClimateMode = mode;
+    _notify();
+  }
+
+  void markDirty({String? locationId, bool? power, int? brightness}) {
+    var changed = false;
+    if (locationId != null) {
+      _pendingLocationId = locationId;
+      changed = true;
+    }
+    if (power != null) {
+      _pendingPower = power;
+      changed = true;
+    }
+    if (brightness != null) {
+      _pendingBrightness = brightness;
+      changed = true;
+    }
+    if (changed) _notify();
+  }
+
+  void discardPendingChanges() {
+    if (!hasPendingChanges) return;
+    _pendingLocationId = null;
+    _pendingPower = null;
+    _pendingBrightness = null;
+    _pendingFanSpeed = null;
+    _pendingTargetTemperature = null;
+    _pendingClimateMode = null;
+    _pendingType = null;
+    _pendingRole = null;
+    _notify();
+  }
+
+  /// Sequentially commits pending changes via repository, applying each
+  /// canonical response via [applyCanonicalDevice]. Keeps dirty on failure.
+  Future<PhysicalDevice> commitPendingChanges(String deviceId) async {
+    if (!hasPendingChanges) {
+      final current = snapshot?.devices.firstWhere(
+        (d) => d.id == deviceId,
+        orElse: () => throw StateError('Device not found: $deviceId'),
+      );
+      if (current != null) return current;
+      throw StateError('No snapshot');
+    }
+    PhysicalDevice? last;
+    // Location is the only repository-backed field currently; power/brightness
+    // are buffered locally until contract extends (disabled+Tooltip in UI).
+    if (_pendingLocationId != null) {
+      final location = _pendingLocationId;
+      final updated = await _repository.assignPhysicalArea(deviceId, location);
+      applyCanonicalDevice(updated);
+      last = updated;
+      _pendingLocationId = null;
+    }
+    // Device-level type: persist the matching semantic role on the first
+    // endpoint when the backend supports it. Types without a contract role
+    // (outlet/climate) resolve locally with no repository call.
+    if (_pendingRole != null) {
+      final role = _pendingRole;
+      final current = snapshot?.devices.firstWhere((d) => d.id == deviceId);
+      final endpoint = current == null || current.endpoints.isEmpty
+          ? null
+          : current.endpoints.first;
+      if (current != null &&
+          endpoint != null &&
+          _repository.supportsSemanticRole) {
+        final updated = await _repository.assignEndpointSemanticRole(
+          deviceId,
+          endpoint.id,
+          role,
+        );
+        applyCanonicalDevice(updated);
+        last = updated;
+      }
+      _pendingType = null;
+      _pendingRole = null;
+    } else if (_pendingType != null) {
+      _pendingType = null;
+      _pendingRole = null;
+    }
+    // Power and demo display values converge locally (mock-only fields with
+    // no repository setter): they buffer until Guardar cambios instead of
+    // applying instantly.
+    if (_pendingPower != null ||
+        _pendingBrightness != null ||
+        _pendingFanSpeed != null ||
+        _pendingTargetTemperature != null ||
+        _pendingClimateMode != null) {
+      var current = snapshot?.devices.firstWhere((d) => d.id == deviceId);
+      if (current != null) {
+        final power = _pendingPower;
+        current = current.copyWith(
+          powerOn: power ?? current.powerOn,
+          online: power ?? current.online,
+          health: power == null
+              ? current.health
+              : (power ? DeviceHealthState.online : DeviceHealthState.sleeping),
+          brightness: _pendingBrightness ?? current.brightness,
+          fanSpeed: _pendingFanSpeed ?? current.fanSpeed,
+          targetTemperature:
+              _pendingTargetTemperature ?? current.targetTemperature,
+          climateMode: _pendingClimateMode ?? current.climateMode,
+        );
+        applyCanonicalDevice(current);
+        last = current;
+      }
+      _pendingPower = null;
+      _pendingBrightness = null;
+      _pendingFanSpeed = null;
+      _pendingTargetTemperature = null;
+      _pendingClimateMode = null;
+    }
+    _notify();
+    if (last != null) return last;
+    // No location change: return current canonical device.
+    final fallback = snapshot?.devices.firstWhere((d) => d.id == deviceId);
+    if (fallback != null) return fallback;
+    throw StateError('Device not found after commit: $deviceId');
+  }
+
   void selectDevice(String? id) {
     if (id == _selectedDeviceId) return;
+    // Batched Save: discard pending when switching device.
+    if (hasPendingChanges) {
+      _pendingLocationId = null;
+      _pendingPower = null;
+      _pendingBrightness = null;
+      _pendingFanSpeed = null;
+      _pendingTargetTemperature = null;
+      _pendingClimateMode = null;
+      _pendingType = null;
+      _pendingRole = null;
+    }
     _selectedDeviceId = id;
     _notify();
   }
@@ -138,6 +383,58 @@ class AdaptiveFeatureController extends ChangeNotifier {
     _snapshot = DeviceInventorySnapshot(
       areas: snapshot.areas,
       devices: devices,
+      gateways: snapshot.gateways,
+      lastDiscoveryLabel: snapshot.lastDiscoveryLabel,
+    );
+    _notify();
+  }
+
+  /// Adds a locally-created device to the snapshot and notifies listeners.
+  /// Used by the "Add device" dialog to make the button functional without
+  /// requiring a backend round-trip.
+  void addLocalDevice(PhysicalDevice device) {
+    final snapshot = _snapshot;
+    if (snapshot == null) {
+      _localOnlyIds.add(device.id);
+      _snapshot = DeviceInventorySnapshot(
+        areas: const [],
+        devices: [device],
+        gateways: const [],
+        lastDiscoveryLabel: '',
+      );
+      _notify();
+      return;
+    }
+    if (snapshot.devices.any((d) => d.id == device.id)) return;
+    _localOnlyIds.add(device.id);
+    final devices = List<PhysicalDevice>.of(snapshot.devices)..add(device);
+    _snapshot = DeviceInventorySnapshot(
+      areas: snapshot.areas,
+      devices: List.unmodifiable(devices),
+      gateways: snapshot.gateways,
+      lastDiscoveryLabel: snapshot.lastDiscoveryLabel,
+    );
+    _notify();
+  }
+
+  /// Removes a locally-created device from the snapshot and clears the
+  /// selection when it pointed at it. Used by "Eliminar dispositivo" on
+  /// surfaces without a backend delete endpoint. Unknown IDs are a no-op.
+  void removeLocalDevice(String deviceId) {
+    final snapshot = _snapshot;
+    _localOnlyIds.remove(deviceId);
+    if (snapshot == null) return;
+    if (!snapshot.devices.any((d) => d.id == deviceId)) return;
+    if (_selectedDeviceId == deviceId) {
+      _selectedDeviceId = null;
+      _pendingLocationId = null;
+      _pendingPower = null;
+      _pendingBrightness = null;
+    }
+    final devices = snapshot.devices.where((d) => d.id != deviceId).toList();
+    _snapshot = DeviceInventorySnapshot(
+      areas: snapshot.areas,
+      devices: List.unmodifiable(devices),
       gateways: snapshot.gateways,
       lastDiscoveryLabel: snapshot.lastDiscoveryLabel,
     );

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart' show IconData, Icons;
+import 'package:flutter/cupertino.dart' show CupertinoIcons, IconData;
 
 import '../devices/devices_page.dart' show formatDeviceName, formatLocationName;
 
@@ -22,47 +22,81 @@ class RoutineCategory {
 const routineCategories = <String, RoutineCategory>{
   'device': RoutineCategory(
     name: 'device',
-    icon: Icons.lightbulb,
+    icon: CupertinoIcons.lightbulb,
     label: 'Controla un dispositivo',
     description: 'Enciende, apaga o ajusta una luz o enchufe',
   ),
   'location': RoutineCategory(
     name: 'location',
-    icon: Icons.map_outlined,
+    icon: CupertinoIcons.map,
     label: 'Una ubicación',
     description:
         'Enciende o apaga los dispositivos de una zona o de toda la casa',
   ),
   'house': RoutineCategory(
     name: 'house',
-    icon: Icons.home,
+    icon: CupertinoIcons.house,
     label: 'Toda la casa',
     description: 'Enciende o apaga todos los dispositivos',
   ),
   'music': RoutineCategory(
     name: 'music',
-    icon: Icons.music_note,
+    icon: CupertinoIcons.music_note,
     label: 'Reproduce en Spotify',
     description: 'Pon música por artista, canción o playlist',
   ),
   'news': RoutineCategory(
     name: 'news',
-    icon: Icons.newspaper,
+    icon: CupertinoIcons.news,
     label: 'Lee las noticias',
     description: 'GAMMA cuenta las noticias del día',
   ),
   'camera': RoutineCategory(
     name: 'camera',
-    icon: Icons.videocam,
+    icon: CupertinoIcons.videocam,
     label: 'Toma una foto',
     description: 'Captura una imagen o consulta una cámara',
+  ),
+  'climate': RoutineCategory(
+    name: 'climate',
+    icon: CupertinoIcons.thermometer,
+    label: 'Ajustar clima',
+    description: 'Frío, calor o apagado por zona',
+  ),
+  'wait': RoutineCategory(
+    name: 'wait',
+    icon: CupertinoIcons.clock,
+    label: 'Esperar',
+    description: 'Pausa la secuencia unos segundos o minutos',
+  ),
+  'announce': RoutineCategory(
+    name: 'announce',
+    icon: CupertinoIcons.volume_up,
+    label: 'Anuncio de voz',
+    description: 'GAMMA dice un mensaje en voz alta',
+  ),
+  'runroutine': RoutineCategory(
+    name: 'runroutine',
+    icon: CupertinoIcons.play_circle,
+    label: 'Ejecutar otra rutina',
+    description: 'Encadena una rutina existente',
   ),
 };
 
 /// Orden de la paleta del editor. `house` no es una tarjeta: «Toda la casa»
 /// se elige dentro de «Una ubicación» y solo se usa para renderizar acciones
 /// antiguas con scope HOUSE_ALL.
-const paletteCategoryOrder = ['device', 'location', 'music', 'news', 'camera'];
+const paletteCategoryOrder = [
+  'device',
+  'location',
+  'music',
+  'news',
+  'camera',
+  'climate',
+  'wait',
+  'announce',
+  'runroutine',
+];
 
 /// Nombre del módulo que habilita cada tarjeta (null = siempre disponible).
 const moduleEnablers = <String, String>{
@@ -88,6 +122,10 @@ String actionCategory(Map<String, dynamic> action) {
   if (intent == 'FETCH_NEWS') return 'news';
   if (intent == 'MEDIA_CONTROL') return 'music';
   if (intent == 'CAMERA_CONTROL') return 'camera';
+  if (intent == 'CLIMATE_CONTROL') return 'climate';
+  if (intent == 'WAIT') return 'wait';
+  if (intent == 'ANNOUNCE') return 'announce';
+  if (intent == 'RUN_ROUTINE') return 'runroutine';
   final scope = action['scope']?.toString() ?? '';
   if (scope == 'HOUSE_ALL') return 'house';
   if (scope == 'LOCATION_ALL') return 'location';
@@ -95,7 +133,8 @@ String actionCategory(Map<String, dynamic> action) {
 }
 
 IconData actionIcon(Map<String, dynamic> action) =>
-    routineCategories[actionCategory(action)]?.icon ?? Icons.category;
+    routineCategories[actionCategory(action)]?.icon ??
+    CupertinoIcons.square_grid_2x2;
 
 /// Resumen de una acción, copia exacta de `actionSummary` del web.
 String actionSummary(Map<String, dynamic> action) {
@@ -134,6 +173,37 @@ String actionSummary(Map<String, dynamic> action) {
     if (query != null && query.isNotEmpty) text += ' ($query)';
     return text;
   }
+  if (intent == 'CLIMATE_CONTROL') {
+    final mode = action['mode']?.toString() ?? 'cool';
+    final modeLabel = switch (mode) {
+      'heat' => 'Calor',
+      'off' => 'Apagado',
+      _ => 'Frío',
+    };
+    final location = action['location']?.toString();
+    final where = (location == null || location.isEmpty)
+        ? 'toda la casa'
+        : formatLocationName(location);
+    if (mode == 'off') return 'Apaga el clima en $where';
+    final value = action['value'];
+    final temp = value != null ? ' a $value°' : '';
+    return 'Clima en $where: $modeLabel$temp';
+  }
+  if (intent == 'WAIT') {
+    final value = int.tryParse(action['value']?.toString() ?? '') ?? 0;
+    final unit = action['value_semantic']?.toString() ?? 'minutos';
+    return 'Esperar $value $unit';
+  }
+  if (intent == 'ANNOUNCE') {
+    final message = action['query']?.toString() ?? '';
+    final target = action['location']?.toString() ?? '';
+    final where = target.isEmpty ? 'toda la casa' : 'mi teléfono';
+    return 'Anuncia en $where: «$message»';
+  }
+  if (intent == 'RUN_ROUTINE') {
+    final name = action['query']?.toString() ?? '';
+    return name.isEmpty ? 'Ejecuta otra rutina' : 'Ejecuta la rutina «$name»';
+  }
   final verbs = <String, String>{
     'TURN_ON': 'Enciende',
     'TURN_OFF': 'Apaga',
@@ -167,6 +237,10 @@ String actionSub(Map<String, dynamic> action) {
   if (intent == 'FETCH_NEWS') return 'Noticias';
   if (intent == 'MEDIA_CONTROL') return 'Spotify';
   if (intent == 'CAMERA_CONTROL') return 'Cámara';
+  if (intent == 'CLIMATE_CONTROL') return 'Clima';
+  if (intent == 'WAIT') return 'Espera';
+  if (intent == 'ANNOUNCE') return 'Anuncio';
+  if (intent == 'RUN_ROUTINE') return 'Rutina';
   final scope = action['scope']?.toString() ?? '';
   if (scope == 'HOUSE_ALL') return 'Toda la casa';
   if (scope == 'LOCATION_ALL') return 'Ubicación';
@@ -325,6 +399,30 @@ String? _spotifyConflictReason(
   return null;
 }
 
+/// Contradicción entre dos acciones de clima en la MISMA zona (zona exacta:
+/// mismo id o ambas «toda la casa»). Zonas distintas o dudosas nunca avisan.
+String? _climateConflictReason(
+  Map<String, dynamic> candidate,
+  Map<String, dynamic> existing,
+) {
+  final candidateZone = candidate['location']?.toString() ?? '';
+  final existingZone = existing['location']?.toString() ?? '';
+  if (candidateZone != existingZone) return null;
+  final mode = candidate['mode']?.toString() ?? 'cool';
+  final existingMode = existing['mode']?.toString() ?? 'cool';
+  if (mode != existingMode) return 'Contradice el modo anterior';
+  if (mode == 'off') return null;
+  final value = candidate['value'];
+  final existingValue = existing['value'];
+  if (value != null &&
+      existingValue != null &&
+      num.tryParse(value.toString()) !=
+          num.tryParse(existingValue.toString())) {
+    return 'Contradice la temperatura anterior';
+  }
+  return null;
+}
+
 /// Razón del conflicto entre la candidata y una acción previa, o null si no hay
 /// contradicción segura (mismas reglas conservadoras que el web).
 String? conflictReason(
@@ -364,6 +462,11 @@ String? conflictReason(
 
   if (candidateIntent == 'MEDIA_CONTROL' && existingIntent == 'MEDIA_CONTROL') {
     return _spotifyConflictReason(candidate, existing);
+  }
+
+  if (candidateIntent == 'CLIMATE_CONTROL' &&
+      existingIntent == 'CLIMATE_CONTROL') {
+    return _climateConflictReason(candidate, existing);
   }
 
   return null;

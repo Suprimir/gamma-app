@@ -34,12 +34,14 @@ class ToolButton extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.filled = false,
+    this.busy = false,
   });
 
   final IconData icon;
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final bool filled;
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -47,38 +49,62 @@ class ToolButton extends StatelessWidget {
     // transparent Material so ToolButton works from any host (even a bare
     // Column without a Scaffold), instead of crashing with
     // "No Material widget found" in release builds.
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onTap,
+    final effectiveOnTap = busy
+        ? () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Buscando dispositivos...')),
+            );
+          }
+        : onTap;
+    final isDisabled = onTap == null && !busy;
+    final content = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      height: 56,
+      decoration: BoxDecoration(
+        color: filled ? AppColors.accent : null,
+        border: filled ? null : Border.all(color: AppColors.border),
         borderRadius: BorderRadius.circular(14),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          height: 56,
-          decoration: BoxDecoration(
-            color: filled ? AppColors.accent : null,
-            border: filled ? null : Border.all(color: AppColors.border),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                icon,
-                size: 20,
-                color: filled ? Colors.white : AppColors.textDim,
+      ),
+      child: Row(
+        children: [
+          if (busy)
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: filled ? Colors.white : AppColors.accent,
               ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                  color: filled ? Colors.white : null,
-                ),
-              ),
-            ],
+            )
+          else
+            Icon(
+              icon,
+              size: 20,
+              color: filled ? Colors.white : AppColors.textDim,
+            ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+              color: filled ? Colors.white : null,
+            ),
           ),
+        ],
+      ),
+    );
+    return Opacity(
+      opacity: isDisabled ? 0.5 : 1,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: effectiveOnTap,
+          borderRadius: BorderRadius.circular(14),
+          child: isDisabled
+              ? Tooltip(message: 'No disponible', child: content)
+              : content,
         ),
       ),
     );
@@ -103,6 +129,35 @@ class MessageView extends StatelessWidget {
             const SizedBox(height: 16),
             OutlinedButton(onPressed: onRetry, child: const Text('Reintentar')),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Touch-first back affordance (>= 56dp) for bare content pages shown as
+/// pushed routes. Rail destinations like Dispositivos/Cámaras/Rutinas have
+/// no AppBar, so pushing them off the rail would otherwise leave the user
+/// with no way back.
+class WallBackButton extends StatelessWidget {
+  const WallBackButton({super.key, this.onTap});
+
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        onPressed: onTap ?? () => Navigator.of(context).maybePop(),
+        icon: const Icon(Icons.arrow_back, size: 24),
+        label: const Text('Volver'),
+        style: TextButton.styleFrom(
+          foregroundColor: AppColors.accentStrong,
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+          minimumSize: const Size(48, 56),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
       ),
     );

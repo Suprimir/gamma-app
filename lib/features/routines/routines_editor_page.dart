@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../data/api_client.dart';
+import '../../adaptive/adaptive_scope.dart';
 import '../devices/devices_page.dart' show formatDeviceName, formatLocationName;
 import 'routine_actions.dart';
 import '../../ui/shared_widgets.dart';
@@ -31,10 +33,21 @@ const _moduleNames = {
 const _stepLabels = ['Acciones', 'Detalles', 'Revisar'];
 
 class RoutinesEditorPage extends StatefulWidget {
-  const RoutinesEditorPage({super.key, required this.api, this.routineId});
+  const RoutinesEditorPage({
+    super.key,
+    required this.api,
+    this.routineId,
+    this.wallLayout = false,
+  });
 
   final ApiClient api;
   final String? routineId;
+
+  /// Acomodo de una sola pantalla según el boceto táctil. Se pasa explícito
+  /// porque las rutas pusheadas con Navigator.push quedan FUERA del
+  /// AppAdaptiveScope (vive debajo del Navigator, en el body del AppShell),
+  /// así que el editor no puede leerlo con maybeOf por sí mismo.
+  final bool wallLayout;
 
   @override
   State<RoutinesEditorPage> createState() => _RoutinesEditorPageState();
@@ -48,6 +61,8 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
 
   final _draft = _RoutineDraft();
   List<Map<String, dynamic>> _catalog = [];
+  List<Map<String, dynamic>> _areas = [];
+  List<Map<String, dynamic>> _allRoutines = [];
   Map<String, bool> _modulesEnabled = {};
 
   final _nombreController = TextEditingController();
@@ -77,6 +92,24 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
       ]);
       final catalogData = results[0] as Map<String, dynamic>;
       final modulesList = results[1] as List<Map<String, dynamic>>;
+      // Directorio real de áreas (/api/v1/areas): el catálogo legacy trae
+      // ids canónicos (area_<hex>) sin nombre legible, así que las pills
+      // quedaban todas como «Área». Se carga tolerante: sin áreas igual se
+      // puede editar, solo que las pills muestran el fallback.
+      List<Map<String, dynamic>> areas = const [];
+      try {
+        areas = await widget.api.areas();
+      } catch (_) {
+        areas = const [];
+      }
+      // Rutinas existentes para «Ejecutar otra rutina». Tolerante: sin ellas
+      // la tarjeta muestra su estado vacío en vez de romper el editor.
+      List<Map<String, dynamic>> routines = const [];
+      try {
+        routines = await widget.api.routines();
+      } catch (_) {
+        routines = const [];
+      }
       Map<String, dynamic>? routine;
       if (widget.routineId != null) {
         routine = await widget.api.routine(widget.routineId!);
@@ -85,6 +118,8 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
       setState(() {
         _catalog = (catalogData['locations'] as List)
             .cast<Map<String, dynamic>>();
+        _areas = areas;
+        _allRoutines = routines;
         _modulesEnabled = {
           for (final m in modulesList)
             m['name'].toString(): m['enabled'] == true,
@@ -149,6 +184,13 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
       api: widget.api,
       type: type,
       catalog: _catalog,
+      areas: _areas,
+      routines: [
+        for (final r in _allRoutines)
+          if (r['id']?.toString() != _draft.id &&
+              (r['nombre']?.toString().trim().isNotEmpty ?? false))
+            r,
+      ],
       existing: _draft.acciones,
       moduleIsOff: moduleIsOff,
     );
@@ -242,6 +284,13 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
         ),
       );
     }
+    // Superficie táctil / panel de pared: acomodo de una sola pantalla según
+    // el boceto (formulario a la izquierda, resumen a la derecha). El wizard
+    // de 3 pasos se conserva para móvil/desktop.
+    final isWallPanel =
+        widget.wallLayout ||
+        (AppAdaptiveScope.maybeOf(context)?.isWallPanel ?? false);
+    if (isWallPanel) return _buildWallEditor();
     // En móvil el botón de back se elimina: el gesto/botón back del sistema
     // ya hace Navigator.pop (el editor se abrió con push). Ahorra espacio en
     // el header, que queda solo con el indicador de pasos.
@@ -262,7 +311,7 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
                 children: [
                   if (!compact) ...[
                     ToolButton(
-                      icon: Icons.arrow_back,
+                      icon: CupertinoIcons.back,
                       label: 'Rutines',
                       onTap: () => Navigator.pop(context),
                     ),
@@ -290,6 +339,427 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
     );
   }
 
+  // --- Editor táctil / panel de pared (acomodo del boceto) -------------------
+  // Una sola pantalla: encabezado con Guardar + dos columnas (formulario a la
+  // izquierda, resumen "Tu rutina" a la derecha). Reusa el mismo draft,
+  // validación, paleta y sheets que el wizard; solo cambia el acomodo y los
+  // tamaños táctiles (>= 56dp). Estilo claro actual (AppColors).
+
+  /// Orden de tarjetas del boceto: 2 columnas tal cual la referencia.
+  /// `camera` queda fuera del panel como antes; las 4 nuevas sí entran.
+  static const _wallPaletteOrder = [
+    'device',
+    'location',
+    'music',
+    'news',
+    'climate',
+    'wait',
+    'announce',
+    'runroutine',
+  ];
+
+  Widget _buildWallEditor() {
+    final errors = _validate();
+    final canSave = !_saving && errors.isEmpty;
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1180),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const WallBackButton(),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: _border),
+                      boxShadow: const [_cardShadow],
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _draft.id == null
+                                      ? 'Nueva rutina'
+                                      : 'Editar rutina',
+                                  style: const TextStyle(
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: -0.02,
+                                  ),
+                                ),
+                              ),
+                              _primaryButton(
+                                label: _saving
+                                    ? 'Guardando…'
+                                    : 'Guardar rutina',
+                                onTap: canSave ? _save : null,
+                                height: 56,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Divider(height: 1, color: _border),
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final left = _wallFormColumn();
+                            final right = _wallSummaryColumn();
+                            if (constraints.maxWidth < 760) {
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      24,
+                                      20,
+                                      24,
+                                      8,
+                                    ),
+                                    child: left,
+                                  ),
+                                  const Divider(height: 1, color: _border),
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      24,
+                                      20,
+                                      24,
+                                      24,
+                                    ),
+                                    child: right,
+                                  ),
+                                ],
+                              );
+                            }
+                            // Sin IntrinsicHeight ni Row+stretch a propósito: con la
+                            // altura no acotada del scroll ambos revientan
+                            // ("forces an infinite height" / pantalla en
+                            // blanco). La Table mide sus filas por contenido y
+                            // la celda fill estira el divisor al alto real.
+                            return Table(
+                              columnWidths: const {
+                                0: FlexColumnWidth(),
+                                1: FixedColumnWidth(1),
+                                2: FlexColumnWidth(),
+                              },
+                              defaultVerticalAlignment:
+                                  TableCellVerticalAlignment.top,
+                              children: [
+                                TableRow(
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        24,
+                                        20,
+                                        24,
+                                        24,
+                                      ),
+                                      child: left,
+                                    ),
+                                    const TableCell(
+                                      verticalAlignment:
+                                          TableCellVerticalAlignment.fill,
+                                      child: ColoredBox(color: _border),
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        24,
+                                        20,
+                                        24,
+                                        24,
+                                      ),
+                                      child: right,
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (errors.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    for (final e in errors)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4, left: 4),
+                        child: Text(
+                          e,
+                          style: const TextStyle(fontSize: 13, color: _danger),
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _wallFormColumn() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _wallLabel('Nombre'),
+        SizedBox(
+          height: 64,
+          child: TextField(
+            controller: _nombreController,
+            maxLength: 80,
+            textInputAction: TextInputAction.next,
+            onChanged: (_) =>
+                setState(() => _draft.nombre = _nombreController.text),
+            decoration: _decoration(hint: 'Ej: Buenos días'),
+          ),
+        ),
+        const SizedBox(height: 20),
+        _wallLabel('Frase para activarla'),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 64,
+                child: TextField(
+                  controller: _activadorController,
+                  maxLength: 60,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _addActivator(_activadorController.text),
+                  decoration: _decoration(hint: 'Escribe una frase'),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: 64,
+              height: 64,
+              child: Material(
+                color: _accent,
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  onTap: () => _addActivator(_activadorController.text),
+                  borderRadius: BorderRadius.circular(14),
+                  child: const Icon(
+                    CupertinoIcons.add,
+                    size: 28,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _activatorTags(),
+        if (_activatorFeedback.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            _activatorFeedback,
+            style: const TextStyle(fontSize: 13, color: AppColors.amber),
+          ),
+        ],
+        const SizedBox(height: 24),
+        const Text(
+          '¿Qué quieres agregar?',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 12),
+        GridView(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            mainAxisExtent: 132,
+          ),
+          children: [for (final type in _wallPaletteOrder) _wallAddTile(type)],
+        ),
+      ],
+    );
+  }
+
+  Widget _wallAddTile(String type) {
+    final meta = routineCategories[type]!;
+    final enabler = moduleEnablers[type];
+    final isOff = enabler != null && !(_modulesEnabled[enabler] ?? false);
+    return Opacity(
+      opacity: isOff ? 0.5 : 1,
+      child: Material(
+        color: _softFill,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: () => _addAction(type),
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              border: Border.all(color: _border),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(meta.icon, size: 26, color: _accent),
+                const SizedBox(height: 10),
+                Text(
+                  meta.label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    height: 1.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _wallSummaryColumn() {
+    final triggers = _draft.activadores.isNotEmpty
+        ? _draft.activadores
+        : [if (_draft.nombre.trim().isNotEmpty) _draft.nombre.trim()];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Tu rutina',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Así se activará y esto hará, en orden.',
+          style: TextStyle(fontSize: 14, color: _dimCap),
+        ),
+        const SizedBox(height: 20),
+        const Text(
+          'Para activarla, di',
+          style: TextStyle(fontSize: 14, color: _dimText),
+        ),
+        const SizedBox(height: 6),
+        if (triggers.isEmpty)
+          const Text(
+            '—',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final trigger in triggers)
+                Text(
+                  '“$trigger”',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+            ],
+          ),
+        const SizedBox(height: 20),
+        const Text(
+          'Tu rutina hará',
+          style: TextStyle(fontSize: 14, color: _dimText),
+        ),
+        const SizedBox(height: 10),
+        if (_draft.acciones.isEmpty)
+          const Text(
+            'Todavía no agregaste acciones. Tocá una tarjeta de la izquierda.',
+            style: TextStyle(fontSize: 14, color: _dimCap),
+          )
+        else
+          for (var i = 0; i < _draft.acciones.length; i++)
+            _wallSummaryRow(i, _draft.acciones[i]),
+      ],
+    );
+  }
+
+  Widget _wallSummaryRow(int index, Map<String, dynamic> action) {
+    final category = actionCategory(action);
+    final label = routineCategories[category]?.label ?? actionSummary(action);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: const BoxDecoration(
+              color: _accent,
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              '${index + 1}',
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 56),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: _softFill,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _border),
+              ),
+              alignment: Alignment.centerLeft,
+              child: Text(
+                label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 48,
+            height: 48,
+            child: InkWell(
+              onTap: () => setState(() => _draft.acciones.removeAt(index)),
+              customBorder: const CircleBorder(),
+              child: const Icon(CupertinoIcons.trash, size: 22, color: _dimCap),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _wallLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 2, bottom: 8),
+      child: Text(text, style: const TextStyle(fontSize: 14, color: _dimText)),
+    );
+  }
+
   Widget _buildStepIndicator({bool compact = false}) {
     return Row(
       children: [
@@ -298,7 +768,7 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
             Padding(
               padding: EdgeInsets.symmetric(horizontal: compact ? 2 : 4),
               child: Icon(
-                Icons.arrow_right,
+                CupertinoIcons.chevron_right,
                 size: compact ? 14 : 18,
                 color: _dimCap,
               ),
@@ -667,56 +1137,113 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
     );
   }
 
+  /// Sugeridas de la referencia: un tap las agrega como frase (sin duplicar).
+  static const _suggestedPhrases = ['Hola casa', 'Arriba'];
+
   Widget _activatorTags() {
-    if (_draft.activadores.isEmpty) {
-      return const Align(
-        alignment: Alignment.centerLeft,
-        child: Text(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
           'Frases que activan la rutina',
           style: TextStyle(fontSize: 12, color: _dimCap),
         ),
-      );
-    }
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 6,
-        children: [
-          for (var i = 0; i < _draft.activadores.length; i++)
-            _activatorTag(i, _draft.activadores[i]),
+        if (_draft.activadores.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (var i = 0; i < _draft.activadores.length; i++)
+                _activatorTag(i, _draft.activadores[i]),
+            ],
+          ),
         ],
-      ),
+        const SizedBox(height: 10),
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            const Text(
+              'Sugeridas:',
+              style: TextStyle(fontSize: 12, color: _dimCap),
+            ),
+            for (final suggestion in _suggestedPhrases)
+              _suggestionPill(suggestion),
+          ],
+        ),
+      ],
     );
   }
 
   Widget _activatorTag(int index, String text) {
     return Container(
       height: 48,
-      padding: const EdgeInsets.only(left: 12, right: 4),
+      padding: const EdgeInsets.only(left: 14, right: 6),
       decoration: BoxDecoration(
-        color: _softFill,
+        color: AppColors.accentTint,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: _border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             '«$text»',
-            style: const TextStyle(fontSize: 13, color: _dimText),
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: AppColors.accentStrong,
+            ),
           ),
-          const SizedBox(width: 2),
+          const SizedBox(width: 6),
           SizedBox(
-            width: 40,
-            height: 40,
+            width: 32,
+            height: 32,
             child: InkWell(
               onTap: () => setState(() => _draft.activadores.removeAt(index)),
               customBorder: const CircleBorder(),
-              child: const Icon(Icons.close, size: 16, color: _dimCap),
+              child: Container(
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  CupertinoIcons.xmark,
+                  size: 14,
+                  color: _dimCap,
+                ),
+              ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _suggestionPill(String text) {
+    final added = _draft.activadores.any(
+      (t) => t.toLowerCase() == text.toLowerCase(),
+    );
+    return InkWell(
+      onTap: added ? null : () => _addActivator(text),
+      borderRadius: BorderRadius.circular(999),
+      child: Opacity(
+        opacity: added ? 0.45 : 1,
+        child: Container(
+          height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: _border),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            '«$text»',
+            style: const TextStyle(fontSize: 13, color: _dimText),
+          ),
+        ),
       ),
     );
   }
@@ -771,7 +1298,7 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
                       borderRadius: BorderRadius.circular(16),
                     ),
                     child: const Icon(
-                      Icons.auto_awesome,
+                      CupertinoIcons.sparkles,
                       size: 27,
                       color: _accent,
                     ),
@@ -870,7 +1397,7 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.mic, size: 16, color: _dimCap),
+          const Icon(CupertinoIcons.mic, size: 16, color: _dimCap),
           const SizedBox(width: 6),
           Text(
             '«$text»',
@@ -1138,7 +1665,7 @@ class _ActionRow extends StatelessWidget {
             child: InkWell(
               onTap: onDelete,
               customBorder: const CircleBorder(),
-              child: const Icon(Icons.delete_outline, size: 20, color: _dimCap),
+              child: const Icon(CupertinoIcons.trash, size: 20, color: _dimCap),
             ),
           ),
         ],
@@ -1216,6 +1743,8 @@ class _ActionConfigSheet extends StatefulWidget {
     required this.api,
     required this.type,
     required this.catalog,
+    required this.areas,
+    required this.routines,
     required this.existing,
     required this.moduleIsOff,
   });
@@ -1223,6 +1752,10 @@ class _ActionConfigSheet extends StatefulWidget {
   final ApiClient api;
   final String type;
   final List<Map<String, dynamic>> catalog;
+  final List<Map<String, dynamic>> areas;
+
+  /// Rutinas encadenables (ya sin la que se está editando).
+  final List<Map<String, dynamic>> routines;
   final List<Map<String, dynamic>> existing;
   final bool moduleIsOff;
 
@@ -1240,6 +1773,23 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
   String _op = 'play';
   String _cameraOp = 'snapshot';
   double _volume = 50;
+
+  // Ajustar clima.
+  String? _climateLocation;
+  bool _climateAll = true;
+  String _climateMode = 'cool';
+  double _climateTemp = 22;
+
+  // Esperar.
+  int _waitValue = 5;
+  String _waitUnit = 'min';
+
+  // Anuncio de voz.
+  String _announceTarget = 'house';
+  final _announceController = TextEditingController();
+
+  // Ejecutar otra rutina.
+  String? _runRoutineId;
 
   Map<String, dynamic>? _spot;
   final _searchController = TextEditingController();
@@ -1263,6 +1813,7 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
     _debounce?.cancel();
     _searchController.dispose();
     _cameraController.dispose();
+    _announceController.dispose();
     super.dispose();
   }
 
@@ -1431,6 +1982,10 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
             style: TextStyle(fontSize: 13, height: 1.5, color: _dimText),
           ),
           'camera' => _cameraConfig(),
+          'climate' => _climateConfig(),
+          'wait' => _waitConfig(),
+          'announce' => _announceConfig(),
+          'runroutine' => _runRoutineConfig(),
           _ => const SizedBox.shrink(),
         },
         if (_feedback.isNotEmpty) ...[
@@ -1486,28 +2041,70 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
           height: 48,
           child: IconButton(
             onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close, color: _dimText),
+            icon: const Icon(CupertinoIcons.xmark, color: _dimText),
           ),
         ),
       ],
     );
   }
 
+  /// Nombre legible del área: el directorio real (/api/v1/areas) manda;
+  /// el catálogo legacy solo trae ids canónicos `area_hex` que sin esto
+  /// quedaban todos como «Área».
+  String _areaLabel(String id) {
+    for (final area in widget.areas) {
+      if (area['id']?.toString() == id) {
+        final name = area['name']?.toString().trim() ?? '';
+        if (name.isNotEmpty) return name;
+      }
+    }
+    return formatLocationName(id);
+  }
+
+  /// Opciones de ubicación: unión del catálogo (tiene dispositivos) con el
+  /// directorio real de áreas (tiene los nombres). Sin catálogo igual se
+  /// ofrecen las áreas para «Una ubicación»; para «Controla un dispositivo»
+  /// el paso 2 avisará si el área no tiene dispositivos.
+  List<({String id, String label, bool hasDevices})> _locationOptions() {
+    final options = <({String id, String label, bool hasDevices})>[];
+    final seen = <String>{};
+    for (final location in widget.catalog) {
+      final id = location['name']?.toString() ?? '';
+      if (id.isEmpty || !seen.add(id)) continue;
+      options.add((id: id, label: _areaLabel(id), hasDevices: true));
+    }
+    for (final area in widget.areas) {
+      final id = area['id']?.toString() ?? '';
+      if (id.isEmpty || !seen.add(id)) continue;
+      final name = area['name']?.toString().trim() ?? '';
+      if (name.isEmpty) continue;
+      options.add((id: id, label: name, hasDevices: false));
+    }
+    return options;
+  }
+
   Widget _deviceConfig() {
+    final options = _locationOptions();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _stepLabel('1. Ubicación'),
-        _pillWrap(
-          children: [
-            for (final location in widget.catalog)
-              _pill(
-                label: formatLocationName(location['name'].toString()),
-                selected: _location == location['name'],
-                onTap: () => _selectLocation(location['name'].toString()),
-              ),
-          ],
-        ),
+        if (options.isEmpty)
+          const Text(
+            'No hay áreas todavía. Crealas en Áreas para usarlas aquí.',
+            style: TextStyle(fontSize: 13, height: 1.5, color: _dimText),
+          )
+        else
+          _pillWrap(
+            children: [
+              for (final option in options)
+                _pill(
+                  label: option.label,
+                  selected: _location == option.id,
+                  onTap: () => _selectLocation(option.id),
+                ),
+            ],
+          ),
         if (_location != null && _devices().isNotEmpty) ...[
           const SizedBox(height: 16),
           _stepLabel('2. Dispositivo'),
@@ -1557,12 +2154,22 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
   }
 
   Widget _selectionSummary() {
-    if (_location == null || _device == null || _intent == null) {
+    if (_location == null) return const SizedBox.shrink();
+    if (_devices().isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 14),
+        child: Text(
+          '«${_areaLabel(_location!)}» todavía no tiene dispositivos.',
+          style: const TextStyle(fontSize: 13, color: _dimText),
+        ),
+      );
+    }
+    if (_device == null || _intent == null) {
       return const SizedBox.shrink();
     }
     final text =
         '${formatDeviceName(_device!)} · '
-        '${formatLocationName(_location!)} · '
+        '${_areaLabel(_location!)} · '
         '${intentLabels[_intent] ?? _intent}'
         '${_intent == 'SET_VALUE' ? ' · ${_value.round()}%' : ''}';
     return Padding(
@@ -1575,33 +2182,40 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
   }
 
   Widget _locationConfig() {
+    final options = _locationOptions();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _stepLabel('1. Ubicación'),
-        _pillWrap(
-          children: [
-            _pill(
-              label: 'Toda la casa',
-              selected: _house,
-              onTap: () => setState(() {
-                _house = true;
-                _location = null;
-                _feedback = '';
-              }),
-            ),
-            for (final loc in widget.catalog)
+        if (options.isEmpty)
+          const Text(
+            'No hay áreas todavía. Crealas en Áreas para usarlas aquí.',
+            style: TextStyle(fontSize: 13, height: 1.5, color: _dimText),
+          )
+        else
+          _pillWrap(
+            children: [
               _pill(
-                label: formatLocationName(loc['name'].toString()),
-                selected: !_house && _location == loc['name'],
+                label: 'Toda la casa',
+                selected: _house,
                 onTap: () => setState(() {
-                  _house = false;
-                  _location = loc['name'].toString();
+                  _house = true;
+                  _location = null;
                   _feedback = '';
                 }),
               ),
-          ],
-        ),
+              for (final option in options)
+                _pill(
+                  label: option.label,
+                  selected: !_house && _location == option.id,
+                  onTap: () => setState(() {
+                    _house = false;
+                    _location = option.id;
+                    _feedback = '';
+                  }),
+                ),
+            ],
+          ),
         const SizedBox(height: 16),
         _stepLabel('2. Acción'),
         _pillWrap(
@@ -1644,11 +2258,11 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
                   _ => 'Volumen',
                 },
                 icon: switch (op) {
-                  'play' => Icons.play_arrow_rounded,
-                  'pause' => Icons.pause_rounded,
-                  'next' => Icons.skip_next_rounded,
-                  'previous' => Icons.skip_previous_rounded,
-                  _ => Icons.volume_up_rounded,
+                  'play' => CupertinoIcons.play_fill,
+                  'pause' => CupertinoIcons.pause_fill,
+                  'next' => CupertinoIcons.forward_end_fill,
+                  'previous' => CupertinoIcons.backward_end_fill,
+                  _ => CupertinoIcons.volume_up,
                 },
                 selected: _op == op,
                 onTap: () => setState(() {
@@ -1715,6 +2329,279 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
     );
   }
 
+  String _climateModeLabel(String mode) => switch (mode) {
+    'heat' => 'Calor',
+    'off' => 'Apagar',
+    _ => 'Frío',
+  };
+
+  String _climateZoneLabel() {
+    if (_climateAll) return 'Toda la casa';
+    if (_climateLocation == null) return '—';
+    return _areaLabel(_climateLocation!);
+  }
+
+  Widget _climateConfig() {
+    final options = _locationOptions();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _stepLabel('1. Ubicación'),
+        if (options.isEmpty)
+          const Text(
+            'No hay áreas todavía. Crealas en Áreas para usarlas aquí.',
+            style: TextStyle(fontSize: 13, height: 1.5, color: _dimText),
+          )
+        else
+          _pillWrap(
+            children: [
+              _pill(
+                label: 'Toda la casa',
+                selected: _climateAll,
+                onTap: () => setState(() {
+                  _climateAll = true;
+                  _climateLocation = null;
+                  _feedback = '';
+                }),
+              ),
+              for (final option in options)
+                _pill(
+                  label: option.label,
+                  selected: !_climateAll && _climateLocation == option.id,
+                  onTap: () => setState(() {
+                    _climateAll = false;
+                    _climateLocation = option.id;
+                    _feedback = '';
+                  }),
+                ),
+            ],
+          ),
+        const SizedBox(height: 16),
+        _stepLabel('2. Modo'),
+        _pillWrap(
+          children: [
+            for (final mode in const ['cool', 'heat', 'off'])
+              _pill(
+                label: _climateModeLabel(mode),
+                selected: _climateMode == mode,
+                onTap: () => setState(() {
+                  _climateMode = mode;
+                  _feedback = '';
+                }),
+              ),
+          ],
+        ),
+        if (_climateMode != 'off') ...[
+          const SizedBox(height: 16),
+          _stepLabel('3. Temperatura'),
+          _stepper(
+            center: '${_climateTemp.round()}°C',
+            onMinus: () => setState(() {
+              if (_climateTemp > 16) _climateTemp -= 1;
+            }),
+            onPlus: () => setState(() {
+              if (_climateTemp < 30) _climateTemp += 1;
+            }),
+          ),
+        ],
+        _configSummary(
+          _climateMode == 'off'
+              ? '${_climateZoneLabel()} · Apagar'
+              : '${_climateZoneLabel()} · ${_climateModeLabel(_climateMode)} · ${_climateTemp.round()}°C',
+        ),
+      ],
+    );
+  }
+
+  String _waitUnitLabel(String unit) => unit == 's' ? 'Segundos' : 'Minutos';
+
+  int get _waitMax => _waitUnit == 's' ? 300 : 60;
+
+  Widget _waitConfig() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _stepLabel('1. Duración'),
+        _stepper(
+          center: _waitUnit == 's' ? '$_waitValue s' : '$_waitValue min',
+          onMinus: () => setState(() {
+            if (_waitValue > 1) _waitValue -= 1;
+          }),
+          onPlus: () => setState(() {
+            if (_waitValue < _waitMax) _waitValue += 1;
+          }),
+        ),
+        const SizedBox(height: 16),
+        _stepLabel('2. Unidad'),
+        _pillWrap(
+          children: [
+            for (final unit in const ['s', 'min'])
+              _pill(
+                label: _waitUnitLabel(unit),
+                selected: _waitUnit == unit,
+                onTap: () => setState(() {
+                  _waitUnit = unit;
+                  if (_waitValue > _waitMax) _waitValue = _waitMax;
+                  _feedback = '';
+                }),
+              ),
+          ],
+        ),
+        _configSummary(
+          'Esperar $_waitValue ${_waitUnit == 's' ? 'segundos' : 'minutos'}',
+        ),
+      ],
+    );
+  }
+
+  Widget _announceConfig() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _stepLabel('1. Dónde anunciar'),
+        _pillWrap(
+          children: [
+            _pill(
+              label: 'Toda la casa',
+              selected: _announceTarget == 'house',
+              onTap: () => setState(() {
+                _announceTarget = 'house';
+                _feedback = '';
+              }),
+            ),
+            _pill(
+              label: 'Mi teléfono',
+              selected: _announceTarget == 'phone',
+              onTap: () => setState(() {
+                _announceTarget = 'phone';
+                _feedback = '';
+              }),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _stepLabel('2. Mensaje'),
+        TextField(
+          controller: _announceController,
+          maxLength: 200,
+          maxLines: 2,
+          textInputAction: TextInputAction.done,
+          onChanged: (_) {
+            if (_feedback.isNotEmpty) setState(() => _feedback = '');
+          },
+          decoration: _decoration(hint: 'La comida está lista'),
+        ),
+        _configSummary(
+          _announceController.text.trim().isEmpty
+              ? 'Escribe el mensaje que dirá GAMMA.'
+              : 'Anuncia: «${_announceController.text.trim()}»',
+        ),
+      ],
+    );
+  }
+
+  Widget _runRoutineConfig() {
+    if (widget.routines.isEmpty) {
+      return const Text(
+        'Todavía no tienes otra rutina para encadenar. Guarda esta y crea una más.',
+        style: TextStyle(fontSize: 13, height: 1.5, color: _dimText),
+      );
+    }
+    String selectedName = '';
+    for (final r in widget.routines) {
+      if (r['id']?.toString() == _runRoutineId) {
+        selectedName = r['nombre']?.toString() ?? '';
+      }
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _stepLabel('1. Rutina'),
+        _pillWrap(
+          children: [
+            for (final r in widget.routines)
+              _pill(
+                label: r['nombre']?.toString() ?? '',
+                selected: _runRoutineId == r['id']?.toString(),
+                onTap: () => setState(() {
+                  _runRoutineId = r['id']?.toString();
+                  _feedback = '';
+                }),
+              ),
+          ],
+        ),
+        _configSummary(
+          selectedName.isEmpty
+              ? 'Elige qué rutina se ejecutará.'
+              : 'Ejecuta la rutina «$selectedName»',
+        ),
+      ],
+    );
+  }
+
+  /// Cajita de resumen gris como la referencia («Recámara · Frío · 22°C»).
+  Widget _configSummary(String text) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: _softFill,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _border),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
+  /// Stepper − valor + en contenedor redondeado, como la referencia.
+  Widget _stepper({
+    required String center,
+    required VoidCallback onMinus,
+    required VoidCallback onPlus,
+  }) {
+    Widget circle(IconData icon, VoidCallback onTap) {
+      return SizedBox(
+        width: 56,
+        height: 56,
+        child: Material(
+          color: Colors.white,
+          shape: const CircleBorder(side: BorderSide(color: _border)),
+          child: InkWell(
+            onTap: onTap,
+            customBorder: const CircleBorder(),
+            child: Icon(icon, size: 22, color: _dimText),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: _softFill,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _border),
+      ),
+      child: Row(
+        children: [
+          circle(CupertinoIcons.minus, onMinus),
+          Expanded(
+            child: Text(
+              center,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+            ),
+          ),
+          circle(CupertinoIcons.add, onPlus),
+        ],
+      ),
+    );
+  }
+
   void _selectLocation(String name) {
     setState(() {
       _location = name;
@@ -1770,7 +2657,11 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
             horizontal: 16,
             vertical: 20,
           ),
-          prefixIcon: const Icon(Icons.search, size: 22, color: _dimCap),
+          prefixIcon: const Icon(
+            CupertinoIcons.search,
+            size: 22,
+            color: _dimCap,
+          ),
           // ListenableBuilder: solo este icono se reconstruye al escribir,
           // no todo el modal (evita el lag de rebuild por tecla).
           suffixIcon: ListenableBuilder(
@@ -1778,7 +2669,11 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
             builder: (context, _) => _searchController.text.isEmpty
                 ? const SizedBox.shrink()
                 : IconButton(
-                    icon: const Icon(Icons.close, size: 18, color: _dimText),
+                    icon: const Icon(
+                      CupertinoIcons.xmark,
+                      size: 18,
+                      color: _dimText,
+                    ),
                     tooltip: 'Limpiar búsqueda',
                     onPressed: () {
                       _searchController.clear();
@@ -2224,9 +3119,9 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
   }) {
     final url = item['image_url']?.toString();
     final icon = switch (item['type']) {
-      'artist' => Icons.person,
-      'playlist' => Icons.queue_music,
-      _ => Icons.music_note,
+      'artist' => CupertinoIcons.person,
+      'playlist' => CupertinoIcons.music_note_list,
+      _ => CupertinoIcons.music_note,
     };
     final fallback = Container(
       color: AppColors.surfaceSoft,
@@ -2260,7 +3155,11 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
               child: SizedBox(
                 width: 24,
                 height: 24,
-                child: Icon(Icons.check, size: 14, color: Colors.white),
+                child: Icon(
+                  CupertinoIcons.checkmark,
+                  size: 14,
+                  color: Colors.white,
+                ),
               ),
             ),
           )
@@ -2563,6 +3462,57 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
           'intent': 'CAMERA_CONTROL',
           'operation': _cameraOp,
           'query': query,
+        };
+      case 'climate':
+        if (!_climateAll && _climateLocation == null) {
+          _showFeedback('Elige una ubicación para el clima.');
+          return null;
+        }
+        return {
+          'scope': 'CLIMATE_CONTROL',
+          'intent': 'CLIMATE_CONTROL',
+          if (!_climateAll) 'location': _climateLocation,
+          'mode': _climateMode,
+          if (_climateMode != 'off') ...{
+            'value': _climateTemp.round(),
+            'value_semantic': 'grados',
+          },
+        };
+      case 'wait':
+        return {
+          'scope': 'WAIT',
+          'intent': 'WAIT',
+          'value': _waitValue,
+          'value_semantic': _waitUnit == 's' ? 'segundos' : 'minutos',
+        };
+      case 'announce':
+        final message = _announceController.text.trim();
+        if (message.isEmpty) {
+          _showFeedback('Escribe el mensaje que dirá GAMMA.');
+          return null;
+        }
+        return {
+          'scope': 'ANNOUNCE',
+          'intent': 'ANNOUNCE',
+          if (_announceTarget == 'phone') 'location': 'phone',
+          'query': message,
+        };
+      case 'runroutine':
+        if (_runRoutineId == null) {
+          _showFeedback('Elige qué rutina se ejecutará.');
+          return null;
+        }
+        String targetName = '';
+        for (final r in widget.routines) {
+          if (r['id']?.toString() == _runRoutineId) {
+            targetName = r['nombre']?.toString() ?? '';
+          }
+        }
+        return {
+          'scope': 'RUN_ROUTINE',
+          'intent': 'RUN_ROUTINE',
+          'routine_id': _runRoutineId,
+          if (targetName.isNotEmpty) 'query': targetName,
         };
     }
     return null;

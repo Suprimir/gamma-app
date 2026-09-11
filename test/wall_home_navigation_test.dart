@@ -55,7 +55,10 @@ void main() {
     expect(find.byType(WallAreaOverviewPage), findsOneWidget);
 
     await tester.pageBack();
-    await tester.pumpAndSettle();
+    // No pumpAndSettle here: the wall home orb breathes forever by design,
+    // so settle never completes. Fixed pumps cover the pop transition.
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 500));
     expect(find.byType(WallAreaOverviewPage), findsNothing);
     expect(find.text('Mi casa'), findsOneWidget);
   });

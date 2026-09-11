@@ -128,6 +128,88 @@ void main() {
     );
   });
 
+  group('nuevas categorías (clima, espera, anuncio, encadenar)', () {
+    test('categoría y subtítulo', () {
+      expect(actionCategory({'intent': 'CLIMATE_CONTROL'}), 'climate');
+      expect(actionCategory({'intent': 'WAIT'}), 'wait');
+      expect(actionCategory({'intent': 'ANNOUNCE'}), 'announce');
+      expect(actionCategory({'intent': 'RUN_ROUTINE'}), 'runroutine');
+      expect(actionSub({'intent': 'CLIMATE_CONTROL'}), 'Clima');
+      expect(actionSub({'intent': 'WAIT'}), 'Espera');
+      expect(actionSub({'intent': 'ANNOUNCE'}), 'Anuncio');
+      expect(actionSub({'intent': 'RUN_ROUTINE'}), 'Rutina');
+    });
+
+    test('resúmenes', () {
+      expect(
+        actionSummary({
+          'intent': 'CLIMATE_CONTROL',
+          'location': 'cocina',
+          'mode': 'cool',
+          'value': 22,
+        }),
+        'Clima en Cocina: Frío a 22°',
+      );
+      expect(
+        actionSummary({'intent': 'CLIMATE_CONTROL', 'mode': 'off'}),
+        'Apaga el clima en toda la casa',
+      );
+      expect(
+        actionSummary({
+          'intent': 'WAIT',
+          'value': 5,
+          'value_semantic': 'minutos',
+        }),
+        'Esperar 5 minutos',
+      );
+      expect(
+        actionSummary({'intent': 'ANNOUNCE', 'query': 'La comida está lista'}),
+        'Anuncia en toda la casa: «La comida está lista»',
+      );
+      expect(
+        actionSummary({'intent': 'RUN_ROUTINE', 'query': 'Modo cine'}),
+        'Ejecuta la rutina «Modo cine»',
+      );
+    });
+
+    test('clima contradice modo y temperatura en la misma zona', () {
+      final cool22 = {
+        'intent': 'CLIMATE_CONTROL',
+        'location': 'cocina',
+        'mode': 'cool',
+        'value': 22,
+      };
+      final heat22 = {
+        'intent': 'CLIMATE_CONTROL',
+        'location': 'cocina',
+        'mode': 'heat',
+        'value': 22,
+      };
+      final cool24 = {
+        'intent': 'CLIMATE_CONTROL',
+        'location': 'cocina',
+        'mode': 'cool',
+        'value': 24,
+      };
+      final coolOtherZone = {
+        'intent': 'CLIMATE_CONTROL',
+        'location': 'salon',
+        'mode': 'heat',
+        'value': 22,
+      };
+      expect(
+        conflictReason(heat22, cool22, catalog),
+        'Contradice el modo anterior',
+      );
+      expect(
+        conflictReason(cool24, cool22, catalog),
+        'Contradice la temperatura anterior',
+      );
+      expect(conflictReason(cool22, cool22, catalog), isNull);
+      expect(conflictReason(coolOtherZone, cool22, catalog), isNull);
+    });
+  });
+
   test('deviceCapabilities respeta el catálogo y cae a on/off', () {
     expect(deviceCapabilities('salon', 'luz_salon', catalog), [
       'TURN_ON',

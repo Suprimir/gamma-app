@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -14,9 +15,25 @@ class _FakeApiClient extends ApiClient {
   List<Map<String, dynamic>> routinesResult;
   bool deleted = false;
   String? deletedId;
+  String? updatedId;
+  Map<String, dynamic>? updatedPayload;
 
   @override
   Future<List<Map<String, dynamic>>> routines() async => routinesResult;
+
+  @override
+  Future<Map<String, dynamic>> updateRoutine(
+    String id,
+    Map<String, dynamic> payload,
+  ) async {
+    updatedId = id;
+    updatedPayload = payload;
+    final i = routinesResult.indexWhere((r) => r['id'] == id);
+    if (i != -1) {
+      routinesResult[i] = {...routinesResult[i], 'enabled': payload['enabled']};
+    }
+    return {'ok': true};
+  }
 
   @override
   Future<Map<String, dynamic>> catalog() async => {'locations': []};
@@ -66,11 +83,9 @@ void main() {
     expect(find.text('Rutinas'), findsOneWidget);
     expect(find.text('Nueva rutina'), findsOneWidget);
     expect(find.text('Buenos días'), findsOneWidget);
-    expect(find.text('2 acciones'), findsOneWidget);
-    expect(find.text('«hola gamma»'), findsOneWidget);
-    expect(find.text('«rutina»'), findsOneWidget);
-    expect(find.text('Editar'), findsOneWidget);
-    expect(find.text('Eliminar'), findsOneWidget);
+    expect(find.text('«hola gamma» · 2 acciones'), findsOneWidget);
+    expect(find.byType(Switch), findsOneWidget);
+    expect(find.byIcon(CupertinoIcons.ellipsis), findsOneWidget);
 
     await tester.tap(find.text('Nueva rutina'));
     await tester.pump();
@@ -92,17 +107,24 @@ void main() {
     );
   });
 
-  testWidgets('eliminar rutina pide confirmación', (tester) async {
+  testWidgets('eliminar rutina pide confirmación desde el menú ⋯', (
+    tester,
+  ) async {
     final api = _FakeApiClient(routines: [_routine('r1', 'Buenos días')]);
     await tester.pumpWidget(_host(api));
     await tester.pump();
+
+    await tester.tap(find.byIcon(CupertinoIcons.ellipsis));
+    await tester.pump();
+    expect(find.text('Editar'), findsOneWidget);
+    expect(find.text('Eliminar'), findsOneWidget);
 
     await tester.tap(find.text('Eliminar'));
     await tester.pump();
 
     expect(find.text('Eliminar rutina'), findsOneWidget);
     expect(
-      find.text('¿Eliminar esta rutina? Esta acción no se puede deshacer.'),
+      find.text('¿Eliminar "Buenos días"? Esta acción no se puede deshacer.'),
       findsOneWidget,
     );
 
@@ -113,6 +135,22 @@ void main() {
     expect(api.deleted, isTrue);
     expect(api.deletedId, 'r1');
     expect(find.text('Buenos días'), findsNothing);
+    expect(find.text('Rutina eliminada.'), findsOneWidget);
+  });
+
+  testWidgets('switch apaga y enciende la rutina', (tester) async {
+    final api = _FakeApiClient(routines: [_routine('r1', 'Buenos días')]);
+    await tester.pumpWidget(_host(api));
+    await tester.pump();
+
+    await tester.tap(find.byType(Switch));
+    await tester.pump();
+    await tester.pump();
+
+    expect(api.updatedId, 'r1');
+    expect(api.updatedPayload?['enabled'], isFalse);
+    expect(find.text('Rutina desactivada.'), findsOneWidget);
+    expect(find.text('«hola gamma» · 1 acción · desactivada'), findsOneWidget);
   });
 
   testWidgets('rutina con errores de validación muestra aviso', (tester) async {

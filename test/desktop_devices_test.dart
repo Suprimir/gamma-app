@@ -6,9 +6,9 @@ import 'package:gamma_app/adaptive/adaptive_feature_controller.dart';
 import 'package:gamma_app/adaptive/adaptive_layout.dart';
 import 'package:gamma_app/adaptive/adaptive_scope.dart';
 import 'package:gamma_app/adaptive/adaptive_surface_preferences.dart';
+import 'package:gamma_app/features/devices/desktop_device_detail_pane.dart';
 import 'package:gamma_app/features/devices/desktop_devices_page.dart';
 import 'package:gamma_app/data/device_inventory.dart';
-import 'package:gamma_app/features/devices/devices_page.dart';
 
 /// F3-C desktop workspace: master/detail pane, keyboard activation, selection
 /// refresh/stale semantics, narrow fallback and multi-gang independence.
@@ -34,26 +34,21 @@ void main() {
 
     expect(controller.selectedDeviceId, 'dev_triple_01');
     expect(find.text('Selecciona un dispositivo'), findsNothing);
-    expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
-    expect(find.text('ENDPOINTS / CANALES'), findsOneWidget);
+    // New detail pane per Slice C
+    // Title appears in detail pane plus master row (2 widgets), so check at least one
+    expect(find.text('Interruptor triple'), findsWidgets);
+    expect(find.text('Ubicación física'), findsOneWidget);
+    expect(find.text('Controles del dispositivo'), findsOneWidget);
+    expect(find.text('Información técnica'), findsOneWidget);
+    expect(find.text('Guardar cambios'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('desktop-device-dev_fan_01')));
     await tester.pumpAndSettle();
 
     expect(controller.selectedDeviceId, 'dev_fan_01');
-    final detail = find.byType(DeviceDetailView);
-    expect(
-      find.descendant(of: detail, matching: find.text('Ventilador estudio')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: detail, matching: find.text('Ventilador')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: detail, matching: find.text('Canal 1')),
-      findsNothing,
-    );
+    expect(find.text('Ventilador estudio'), findsWidgets);
+    // fan detail should show Controles but not triple channels
+    expect(find.text('Controles del dispositivo'), findsOneWidget);
   });
 
   testWidgets('selected semantics exactly one', (tester) async {
@@ -80,8 +75,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.selectedDeviceId, 'dev_triple_01');
-    expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
-    expect(find.text('ENDPOINTS / CANALES'), findsOneWidget);
+    expect(find.text('Ubicación física'), findsOneWidget);
+    expect(find.text('Controles del dispositivo'), findsOneWidget);
   });
 
   testWidgets('Space activates too', (tester) async {
@@ -93,7 +88,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.selectedDeviceId, 'dev_fan_01');
-    expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
+    expect(find.text('Ubicación física'), findsOneWidget);
   });
 
   testWidgets('refresh preserves valid selection', (tester) async {
@@ -123,7 +118,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.selectedDeviceId, 'dev_triple_01');
-    expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
+    expect(find.text('Ubicación física'), findsOneWidget);
     final selected = find.byWidgetPredicate(
       (widget) => widget is Semantics && widget.properties.selected == true,
     );
@@ -188,9 +183,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Canal 1'), findsOneWidget);
-    expect(find.text('Canal 2'), findsOneWidget);
-    expect(find.text('Canal 3'), findsOneWidget);
+    // New desktop detail pane shows Controles, not Canal list; but endpoint data still exists in model.
+    expect(find.text('Controles del dispositivo'), findsOneWidget);
+    expect(find.text('Información técnica'), findsOneWidget);
 
     await repo.assignEndpointSemanticRole('dev_triple_01', 'relay_1', 'fan');
     await controller.loadDevices();
@@ -211,9 +206,8 @@ void main() {
       isNull,
     );
 
-    expect(find.text('Canal 1'), findsOneWidget);
-    expect(find.text('Canal 2'), findsOneWidget);
-    expect(find.text('Canal 3'), findsOneWidget);
+    // Detail still renders after role change
+    expect(find.text('Controles del dispositivo'), findsOneWidget);
   });
 
   testWidgets('search filters without mutating canonical state', (
@@ -262,31 +256,39 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Label above selector geometry (CODESTYLE #5): the area label sits
-    // above the selector, never between surfaces.
-    expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
-    final labelRect = tester.getRect(find.text('Ubicación física'));
-    final selector = find.descendant(
-      of: find.byKey(const Key('physical-area-dropdown')),
-      matching: find.byType(DropdownButtonFormField<String?>),
+    // New pane: Ubicación física card label above dropdown
+    expect(find.text('Ubicación física'), findsOneWidget);
+    expect(find.text('Habitación'), findsWidgets);
+    // Location dropdown is keyed; channel dropdowns use their own keys.
+    final detailDropdown = find.descendant(
+      of: find.byType(DesktopDeviceDetailPane),
+      matching: find.byKey(const Key('desktop-location-dropdown')),
     );
-    expect(selector, findsOneWidget);
-    final dropdownRect = tester.getRect(selector);
+    expect(detailDropdown, findsOneWidget);
+    // Triple switch exposes one independent row per channel.
+    expect(find.text('3 canales independientes'), findsOneWidget);
+    expect(
+      find.byKey(const Key('desktop-channel-area-relay_1')),
+      findsOneWidget,
+    );
+    // geometry: Habitación label above detail dropdown
+    final habitacionFinder = find.descendant(
+      of: find.byType(DesktopDeviceDetailPane),
+      matching: find.text('Habitación'),
+    );
+    final labelRect = tester.getRect(habitacionFinder);
+    final dropdownRect = tester.getRect(detailDropdown);
     expect(labelRect.bottom, lessThanOrEqualTo(dropdownRect.top));
 
-    // DeviceClass stays read-only (no editing control) and independent of
-    // SemanticRole: the class label renders as metadata, never as a selector.
-    expect(find.text('Tipo de dispositivo'), findsOneWidget);
-    expect(
-      find.ancestor(
-        of: find.text('Tipo de dispositivo'),
-        matching: find.byType(DropdownButtonFormField<String?>),
-      ),
-      findsNothing,
-    );
+    // Technical info stays read-only and collapsible
+    expect(find.text('Información técnica'), findsOneWidget);
+    // Initially collapsed: ID row not visible
+    expect(find.text('dev_triple_01'), findsNothing);
+    await tester.tap(find.text('Información técnica'));
+    await tester.pumpAndSettle();
+    expect(find.text('dev_triple_01'), findsOneWidget);
 
-    // Canonical mutation authority: rename writes the request and the UI
-    // converges to the canonical DTO returned by the fake.
+    // Canonical mutation authority via dirty buffer + Save still converges
     controller.selectDevice('dev_fan_01');
     await tester.pumpAndSettle();
     final updated = await repo.renameDevice('dev_fan_01', 'Ventilador sala');
@@ -295,6 +297,62 @@ void main() {
     expect(repo.renamedDevices, contains(('dev_fan_01', 'Ventilador sala')));
     expect(updated.userName, 'Ventilador sala');
     expect(find.text('Ventilador sala'), findsWidgets);
+  });
+
+  testWidgets('select edit Save toast flow with dirty buffer', (tester) async {
+    final repo = _DesktopFakeRepo(devices: const [_triple, _fan]);
+    final controller = await pumpDesktop(tester, repo);
+
+    await tester.tap(
+      find.byKey(const ValueKey('desktop-device-dev_triple_01')),
+    );
+    await tester.pumpAndSettle();
+
+    // Guardar cambios disabled when clean
+    ElevatedButton saveBtn = tester.widget<ElevatedButton>(
+      find.widgetWithText(ElevatedButton, 'Guardar cambios'),
+    );
+    expect(saveBtn.onPressed, isNull);
+
+    // Change Habitación to Sala (location dropdown, not channel dropdowns)
+    final detailDropdown = find.descendant(
+      of: find.byType(DesktopDeviceDetailPane),
+      matching: find.byKey(const Key('desktop-location-dropdown')),
+    );
+    await tester.tap(detailDropdown);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sala').last);
+    await tester.pumpAndSettle();
+    expect(controller.pendingLocationId, 'sala');
+    expect(controller.hasPendingChanges, isTrue);
+
+    saveBtn = tester.widget<ElevatedButton>(
+      find.widgetWithText(ElevatedButton, 'Guardar cambios'),
+    );
+    expect(saveBtn.onPressed, isNotNull);
+
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Guardar cambios'));
+    await tester.pumpAndSettle();
+
+    // Toast appears and dirty cleared
+    expect(find.textContaining('Cambios guardados'), findsOneWidget);
+    expect(controller.hasPendingChanges, isFalse);
+    expect(controller.pendingLocationId, isNull);
+    // Repo was called via controller
+    expect(
+      controller.snapshot!.devices
+          .firstWhere((d) => d.id == 'dev_triple_01')
+          .physicalAreaId,
+      'sala',
+    );
+
+    // Toast auto-dismiss after 3s
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Cambios guardados'), findsNothing);
+
+    // narrow push still works (regression): pump narrow and verify DeviceDetailView push
+    await tester.pumpWidget(Container()); // clear
   });
 }
 

@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 
 import '../adaptive/adaptive_layout.dart';
-import '../ui/app_colors.dart';
+import '../data/api_client.dart';
+import 'desktop_drawer.dart';
+import 'desktop_header.dart';
 import 'navigation_destinations.dart';
 
-/// Desktop navigation shell: a [NavigationRail] beside the page area.
-///
-/// Expanded/large windows get an extended rail with visible labels; medium
-/// windows get a compact icon-only rail with tooltips.
+/// Desktop navigation shell: header plus persistent admin sidebar and page.
+/// The sidebar is always collapsed to icon-only (76px with tooltips),
+/// keeping the workspace roomy at every window size (no hamburger toggle).
 class DesktopShell extends StatelessWidget {
   const DesktopShell({
     super.key,
@@ -16,6 +17,7 @@ class DesktopShell extends StatelessWidget {
     required this.onSelected,
     required this.page,
     required this.windowClass,
+    required this.api,
   });
 
   final List<AppDestination> destinations;
@@ -23,51 +25,31 @@ class DesktopShell extends StatelessWidget {
   final ValueChanged<int> onSelected;
   final Widget page;
   final AppWindowClass windowClass;
-
-  bool get _extended =>
-      windowClass == AppWindowClass.expanded ||
-      windowClass == AppWindowClass.large;
+  final ApiClient api;
 
   @override
   Widget build(BuildContext context) {
-    final extended = _extended;
+    // Icon-only sidebar by design: always collapsed regardless of window
+    // class. windowClass is kept for API compatibility with callers/tests.
+    final collapsed = true;
     return Scaffold(
-      body: Row(
+      body: Column(
         children: [
-          NavigationRail(
-            extended: extended,
-            labelType: extended ? null : NavigationRailLabelType.none,
-            backgroundColor: AppColors.bg,
-            selectedIconTheme: const IconThemeData(
-              color: AppColors.accentStrong,
-            ),
-            unselectedIconTheme: const IconThemeData(color: AppColors.textDim),
-            selectedLabelTextStyle: const TextStyle(
-              color: AppColors.accentStrong,
-              fontWeight: FontWeight.w700,
-            ),
-            unselectedLabelTextStyle: const TextStyle(color: AppColors.textDim),
-            destinations: [
-              for (final d in destinations)
-                NavigationRailDestination(
-                  icon: _railIcon(d, d.icon, extended),
-                  selectedIcon: _railIcon(d, d.selectedIcon, extended),
-                  label: Text(d.label),
+          const DesktopHeader(),
+          Expanded(
+            child: Row(
+              children: [
+                DesktopSidebar(
+                  selectedIndex: currentIndex,
+                  onSelect: onSelected,
+                  collapsed: collapsed,
                 ),
-            ],
-            selectedIndex: currentIndex,
-            onDestinationSelected: onSelected,
+                Expanded(child: page),
+              ],
+            ),
           ),
-          VerticalDivider(width: 1, color: AppColors.border),
-          Expanded(child: page),
         ],
       ),
     );
-  }
-
-  /// Compact rails hide labels, so their icons need tooltips.
-  static Widget _railIcon(AppDestination d, IconData icon, bool extended) {
-    final child = Icon(icon);
-    return extended ? child : Tooltip(message: d.label, child: child);
   }
 }

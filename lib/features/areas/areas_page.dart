@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../adaptive/adaptive_feature_controller.dart';
@@ -158,7 +159,7 @@ class _AreasPageState extends State<AreasPage> {
           IconButton(
             tooltip: 'Nueva área',
             onPressed: _controller.areaMutating ? null : _create,
-            icon: const Icon(Icons.add),
+            icon: const Icon(CupertinoIcons.add),
           ),
         ],
       ),
@@ -180,7 +181,7 @@ class _AreasPageState extends State<AreasPage> {
                             child: Column(
                               children: [
                                 Icon(
-                                  Icons.home_work_outlined,
+                                  CupertinoIcons.building_2_fill,
                                   size: 48,
                                   color: AppColors.textFaint,
                                 ),
@@ -261,7 +262,7 @@ class _AreaRow extends StatelessWidget {
                   borderRadius: BorderRadius.circular(13),
                 ),
                 child: const Icon(
-                  Icons.place_outlined,
+                  CupertinoIcons.placemark,
                   color: AppColors.accent,
                 ),
               ),
@@ -291,11 +292,14 @@ class _AreaRow extends StatelessWidget {
                 tooltip: 'Eliminar',
                 onPressed: onDelete,
                 icon: const Icon(
-                  Icons.delete_outline,
+                  CupertinoIcons.trash,
                   color: AppColors.textFaint,
                 ),
               ),
-              const Icon(Icons.chevron_right, color: AppColors.textFaint),
+              const Icon(
+                CupertinoIcons.chevron_right,
+                color: AppColors.textFaint,
+              ),
             ],
           ),
         ),

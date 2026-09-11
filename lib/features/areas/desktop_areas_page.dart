@@ -125,8 +125,12 @@ class _DesktopAreasPageState extends State<DesktopAreasPage> {
     if (controller.areaMutating) return;
     final result = await showDialog<({String name, List<String> aliases})>(
       context: context,
-      builder: (_) =>
-          AreaEditorDialog(title: 'Nueva área', submitLabel: 'Crear'),
+      builder: (_) => const AreaEditorDialog(
+        title: 'Nueva área',
+        submitLabel: 'Crear',
+        showAliases: false,
+        decorated: true,
+      ),
     );
     if (result == null) return;
     try {
@@ -467,6 +471,8 @@ class _AreaDetailPaneState extends State<_AreaDetailPane> {
           initialAliases: area.aliases,
           submitLabel: 'Guardar',
           busy: controller.areaMutating,
+          showAliases: false,
+          decorated: true,
           onSubmit: (name, aliases) => _submit(area, name, aliases),
         ),
         const SizedBox(height: 20),

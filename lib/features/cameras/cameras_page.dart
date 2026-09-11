@@ -6,9 +6,17 @@ import '../../ui/shared_widgets.dart';
 import '../../ui/app_colors.dart';
 
 class CamerasPage extends StatefulWidget {
-  const CamerasPage({super.key, required this.api});
+  const CamerasPage({
+    super.key,
+    required this.api,
+    this.showBackButton = false,
+  });
 
   final ApiClient api;
+
+  /// Shows a Volver affordance on top: the page has no AppBar, so pushed
+  /// routes (off the rail) would otherwise have no way back.
+  final bool showBackButton;
 
   @override
   State<CamerasPage> createState() => _CamerasPageState();
@@ -93,6 +101,13 @@ class _CamerasPageState extends State<CamerasPage> {
     return SafeArea(
       child: CustomScrollView(
         slivers: [
+          if (widget.showBackButton)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(20, 20, 20, 0),
+                child: WallBackButton(),
+              ),
+            ),
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),

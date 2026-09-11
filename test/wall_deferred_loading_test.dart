@@ -8,6 +8,7 @@ import 'package:gamma_app/adaptive/adaptive_layout.dart';
 import 'package:gamma_app/adaptive/adaptive_surface_preferences.dart';
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/app/app_shell.dart';
+import 'package:gamma_app/app/desktop_drawer.dart';
 import 'package:gamma_app/data/device_inventory.dart';
 import 'package:gamma_app/app/floating_dock.dart';
 import 'package:gamma_app/features/wall_home/wall_areas_page.dart';
@@ -410,7 +411,7 @@ void main() {
     } else {
       await tester.tap(
         find.descendant(
-          of: find.byType(NavigationRail),
+          of: find.byType(DesktopSidebar),
           matching: find.text(label),
         ),
       );

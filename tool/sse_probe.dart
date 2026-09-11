@@ -6,6 +6,10 @@
 import 'package:gamma_app/data/api_client.dart';
 
 Future<void> main(List<String> args) async {
-  final api = ApiClient(baseUrl: args.isEmpty ? 'http://127.0.0.1:8420' : args.first);
-  await api.events().forEach((event) => print('[${event['event']}] ${event['data']}'));
+  final api = ApiClient(
+    baseUrl: args.isEmpty ? 'http://127.0.0.1:8420' : args.first,
+  );
+  await api.events().forEach(
+    (event) => print('[${event['event']}] ${event['data']}'),
+  );
 }

@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/data/device_inventory.dart';
-import 'package:gamma_app/features/wall_home/wall_home_clock.dart';
 import 'package:gamma_app/features/wall_home/wall_panel_home_page.dart';
 
 /// F3-B Phase 11: lifecycle/performance hardening. Wall display may run
@@ -73,7 +72,7 @@ void main() {
     expect(find.byKey(const ValueKey('wall-area-pasillo')), findsOneWidget);
   });
 
-  testWidgets('clock timer is disposed with the page', (
+  testWidgets('wall home carries no clock header and disposes cleanly', (
     WidgetTester tester,
   ) async {
     final repository = _CountingRepository();
@@ -88,9 +87,11 @@ void main() {
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
-    expect(find.byType(WallHomeClock), findsOneWidget);
+    // The wall home has no clock header by design; removing the page must
+    // still dispose cleanly with no pending timers.
+    expect(find.text('Mi casa'), findsOneWidget);
 
-    // Remove the page; the pending minute timer must be cancelled.
+    // Remove the page; disposal must complete with no pending timers.
     await tester.pumpWidget(const MaterialApp(home: SizedBox()));
   });
 }

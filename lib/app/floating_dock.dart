@@ -18,15 +18,15 @@ class FloatingDock extends StatelessWidget {
     required this.onSelected,
     required this.destinations,
     this.itemHeight = 68,
-    this.iconSize = 26,
-    this.maxWidth = 720,
+    this.iconSize = 22,
+    this.maxWidth = 400,
   });
 
   final int currentIndex;
   final ValueChanged<int> onSelected;
   final List<FloatingDockDestination> destinations;
 
-  /// Height of each destination item.
+  /// Height of each destination item (kept for API compatibility).
   final double itemHeight;
 
   /// Size of each destination icon.
@@ -35,45 +35,50 @@ class FloatingDock extends StatelessWidget {
   /// Cap on dock width; `null` lets the dock span the window inset.
   final double? maxWidth;
 
-  static const _radius = 26.0;
+  static const _radius = 32.0;
+  static const _dockColor = Color(0xFF1C1F2B);
 
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
-    return SafeArea(
-      top: false,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: math.min(maxWidth ?? double.infinity, width - 28),
-          ),
-          child: Container(
-            padding: const EdgeInsets.all(7),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(_radius),
-              border: Border.all(color: AppColors.border),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.border,
-                  blurRadius: 32,
-                  offset: const Offset(0, 12),
-                ),
-              ],
+    return RepaintBoundary(
+      child: SafeArea(
+        top: false,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: math.min(maxWidth ?? double.infinity, width - 32),
             ),
-            child: Row(
-              children: [
-                for (var i = 0; i < destinations.length; i++)
-                  Expanded(
-                    child: _DockItem(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: _dockColor,
+                borderRadius: BorderRadius.circular(_radius),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.3),
+                    blurRadius: 28,
+                    offset: const Offset(0, 12),
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.15),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  for (var i = 0; i < destinations.length; i++)
+                    _DockItem(
                       destination: destinations[i],
                       active: i == currentIndex,
                       onTap: () => onSelected(i),
-                      height: itemHeight,
                       iconSize: iconSize,
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -87,59 +92,61 @@ class _DockItem extends StatelessWidget {
     required this.destination,
     required this.active,
     required this.onTap,
-    required this.height,
     required this.iconSize,
   });
 
   final FloatingDockDestination destination;
   final bool active;
   final VoidCallback onTap;
-  final double height;
   final double iconSize;
+
+  static const _inactiveColor = Color(0xFF9AA0B2);
 
   @override
   Widget build(BuildContext context) {
-    final color = active ? AppColors.accentStrong : AppColors.textDim;
-    // One merged semantic node per destination: the InkWell contributes the
-    // tap action, the Text contributes the label, and the explicit flags
-    // expose the selected state + button role. Without the selected flag the
-    // active destination would only be distinguishable visually.
     return MergeSemantics(
       child: Semantics(
         selected: active,
         button: true,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(18),
-            child: SizedBox(
-              height: height,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    active ? destination.selectedIcon : destination.icon,
-                    size: iconSize,
-                    color: color,
-                  ),
-                  const SizedBox(height: 4),
-                  Flexible(
-                    child: Text(
-                      destination.label,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        color: color,
-                        fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeInOut,
+          padding: active
+              ? const EdgeInsets.symmetric(horizontal: 16, vertical: 10)
+              : const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: active ? AppColors.accent : Colors.transparent,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(24),
+              child: active
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          destination.selectedIcon,
+                          size: 20,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          destination.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13.5,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                      ],
+                    )
+                  : Icon(destination.icon, size: 22, color: _inactiveColor),
             ),
           ),
         ),

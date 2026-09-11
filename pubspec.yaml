@@ -54,6 +54,16 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
 
+# TEMP (remove before merge): hot restart SIGABRT fix on Flutter 3.38+.
+# media_kit 1.2.6 is the latest pub release; the fix is merged on main
+# (media-kit/media-kit#1416 / #1314) but not published yet.
+dependency_overrides:
+  media_kit:
+    git:
+      url: https://github.com/media-kit/media-kit.git
+      ref: 44ba261c463f5e2cef926d35438a95ee63cc5cf9
+      path: media_kit
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
@@ -68,6 +78,7 @@ flutter:
   assets:
     - assets/silero_vad_legacy.onnx
     - assets/silero_vad_v5.onnx
+    - assets/images/Fondo1.jpg
 
   # To add assets to your application, add an assets section, like this:
   # assets:

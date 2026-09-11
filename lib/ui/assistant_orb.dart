@@ -18,11 +18,9 @@ class AssistantOrb extends StatefulWidget {
 class _AssistantOrbState extends State<AssistantOrb>
     with TickerProviderStateMixin {
   late final AnimationController _orb = AnimationController(vsync: this);
-  late final AnimationController _ring = AnimationController(vsync: this);
   bool _pressed = false;
 
   static const _orbSize = 190.0;
-  static const _ringSize = 214.0;
 
   @override
   void initState() {
@@ -44,13 +42,11 @@ class _AssistantOrbState extends State<AssistantOrb>
   @override
   void dispose() {
     _orb.dispose();
-    _ring.dispose();
     super.dispose();
   }
 
   void _startAnimations() {
     _orb.stop();
-    _ring.stop();
     // Sin reset a 0: la nueva animación arranca desde el valor donde quedó la
     // anterior, así el cambio de estado es continuo. Resetear provocaba un
     // corte visual (la animación vieja se congelaba en seco y la nueva
@@ -58,23 +54,17 @@ class _AssistantOrbState extends State<AssistantOrb>
     if (MediaQuery.disableAnimationsOf(context)) return;
     switch (widget.state) {
       case LoopState.idle:
-        _orb.duration = const Duration(milliseconds: 4500);
+        _orb.duration = const Duration(milliseconds: 3800);
         _orb.repeat(reverse: true);
       case LoopState.listening:
         _orb.duration = const Duration(milliseconds: 1350);
         _orb.repeat(reverse: true);
-        _ring.duration = const Duration(milliseconds: 1450);
-        _ring.repeat();
       case LoopState.processing:
         _orb.duration = const Duration(milliseconds: 1100);
         _orb.repeat();
-        _ring.duration = const Duration(milliseconds: 1000);
-        _ring.repeat();
       case LoopState.speaking:
         _orb.duration = const Duration(milliseconds: 900);
         _orb.repeat(reverse: true);
-        _ring.duration = const Duration(milliseconds: 1150);
-        _ring.repeat();
       case LoopState.error:
         break;
     }
@@ -82,9 +72,7 @@ class _AssistantOrbState extends State<AssistantOrb>
 
   @override
   Widget build(BuildContext context) {
-    final reduced = MediaQuery.disableAnimationsOf(context);
     final isError = widget.state == LoopState.error;
-    final ringState = reduced ? LoopState.idle : widget.state;
     // ColorFiltered solo cuando hay error: sin error es un no-op visual que
     // igualmente paga el filtro de color en cada frame del RepaintBoundary.
     // Sin AnimatedSwitcher: el fade pintaba DOS orbes con sombras blur
@@ -96,11 +84,35 @@ class _AssistantOrbState extends State<AssistantOrb>
     // cambiaban con t y el boundary se re-rasterizaba con blur en cada frame
     // (frame de transición medido: 57ms, 36.6ms en UI thread paint).
     Widget orb = SizedBox(
-      width: _ringSize,
-      height: _ringSize,
+      width: 240,
+      height: 240,
       child: Stack(
         alignment: Alignment.center,
         children: [
+          // Subtle outer halo pulsing with _orb — IgnorePointer, behind orb.
+          AnimatedBuilder(
+            animation: _orb,
+            builder: (context, _) {
+              // Pulse opacity gently with the breathing animation.
+              final t = _orb.value;
+              final haloAlpha = isError ? 0.04 : 0.10 + 0.06 * t;
+              return IgnorePointer(
+                child: Container(
+                  width: 240,
+                  height: 240,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        AppColors.orbBlue.withValues(alpha: haloAlpha),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
           AnimatedBuilder(
             animation: _orb,
             builder: (context, _) {
@@ -130,16 +142,6 @@ class _AssistantOrbState extends State<AssistantOrb>
                 ),
               );
             },
-          ),
-          Positioned.fill(
-            child: RepaintBoundary(
-              child: AnimatedBuilder(
-                animation: _ring,
-                builder: (context, _) => CustomPaint(
-                  painter: _OrbRingPainter(state: ringState, t: _ring.value),
-                ),
-              ),
-            ),
           ),
         ],
       ),
@@ -199,6 +201,7 @@ class _AssistantOrbState extends State<AssistantOrb>
   // el RepaintBoundary del orbe se re-rasterizaría con blur en cada frame.
   // Con sombra fija, la textura se rasteriza una vez y la animación solo
   // aplica transform (scale/rotation) sobre la capa cacheada.
+  // Outer halo shadow added for premium depth.
   static final BoxDecoration _orbDecoration = BoxDecoration(
     shape: BoxShape.circle,
     gradient: const RadialGradient(
@@ -213,11 +216,16 @@ class _AssistantOrbState extends State<AssistantOrb>
     ),
     boxShadow: [
       BoxShadow(
+        color: AppColors.orbBlue.withValues(alpha: 0.18),
+        blurRadius: 60,
+        offset: Offset(0, 0),
+      ),
+      BoxShadow(
         color: AppColors.orbBlue.withValues(alpha: 0.3),
         blurRadius: 44,
         offset: Offset(0, 13),
       ),
-      const BoxShadow(
+      BoxShadow(
         color: Color(0xCCFFFFFF),
         blurRadius: 12,
         offset: Offset(6, 6),
@@ -226,72 +234,26 @@ class _AssistantOrbState extends State<AssistantOrb>
     ],
   );
 
-  // ponytail: solo anima el transform (scale/rotation). Las sombras ya no
-  // varían con t: el orbe se rasteriza una vez por estado y el movimiento es
-  // una transformación barata de la textura cacheada.
+  // Only animates transform (scale/rotation). Shadows stay fixed so the
+  // RepaintBoundary is rasterized once and animation is a cheap texture
+  // transform. Idle now breathes subtly with scale + tiny rotation.
   (double, double) _orbTransform(double t) {
     switch (widget.state) {
       case LoopState.idle:
-        return (1.0, 0.0);
+        final scale = 1.0 + 0.018 * math.sin(t * math.pi);
+        final rotation = math.sin(t * 2 * math.pi) * 0.8 * math.pi / 180;
+        return (scale, rotation);
       case LoopState.listening:
         return (1 + 0.035 * t, 0.0);
       case LoopState.processing:
         final wobble = math.sin(t * 2 * math.pi);
-        return (1 + 0.025 * wobble.abs(), wobble * 5 * math.pi / 180);
+        // Wobble + slight scale pulse on top of rotation.
+        final scale = 1 + 0.025 * wobble.abs() + 0.012 * t;
+        return (scale, wobble * 5 * math.pi / 180);
       case LoopState.speaking:
-        return (1 + 0.045 * t, 0.0);
+        return (1 + 0.06 * t, 0.0);
       case LoopState.error:
         return (1.0, 0.0);
     }
   }
-}
-
-class _OrbRingPainter extends CustomPainter {
-  const _OrbRingPainter({required this.state, required this.t});
-
-  final LoopState state;
-  final double t;
-
-  static const _color = AppColors.orbBlue;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (state != LoopState.listening &&
-        state != LoopState.processing &&
-        state != LoopState.speaking) {
-      return;
-    }
-    final center = size.center(Offset.zero);
-    final base = size.width / 2;
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2
-      ..strokeCap = StrokeCap.round
-      ..color = _color;
-
-    switch (state) {
-      case LoopState.listening:
-        paint.color = paint.color.withValues(alpha: 0.85 * (1 - t));
-        canvas.drawCircle(center, base * (0.92 + 0.33 * t), paint);
-      case LoopState.processing:
-        paint.color = paint.color.withValues(alpha: 0.38);
-        canvas.drawArc(
-          Rect.fromCircle(center: center, radius: base),
-          t * 2 * math.pi - math.pi / 2,
-          1.5 * math.pi,
-          false,
-          paint,
-        );
-      case LoopState.speaking:
-        final p = 0.5 + 0.5 * math.sin(t * 2 * math.pi);
-        paint.color = paint.color.withValues(alpha: 0.35 + 0.6 * p);
-        canvas.drawCircle(center, base * (0.98 + 0.10 * p), paint);
-      default:
-        break;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _OrbRingPainter oldDelegate) =>
-      oldDelegate.state != state || oldDelegate.t != t;
 }

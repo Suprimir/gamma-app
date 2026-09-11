@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:media_kit/media_kit.dart';
@@ -249,12 +250,15 @@ class _CameraPlayerPageState extends State<CameraPlayerPage> {
                       ButtonSegment(
                         value: 'live',
                         label: Text('En vivo'),
-                        icon: Icon(Icons.sensors),
+                        icon: Icon(
+                          CupertinoIcons.antenna_radiowaves_left_right,
+                        ),
                       ),
                       ButtonSegment(
                         value: 'hd',
                         label: Text('HD'),
-                        icon: Icon(Icons.high_quality),
+                        // iOS approx: no HD-quality badge — film reads as video.
+                        icon: Icon(CupertinoIcons.film),
                       ),
                     ],
                     selected: {_mode},

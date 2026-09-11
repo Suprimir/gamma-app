@@ -8,6 +8,7 @@ import 'package:gamma_app/adaptive/adaptive_layout.dart';
 import 'package:gamma_app/adaptive/adaptive_surface_preferences.dart';
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/app/app_shell.dart';
+import 'package:gamma_app/app/desktop_drawer.dart';
 import 'package:gamma_app/features/areas/desktop_areas_page.dart';
 import 'package:gamma_app/features/devices/desktop_devices_page.dart';
 import 'package:gamma_app/app/floating_dock.dart';
@@ -219,7 +220,7 @@ void main() {
     } else {
       await tester.tap(
         find.descendant(
-          of: find.byType(NavigationRail),
+          of: find.byType(DesktopSidebar),
           matching: find.text('Dispositivos'),
         ),
       );

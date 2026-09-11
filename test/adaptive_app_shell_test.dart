@@ -9,6 +9,7 @@ import 'package:gamma_app/adaptive/adaptive_scope.dart';
 import 'package:gamma_app/adaptive/adaptive_surface_preferences.dart';
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/app/app_shell.dart';
+import 'package:gamma_app/app/desktop_drawer.dart';
 import 'package:gamma_app/app/desktop_shell.dart';
 import 'package:gamma_app/features/devices/devices_page.dart';
 import 'package:gamma_app/app/floating_dock.dart';
@@ -80,10 +81,10 @@ void main() {
       expect(find.byType(DesktopShell), findsOneWidget);
       expect(find.byType(MobileShell), findsNothing);
       expect(find.byType(FloatingDock), findsNothing);
-      expect(find.byType(NavigationRail), findsOneWidget);
+      expect(find.byType(DesktopSidebar), findsOneWidget);
       expect(
         tester
-            .widget<NavigationRail>(find.byType(NavigationRail))
+            .widget<DesktopSidebar>(find.byType(DesktopSidebar))
             .selectedIndex,
         1,
       );

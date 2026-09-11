@@ -567,7 +567,21 @@ class _DeviceCardState extends State<_DeviceCard>
       label = 'Sin estado';
     }
     final isOn = reliable && state == 'on' && !busy;
-    final disabled = busy || writesBlocked || !reliable;
+    final String? disabledReason;
+    if (busy) {
+      disabledReason = 'Confirmando...';
+    } else if (writesBlocked) {
+      disabledReason = 'Control en solo lectura — habilita el control local';
+    } else if (unavailable) {
+      disabledReason = 'No disponible';
+    } else if (!reliable) {
+      disabledReason = syncState == 'STALE'
+          ? 'Estado sin confirmar — intenta actualizar'
+          : 'Sin estado — intenta actualizar';
+    } else {
+      disabledReason = null;
+    }
+    final disabled = disabledReason != null;
     final error = widget.actionError;
 
     return Container(
@@ -626,7 +640,15 @@ class _DeviceCardState extends State<_DeviceCard>
               disabled: disabled,
               label: label,
               pulse: _pulse,
-              onTap: disabled ? null : () => widget.onToggle(state != 'on'),
+              onTap: () {
+                if (disabled) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(disabledReason!)));
+                  return;
+                }
+                widget.onToggle(state != 'on');
+              },
             ),
           if (error != null)
             Padding(
@@ -668,7 +690,7 @@ class _TogglePill extends StatelessWidget {
   final bool disabled;
   final String label;
   final Animation<double> pulse;
-  final VoidCallback? onTap;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {

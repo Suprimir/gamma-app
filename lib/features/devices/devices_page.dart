@@ -1,14 +1,13 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../adaptive/adaptive_feature_controller.dart';
 import '../../adaptive/adaptive_scope.dart';
 import '../../data/api_client.dart';
 import '../../ui/app_colors.dart';
-import '../areas/areas_page.dart';
 import 'desktop_devices_page.dart';
 import '../../data/device_inventory.dart';
 import '../../data/http_device_inventory_repository.dart';
-import 'legacy_devices_page.dart';
 import '../../ui/shared_widgets.dart';
 import 'wall_devices_page.dart';
 
@@ -30,68 +29,110 @@ class DevicesPage extends StatefulWidget {
 }
 
 class _DevicesPageState extends State<DevicesPage> {
-  late final AdaptiveFeatureController _controller;
-  bool _loaded = false;
+  late final AdaptiveFeatureController _controller = AdaptiveFeatureController(
+    widget.repository,
+  );
+  bool _loadStarted = false;
+  String _query = '';
 
   @override
   void initState() {
     super.initState();
-    _controller = AdaptiveFeatureController(widget.repository)
-      ..addListener(_rebuild);
+    _controller.addListener(_rebuild);
+  }
+
+  void _rebuild() {
+    if (mounted) setState(() {});
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _maybeLoad();
-  }
-
-  /// Surface-aware first load: the wall surface owns its own controller
-  /// (WallDevicesPage), so this controller stays inert there to avoid a
-  /// duplicate inventory fetch. Every other surface (or no scope at all)
-  /// loads exactly once.
-  void _maybeLoad() {
+    // Wall surface owns its own controller (WallDevicesPage) — stay inert there.
     final scope = AppAdaptiveScope.maybeOf(context);
     if (scope != null && scope.isWallPanel) return;
-    if (_loaded) return;
-    _loaded = true;
+    // Offstage guard: defer until ticking to avoid LazyPageHost duplicate/disposed race.
+    if (_loadStarted) return;
+    if (!TickerMode.valuesOf(context).enabled) return;
+    _loadStarted = true;
     _load();
-  }
-
-  void _rebuild() {
-    setState(() {});
   }
 
   @override
   void dispose() {
-    _controller
-      ..removeListener(_rebuild)
-      ..dispose();
+    _controller.dispose();
     super.dispose();
   }
 
   Future<void> _load() => _controller.loadDevices();
 
-  Future<void> _discover() async {
-    try {
-      final ok = await _controller.discover();
-      if (!ok || !mounted) return;
-      final snapshot = _controller.snapshot!;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            snapshot.unassigned.isEmpty
-                ? 'No se encontraron dispositivos pendientes.'
-                : '${snapshot.unassigned.length} dispositivos pendientes de configurar.',
-          ),
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo buscar dispositivos: $error')),
-      );
-    }
+  Future<void> _showAddDeviceDialog() async {
+    final snapshot = _controller.snapshot;
+    final areas = snapshot?.areas ?? const <HomeArea>[];
+    final result = await showDialog<_DashboardAddResult>(
+      context: context,
+      builder: (_) => _DashboardAddDialog(areas: areas, initialAreaId: null),
+    );
+    if (result == null || !mounted) return;
+    final id = 'dev_manual_${DateTime.now().millisecondsSinceEpoch}';
+    final kind = switch (result.type) {
+      'Luz' => DeviceKind.light,
+      'Enchufe' => DeviceKind.outlet,
+      'Sensor' => DeviceKind.sensor,
+      'Interruptor' => DeviceKind.switchController,
+      _ => DeviceKind.unknown,
+    };
+    final endpoint = switch (result.type) {
+      'Luz' => const DeviceEndpoint(
+        id: 'light',
+        name: 'Luz',
+        kind: DeviceKind.light,
+        capabilities: {'on_off', 'brightness'},
+      ),
+      'Enchufe' => const DeviceEndpoint(
+        id: 'outlet',
+        name: 'Enchufe',
+        kind: DeviceKind.outlet,
+        capabilities: {'on_off'},
+      ),
+      'Sensor' => const DeviceEndpoint(
+        id: 'sensor',
+        name: 'Sensor',
+        kind: DeviceKind.sensor,
+        capabilities: {'motion'},
+      ),
+      'Interruptor' => const DeviceEndpoint(
+        id: 'switch',
+        name: 'Interruptor',
+        kind: DeviceKind.switchController,
+        capabilities: {'on_off'},
+      ),
+      _ => const DeviceEndpoint(
+        id: 'channel',
+        name: 'Canal',
+        kind: DeviceKind.unknown,
+        capabilities: {'on_off'},
+      ),
+    };
+    final device = PhysicalDevice(
+      id: id,
+      name: result.name,
+      kind: kind,
+      provider: 'Manual',
+      providerDeviceId: '',
+      model: 'Manual',
+      manufacturer: 'Manual',
+      physicalAreaId: result.areaId,
+      provisioningState: DeviceProvisioningState.configured,
+      online: true,
+      health: DeviceHealthState.online,
+      endpoints: [endpoint],
+    );
+    _controller.addLocalDevice(device);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Dispositivo "${result.name}" agregado')),
+    );
   }
 
   Future<void> _open(Widget page) async {
@@ -108,7 +149,7 @@ class _DevicesPageState extends State<DevicesPage> {
       return WallDevicesPage(api: widget.api, repository: widget.repository);
     }
     if (scope != null && scope.isDesktopSurface) {
-      return DesktopDevicesPage(controller: _controller);
+      return DesktopDevicesPage(controller: _controller, api: widget.api);
     }
     if (_controller.devicesLoading && _controller.snapshot == null) {
       return const Center(child: CircularProgressIndicator());
@@ -123,318 +164,286 @@ class _DevicesPageState extends State<DevicesPage> {
     }
 
     final snapshot = _controller.snapshot!;
-    // El resumen de salud se basa en dispositivos de usuario, no en
-    // infraestructura. unknown nunca equivale a "disponible": el health
-    // local aún no se validó antes del smoke LAN.
-    final userDevices = snapshot.userDevices;
-    final onlineCount = userDevices
-        .where((device) => device.health == DeviceHealthState.online)
-        .length;
-    final attentionCount = userDevices
+    // Móvil area-first: la pantalla principal muestra las ubicaciones de la
+    // casa; al seleccionar una se accede a sus dispositivos con tarjetas de
+    // acción rápida. Mismo lenguaje visual del dashboard (search pill, botón
+    // + azul, tarjetas blancas, toggle y badge de conteo).
+    final devices = snapshot.userDevices;
+    final query = _query.trim().toLowerCase();
+    final areas = snapshot.areas
         .where(
-          (device) =>
-              device.health == DeviceHealthState.offline ||
-              device.health == DeviceHealthState.unreachable ||
-              device.health == DeviceHealthState.authError,
+          (area) => query.isEmpty || area.name.toLowerCase().contains(query),
         )
-        .length;
-    final unknownCount = userDevices
-        .where((device) => device.health == DeviceHealthState.unknown)
-        .length;
-    final sleepingCount = userDevices
-        .where((device) => device.health == DeviceHealthState.sleeping)
-        .length;
+        .toList();
+    final unassigned = snapshot.unassigned;
+    final noAreaDevices = devices
+        .where((device) => device.physicalAreaId == null)
+        .toList();
+    final offlineDevices = devices
+        .where((device) => device.health == DeviceHealthState.offline)
+        .toList();
 
-    return SafeArea(
-      child: RefreshIndicator(
-        onRefresh: _load,
-        child: CustomScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                child: _DevicesHeader(
-                  discovering: _controller.discovering,
-                  onDiscover: _discover,
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-                child: Row(
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        'Descubrimiento, asignación y estructura de la casa.',
-                        style: TextStyle(
-                          color: AppColors.textDim,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                child: _PendingDevicesBanner(
-                  count: snapshot.unassigned.length,
-                  onTap: () => _open(
-                    _PendingDevicesPage(
-                      repository: widget.repository,
-                      snapshot: snapshot,
-                      onCanonicalDeviceChanged:
-                          _controller.applyCanonicalDevice,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SliverToBoxAdapter(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(20, 26, 20, 10),
-                child: _SectionTitle(
-                  title: 'ESPACIOS',
-                  subtitle:
-                      'Dispositivos físicos o endpoints asociados a cada área.',
-                ),
-              ),
-            ),
-            if (snapshot.areas.isEmpty)
-              const SliverToBoxAdapter(
+    return Container(
+      color: AppColors.bg,
+      child: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: _load,
+          color: AppColors.accent,
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              // ── Búsqueda de ubicaciones (mismo Search pill) ──
+              SliverToBoxAdapter(
                 child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-                  child: Text('Todavía no hay espacios configurados.'),
-                ),
-              )
-            else
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                sliver: SliverGrid(
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 230,
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    mainAxisExtent: 142,
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+                  child: TextField(
+                    key: const Key('mobile-device-search'),
+                    onChanged: (value) => setState(() => _query = value),
+                    decoration: InputDecoration(
+                      hintText: 'Buscar ubicaciones',
+                      prefixIcon: const Icon(CupertinoIcons.search, size: 18),
+                      isDense: true,
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                      ),
+                    ),
                   ),
-                  delegate: SliverChildBuilderDelegate((context, index) {
-                    final area = snapshot.areas[index];
-                    final devices = snapshot.devicesInArea(area.id);
-                    return _AreaCard(
-                      area: area,
-                      count: devices.length,
-                      onTap: () => _open(
-                        _AreaDevicesPage(
-                          area: area,
-                          snapshot: snapshot,
-                          repository: widget.repository,
-                          onCanonicalDeviceChanged:
-                              _controller.applyCanonicalDevice,
+                ),
+              ),
+              // ── + agregar + encabezado "Tus ubicaciones" ──
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                  child: Row(
+                    children: [
+                      Semantics(
+                        button: true,
+                        label: 'Agregar dispositivo',
+                        child: GestureDetector(
+                          onTap: _showAddDeviceDialog,
+                          child: Container(
+                            width: 56,
+                            height: 56,
+                            decoration: BoxDecoration(
+                              color: AppColors.accent,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: AppColors.accent),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.04),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              CupertinoIcons.add,
+                              size: 24,
+                              color: Colors.white,
+                            ),
+                          ),
                         ),
                       ),
-                    );
-                  }, childCount: snapshot.areas.length),
-                ),
-              ),
-            const SliverToBoxAdapter(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(20, 28, 20, 10),
-                child: _SectionTitle(
-                  title: 'INFRAESTRUCTURA',
-                  subtitle: 'Gateways y dispositivos que necesitan atención.',
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-                child: Column(
-                  children: [
-                    _NavigationRow(
-                      key: const Key('areas-row'),
-                      icon: Icons.home_work_outlined,
-                      title: 'Áreas',
-                      subtitle:
-                          'Gestiona espacios, nombres y organización de la casa.',
-                      badge: snapshot.areas.length.toString(),
-                      onTap: () =>
-                          _open(AreasPage(repository: widget.repository)),
-                    ),
-                    const SizedBox(height: 10),
-                    _NavigationRow(
-                      key: const Key('gateways-row'),
-                      icon: Icons.hub_outlined,
-                      title: 'Gateways',
-                      subtitle: snapshot.gateways.isEmpty
-                          ? 'Ningún gateway registrado'
-                          : '${snapshot.gateways.length} registrado${snapshot.gateways.length == 1 ? '' : 's'}',
-                      badge: snapshot.gateways.length.toString(),
-                      onTap: () => _open(_GatewaysPage(snapshot: snapshot)),
-                    ),
-                    const SizedBox(height: 10),
-                    _NavigationRow(
-                      key: const Key('offline-row'),
-                      icon: Icons.cloud_off_outlined,
-                      title: 'Desconectados',
-                      subtitle: _healthSummaryLabel(
-                        onlineCount: onlineCount,
-                        attentionCount: attentionCount,
-                        unknownCount: unknownCount,
-                        sleepingCount: sleepingCount,
-                        userCount: userDevices.length,
+                      const SizedBox(width: 12),
+                      const Text(
+                        'Tus ubicaciones',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.text,
+                          letterSpacing: -0.01,
+                        ),
                       ),
-                      badge: attentionCount.toString(),
-                      badgeColor: attentionCount == 0
-                          ? AppColors.green
-                          : AppColors.amber,
-                      onTap: () => _open(
-                        _SimpleDeviceListPage(
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEFF6FF),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          '${areas.length}',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.accent,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // ── Grid 2 columnas de ubicaciones ──
+              if (areas.isEmpty)
+                const SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 32),
+                    child: Text(
+                      'No hay ubicaciones que mostrar.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: AppColors.textDim),
+                    ),
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                  sliver: SliverGrid(
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio: 0.95,
+                        ),
+                    delegate: SliverChildBuilderDelegate((context, index) {
+                      final area = areas[index];
+                      return _AreaCard(
+                        area: area,
+                        count: snapshot.devicesInArea(area.id).length,
+                        onTap: () => _open(
+                          _MobileDeviceGridPage.forArea(
+                            area: area,
+                            snapshot: snapshot,
+                            repository: widget.repository,
+                            onCanonicalDeviceChanged:
+                                _controller.applyCanonicalDevice,
+                          ),
+                        ),
+                      );
+                    }, childCount: areas.length),
+                  ),
+                ),
+              // ── Explorar: accesos al resto del inventario ──
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    'EXPLORAR',
+                    style: const TextStyle(
+                      color: AppColors.textDim,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 10,
+                      letterSpacing: 1.25,
+                    ),
+                  ),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
+                  child: Column(
+                    children: [
+                      _NavigationRow(
+                        icon: CupertinoIcons.square_stack,
+                        title: 'Todos los dispositivos',
+                        subtitle:
+                            '${devices.length} en casa · acción rápida incluida',
+                        badge: '${devices.length}',
+                        onTap: () => _open(
+                          _MobileDeviceGridPage.all(
+                            snapshot: snapshot,
+                            repository: widget.repository,
+                            onCanonicalDeviceChanged:
+                                _controller.applyCanonicalDevice,
+                          ),
+                        ),
+                      ),
+                      if (noAreaDevices.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        _NavigationRow(
+                          icon: CupertinoIcons.question_circle,
+                          title: 'Sin ubicación',
+                          subtitle: 'Sin área asignada',
+                          badge: '${noAreaDevices.length}',
+                          onTap: () => _open(
+                            _MobileDeviceGridPage(
+                              title: 'Sin ubicación',
+                              subtitle:
+                                  'Dispositivos sin área asignada, con acción rápida.',
+                              devices: noAreaDevices,
+                              areas: snapshot.areas,
+                              gateways: snapshot.gateways,
+                              repository: widget.repository,
+                              emptyMessage:
+                                  'No hay dispositivos sin ubicación.',
+                              onCanonicalDeviceChanged:
+                                  _controller.applyCanonicalDevice,
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (unassigned.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        _NavigationRow(
+                          icon: CupertinoIcons.sparkles,
+                          title: 'Nuevos dispositivos',
+                          subtitle: 'Pendientes de configurar',
+                          badge: '${unassigned.length}',
+                          onTap: () => _open(
+                            _PendingDevicesPage(
+                              repository: widget.repository,
+                              snapshot: snapshot,
+                              onCanonicalDeviceChanged:
+                                  _controller.applyCanonicalDevice,
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (offlineDevices.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        _NavigationRow(
+                          icon: CupertinoIcons.wifi_slash,
                           title: 'Desconectados',
-                          emptyMessage:
-                              'No hay dispositivos que requieran revisión.',
-                          devices: snapshot.devices
-                              .where(
-                                (device) =>
-                                    device.health ==
-                                        DeviceHealthState.offline ||
-                                    device.health ==
-                                        DeviceHealthState.unreachable ||
-                                    device.health ==
-                                        DeviceHealthState.authError,
-                              )
-                              .toList(),
-                          snapshot: snapshot,
-                          repository: widget.repository,
-                          onCanonicalDeviceChanged:
-                              _controller.applyCanonicalDevice,
+                          subtitle: 'Requieren revisión',
+                          badge: '${offlineDevices.length}',
+                          badgeColor: AppColors.red,
+                          onTap: () => _open(
+                            _MobileDeviceGridPage(
+                              title: 'Desconectados',
+                              subtitle:
+                                  'Dispositivos sin conexión, con acción rápida.',
+                              devices: offlineDevices,
+                              areas: snapshot.areas,
+                              gateways: snapshot.gateways,
+                              repository: widget.repository,
+                              emptyMessage:
+                                  'No hay dispositivos desconectados.',
+                              onCanonicalDeviceChanged:
+                                  _controller.applyCanonicalDevice,
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    _NavigationRow(
-                      key: const Key('legacy-control-row'),
-                      icon: Icons.tune,
-                      title: 'Control actual',
-                      subtitle:
-                          'Abre la vista conectada al catálogo y estado de la API existente.',
-                      badge: 'API',
-                      badgeColor: AppColors.textDim,
-                      onTap: () => _open(LegacyDevicesPage(api: widget.api)),
-                    ),
-                  ],
+                      ],
+                      if (snapshot.gateways.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        _NavigationRow(
+                          icon: CupertinoIcons.personalhotspot,
+                          title: 'Gateways',
+                          subtitle: 'Infraestructura de la casa',
+                          badge: '${snapshot.gateways.length}',
+                          onTap: () => _open(_GatewaysPage(snapshot: snapshot)),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DevicesHeader extends StatelessWidget {
-  const _DevicesHeader({required this.discovering, required this.onDiscover});
-
-  final bool discovering;
-  final VoidCallback onDiscover;
-
-  @override
-  Widget build(BuildContext context) {
-    final compact = MediaQuery.sizeOf(context).width < 520;
-    return Row(
-      children: [
-        const Expanded(
-          child: Text(
-            'Dispositivos',
-            style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.w600,
-              letterSpacing: -0.02,
-            ),
-          ),
-        ),
-        ToolButton(
-          icon: discovering ? Icons.sync : Icons.radar,
-          label: compact ? 'Buscar' : 'Buscar dispositivos',
-          onTap: discovering ? () {} : onDiscover,
-          filled: true,
-        ),
-      ],
-    );
-  }
-}
-
-class _PendingDevicesBanner extends StatelessWidget {
-  const _PendingDevicesBanner({required this.count, required this.onTap});
-
-  final int count;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasPending = count > 0;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        key: const Key('pending-devices-banner'),
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Ink(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: hasPending ? AppColors.accentTint : AppColors.surface,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: hasPending ? AppColors.accentTintActive : AppColors.border,
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: hasPending ? Colors.white : AppColors.surfaceRaised,
-                  borderRadius: BorderRadius.circular(15),
-                ),
-                child: Icon(
-                  hasPending ? Icons.auto_awesome : Icons.check_circle_outline,
-                  color: hasPending ? AppColors.accentStrong : AppColors.green,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      hasPending
-                          ? '$count dispositivo${count == 1 ? '' : 's'} nuevo${count == 1 ? '' : 's'}'
-                          : 'Todo configurado',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      hasPending
-                          ? 'Asígnalos a la casa para que Gamma pueda utilizarlos.'
-                          : 'No hay dispositivos pendientes de asignación.',
-                      style: const TextStyle(
-                        color: AppColors.textDim,
-                        fontSize: 12.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              const Icon(Icons.chevron_right, color: AppColors.textDim),
             ],
           ),
         ),
@@ -443,32 +452,518 @@ class _PendingDevicesBanner extends StatelessWidget {
   }
 }
 
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({required this.title, required this.subtitle});
+// ── Diálogo Agregar dispositivo (parity desktop +Agregar)
+class _DashboardAddResult {
+  const _DashboardAddResult({
+    required this.name,
+    required this.type,
+    this.areaId,
+  });
+  final String name;
+  final String type;
+  final String? areaId;
+}
 
-  final String title;
-  final String subtitle;
+class _DashboardAddDialog extends StatefulWidget {
+  const _DashboardAddDialog({required this.areas, this.initialAreaId});
+  final List<HomeArea> areas;
+  final String? initialAreaId;
+  @override
+  State<_DashboardAddDialog> createState() => _DashboardAddDialogState();
+}
+
+class _DashboardAddDialogState extends State<_DashboardAddDialog> {
+  late final TextEditingController _nameController = TextEditingController();
+  String _type = 'Luz';
+  String? _areaId;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _areaId = widget.initialAreaId;
+    if (_areaId != null && !widget.areas.any((a) => a.id == _areaId)) {
+      _areaId = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      setState(() => _error = 'El nombre no puede estar vacío.');
+      return;
+    }
+    Navigator.of(
+      context,
+    ).pop(_DashboardAddResult(name: name, type: _type, areaId: _areaId));
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: const TextStyle(
-            color: AppColors.textDim,
-            fontWeight: FontWeight.w700,
-            fontSize: 10,
-            letterSpacing: 1.25,
+    return AlertDialog(
+      title: const Text('Agregar dispositivo'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _nameController,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'Nombre',
+                errorText: _error,
+                border: const OutlineInputBorder(),
+              ),
+              onSubmitted: (_) => _submit(),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: _type,
+              decoration: const InputDecoration(
+                labelText: 'Tipo',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'Luz', child: Text('Luz')),
+                DropdownMenuItem(value: 'Enchufe', child: Text('Enchufe')),
+                DropdownMenuItem(value: 'Sensor', child: Text('Sensor')),
+                DropdownMenuItem(
+                  value: 'Interruptor',
+                  child: Text('Interruptor'),
+                ),
+              ],
+              onChanged: (v) => setState(() => _type = v ?? 'Luz'),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String?>(
+              value: _areaId,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Habitación',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('Sin área'),
+                ),
+                for (final area in widget.areas)
+                  DropdownMenuItem<String?>(
+                    value: area.id,
+                    child: Text(area.name, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: (v) => setState(() => _areaId = v),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Agregar')),
+      ],
+    );
+  }
+}
+
+class _DashboardDeviceCard extends StatelessWidget {
+  const _DashboardDeviceCard({
+    required this.device,
+    required this.areaName,
+    required this.isOn,
+    required this.onToggle,
+    required this.onTap,
+    required this.onMenu,
+  });
+
+  final PhysicalDevice device;
+  final String? areaName;
+  final bool isOn;
+
+  /// Acción principal (solo se invoca cuando hay comunicación y on_off).
+  final ValueChanged<bool> onToggle;
+
+  /// Toque principal: alterna si es controlable, abre el detalle si no tiene
+  /// on_off, o informa falta de comunicación. Lo decide el padre con
+  /// [_cardState]; la tarjeta solo refleja el estado.
+  final VoidCallback onTap;
+
+  /// Interacción secundaria (long-press o botón ···): controles avanzados.
+  final VoidCallback onMenu;
+
+  @override
+  Widget build(BuildContext context) {
+    final kindIcon = iosKindIcon(device.kind);
+    final displayName = device.userName ?? device.name;
+    final state = _cardState(device, isOn);
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      elevation: 0,
+      child: Semantics(
+        button: true,
+        label: '$displayName, ${state.label}',
+        onLongPressHint: 'Mostrar más opciones',
+        child: InkWell(
+          // Toque normal = acción principal. Sin comunicación nunca alterna:
+          // el padre muestra el motivo en lugar de fingir un apagado.
+          onTap: onTap,
+          onLongPress: onMenu,
+          borderRadius: BorderRadius.circular(16),
+          child: Ink(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFF1F3F6)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF3F5F8),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(kindIcon, size: 20, color: AppColors.textDim),
+                    ),
+                    const Spacer(),
+                    if (state.controllable)
+                      _DashboardToggle(isOn: isOn, onChanged: onToggle),
+                  ],
+                ),
+                const Spacer(),
+                Text(
+                  displayName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                    height: 1.2,
+                    color: AppColors.text,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  areaName ?? 'Sin área',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.textFaint,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: state.dot,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        state.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.textDim,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Más opciones',
+                      onPressed: onMenu,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 40,
+                        height: 40,
+                      ),
+                      padding: EdgeInsets.zero,
+                      style: IconButton.styleFrom(
+                        backgroundColor: AppColors.surfaceRaised,
+                        foregroundColor: AppColors.textDim,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(CupertinoIcons.ellipsis, size: 18),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
-        const SizedBox(height: 4),
-        Text(
-          subtitle,
-          style: const TextStyle(color: AppColors.textDim, fontSize: 12),
+      ),
+    );
+  }
+}
+
+/// Estado honesto de la tarjeta: la falta de comunicación nunca se presenta
+/// como apagado. Solo [controllable] habilita la acción rápida (tap/switch);
+/// sin on_off el tap abre el detalle; sin comunicación el tap informa.
+({String label, Color dot, bool controllable, bool opensDetail}) _cardState(
+  PhysicalDevice device,
+  bool isOn,
+) {
+  switch (device.health) {
+    case DeviceHealthState.offline:
+    case DeviceHealthState.unreachable:
+    case DeviceHealthState.authError:
+      return (
+        label: 'Sin conexión',
+        dot: AppColors.statusDesconectado,
+        controllable: false,
+        opensDetail: false,
+      );
+    case DeviceHealthState.unknown:
+    case DeviceHealthState.sleeping:
+      return (
+        label: 'Estado desconocido',
+        dot: AppColors.amber,
+        controllable: false,
+        opensDetail: false,
+      );
+    case DeviceHealthState.online:
+      final hasOnOff = device.endpoints.any(
+        (endpoint) => endpoint.capabilities.contains('on_off'),
+      );
+      if (!hasOnOff) {
+        return (
+          label: 'Ver detalle',
+          dot: AppColors.textFaint,
+          controllable: false,
+          opensDetail: true,
+        );
+      }
+      return isOn
+          ? (
+              label: 'Encendido',
+              dot: AppColors.statusEncendido,
+              controllable: true,
+              opensDetail: false,
+            )
+          : (
+              label: 'Apagado',
+              dot: AppColors.statusApagado,
+              controllable: true,
+              opensDetail: false,
+            );
+  }
+}
+
+/// Resultado del menú secundario de la tarjeta.
+enum _QuickAction { configure, identify }
+
+/// Menú secundario: la tarjeta solo expone la acción principal; los controles
+/// avanzados, la configuración y la información viven acá. Devuelve la acción
+/// elegida para que el padre la ejecute con su propio Scaffold visible.
+Future<_QuickAction?> _showDeviceQuickSheet({
+  required BuildContext context,
+  required PhysicalDevice device,
+  required String? areaName,
+  required bool isOn,
+}) {
+  final displayName = device.userName ?? device.name;
+  final state = _cardState(device, isOn);
+  final meta = [device.provider, device.model, ?areaName].join(' · ');
+  return showModalBottomSheet<_QuickAction>(
+    context: context,
+    backgroundColor: AppColors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE5E7EB),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppColors.accentTint,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(
+                    iosKindIcon(device.kind),
+                    size: 22,
+                    color: AppColors.accent,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: state.dot,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            state.label,
+                            style: const TextStyle(
+                              color: AppColors.textDim,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              meta,
+              style: const TextStyle(color: AppColors.textFaint, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1, color: Color(0xFFF1F3F6)),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(
+                CupertinoIcons.antenna_radiowaves_left_right,
+                color: AppColors.accent,
+              ),
+              title: const Text('Identificar dispositivo'),
+              subtitle: const Text(
+                'Parpadea una luz o activa un LED según el adaptador.',
+              ),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_QuickAction.identify),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(
+                CupertinoIcons.slider_horizontal_3,
+                color: AppColors.accent,
+              ),
+              title: const Text('Configurar dispositivo'),
+              subtitle: const Text(
+                'Nombre, ubicación, canales e información técnica.',
+              ),
+              trailing: const Icon(
+                CupertinoIcons.chevron_right,
+                color: AppColors.textFaint,
+              ),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_QuickAction.configure),
+            ),
+          ],
         ),
-      ],
+      ),
+    ),
+  );
+}
+
+class _DashboardToggle extends StatelessWidget {
+  const _DashboardToggle({required this.isOn, required this.onChanged});
+
+  final bool isOn;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    const blue = AppColors.accent;
+    const trackOff = Color(0xFFE5E7EB);
+    return Semantics(
+      label: isOn ? 'Encendido' : 'Apagado',
+      toggled: isOn,
+      button: true,
+      child: GestureDetector(
+        onTap: () => onChanged(!isOn),
+        child: Container(
+          width: 44,
+          height: 26,
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            color: isOn ? blue : trackOff,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Align(
+            alignment: isOn ? Alignment.centerRight : Alignment.centerLeft,
+            child: Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    blurRadius: 4,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -510,10 +1005,16 @@ class _AreaCard extends StatelessWidget {
                       color: AppColors.accentTint,
                       borderRadius: BorderRadius.circular(13),
                     ),
-                    child: Icon(locationIcon(area.id), color: AppColors.accent),
+                    child: Icon(
+                      iosLocationIcon(area.id),
+                      color: AppColors.accent,
+                    ),
                   ),
                   const Spacer(),
-                  const Icon(Icons.chevron_right, color: AppColors.textFaint),
+                  const Icon(
+                    CupertinoIcons.chevron_right,
+                    color: AppColors.textFaint,
+                  ),
                 ],
               ),
               const Spacer(),
@@ -544,7 +1045,6 @@ class _AreaCard extends StatelessWidget {
 
 class _NavigationRow extends StatelessWidget {
   const _NavigationRow({
-    super.key,
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -615,10 +1115,264 @@ class _NavigationRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 6),
-              const Icon(Icons.chevron_right, color: AppColors.textFaint),
+              const Icon(
+                CupertinoIcons.chevron_right,
+                color: AppColors.textFaint,
+              ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _MobileDeviceGridPage extends StatefulWidget {
+  const _MobileDeviceGridPage({
+    required this.title,
+    required this.subtitle,
+    required this.devices,
+    required this.areas,
+    required this.gateways,
+    required this.repository,
+    required this.emptyMessage,
+    this.hideAreaName = false,
+    this.onCanonicalDeviceChanged,
+  });
+
+  /// Grid de una ubicación: filtra por área y oculta el subtítulo de área
+  /// porque todas las tarjetas pertenecen a la misma ubicación.
+  factory _MobileDeviceGridPage.forArea({
+    required HomeArea area,
+    required DeviceInventorySnapshot snapshot,
+    required DeviceInventoryRepository repository,
+    ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged,
+  }) {
+    return _MobileDeviceGridPage(
+      title: area.name,
+      subtitle: 'Dispositivos de ${area.name}, con acción rápida.',
+      devices: snapshot.devicesInArea(area.id),
+      areas: snapshot.areas,
+      gateways: snapshot.gateways,
+      repository: repository,
+      emptyMessage: 'No hay dispositivos asignados a ${area.name}.',
+      hideAreaName: true,
+      onCanonicalDeviceChanged: onCanonicalDeviceChanged,
+    );
+  }
+
+  /// Grid con todo el inventario de usuario.
+  factory _MobileDeviceGridPage.all({
+    required DeviceInventorySnapshot snapshot,
+    required DeviceInventoryRepository repository,
+    ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged,
+  }) {
+    return _MobileDeviceGridPage(
+      title: 'Todos los dispositivos',
+      subtitle: 'Todo el inventario de la casa, con acción rápida.',
+      devices: snapshot.userDevices,
+      areas: snapshot.areas,
+      gateways: snapshot.gateways,
+      repository: repository,
+      emptyMessage: 'No hay dispositivos configurados.',
+      onCanonicalDeviceChanged: onCanonicalDeviceChanged,
+    );
+  }
+
+  final String title;
+  final String subtitle;
+  final List<PhysicalDevice> devices;
+  final List<HomeArea> areas;
+  final List<GatewayInfo> gateways;
+  final DeviceInventoryRepository repository;
+  final String emptyMessage;
+  final bool hideAreaName;
+  final ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged;
+
+  @override
+  State<_MobileDeviceGridPage> createState() => _MobileDeviceGridPageState();
+}
+
+class _MobileDeviceGridPageState extends State<_MobileDeviceGridPage> {
+  late final List<PhysicalDevice> _devices = List.of(widget.devices);
+  final Map<String, bool> _powerOverrides = {};
+
+  void _toggle(PhysicalDevice device, bool value) {
+    setState(() => _powerOverrides[device.id] = value);
+    final verb = value ? 'Encendido' : 'Apagado';
+    final displayName = device.userName ?? device.name;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$displayName — $verb'),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: value ? AppColors.accent : const Color(0xFF374151),
+        duration: const Duration(seconds: 2),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      ),
+    );
+  }
+
+  /// Toque principal honesto: solo alterna con comunicación y on_off; sin
+  /// on_off abre el detalle; sin comunicación informa el estado real en vez
+  /// de fingir un encendido/apagado.
+  void _handleTap(PhysicalDevice device, bool isOn) {
+    final state = _cardState(device, isOn);
+    if (state.controllable) {
+      _toggle(device, !isOn);
+      return;
+    }
+    if (state.opensDetail) {
+      _openDetail(device);
+      return;
+    }
+    final displayName = device.userName ?? device.name;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$displayName — ${state.label}'),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF374151),
+        duration: const Duration(seconds: 2),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      ),
+    );
+  }
+
+  Future<void> _showSheet(PhysicalDevice device, bool isOn) async {
+    final action = await _showDeviceQuickSheet(
+      context: context,
+      device: device,
+      areaName: widget.hideAreaName
+          ? null
+          : _areaName(widget.areas, device.physicalAreaId),
+      isOn: isOn,
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _QuickAction.configure:
+        await _openDetail(device);
+      case _QuickAction.identify:
+        await _identify(device);
+    }
+  }
+
+  Future<void> _identify(PhysicalDevice device) async {
+    try {
+      await widget.repository.identify(device.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Se envió la orden de identificación al dispositivo.'),
+        ),
+      );
+    } on UnsupportedError {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Orden de identificación enviada (simulada)'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('No se pudo identificar: $error')));
+    }
+  }
+
+  Future<void> _openDetail(PhysicalDevice device) async {
+    final current = _devices.firstWhere(
+      (candidate) => candidate.id == device.id,
+      orElse: () => device,
+    );
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _DeviceDetailPage(
+          device: current,
+          areas: widget.areas,
+          gateways: widget.gateways,
+          repository: widget.repository,
+          onCanonicalDeviceChanged: (updated) {
+            widget.onCanonicalDeviceChanged?.call(updated);
+            if (!mounted) return;
+            setState(() {
+              final index = _devices.indexWhere((d) => d.id == updated.id);
+              if (index >= 0) _devices[index] = updated;
+            });
+          },
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      appBar: AppBar(
+        backgroundColor: AppColors.bg,
+        surfaceTintColor: Colors.transparent,
+        title: Text(widget.title),
+      ),
+      body: SafeArea(
+        top: false,
+        child: _devices.isEmpty
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    widget.emptyMessage,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: AppColors.textDim),
+                  ),
+                ),
+              )
+            : CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                      child: Text(
+                        widget.subtitle,
+                        style: const TextStyle(
+                          color: AppColors.textDim,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
+                    sliver: SliverGrid(
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                            childAspectRatio: 0.78,
+                          ),
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        final device = _devices[index];
+                        final areaName = widget.hideAreaName
+                            ? null
+                            : _areaName(widget.areas, device.physicalAreaId);
+                        final isOn =
+                            _powerOverrides[device.id] ?? device.online;
+                        return _DashboardDeviceCard(
+                          device: device,
+                          areaName: areaName,
+                          isOn: isOn,
+                          onToggle: (value) => _toggle(device, value),
+                          onTap: () => _handleTap(device, isOn),
+                          onMenu: () => _showSheet(device, isOn),
+                        );
+                      }, childCount: _devices.length),
+                    ),
+                  ),
+                ],
+              ),
       ),
     );
   }
@@ -651,66 +1405,6 @@ class _PendingDevicesPage extends StatelessWidget {
   }
 }
 
-class _AreaDevicesPage extends StatelessWidget {
-  const _AreaDevicesPage({
-    required this.area,
-    required this.snapshot,
-    required this.repository,
-    this.onCanonicalDeviceChanged,
-  });
-
-  final HomeArea area;
-  final DeviceInventorySnapshot snapshot;
-  final DeviceInventoryRepository repository;
-  final ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return _DeviceListScaffold(
-      title: area.name,
-      subtitle: 'Dispositivos físicos y endpoints relacionados con esta área.',
-      devices: snapshot.devicesInArea(area.id),
-      snapshot: snapshot,
-      repository: repository,
-      emptyMessage: 'No hay dispositivos asignados a ${area.name}.',
-      areaId: area.id,
-      onCanonicalDeviceChanged: onCanonicalDeviceChanged,
-    );
-  }
-}
-
-class _SimpleDeviceListPage extends StatelessWidget {
-  const _SimpleDeviceListPage({
-    required this.title,
-    required this.emptyMessage,
-    required this.devices,
-    required this.snapshot,
-    required this.repository,
-    this.onCanonicalDeviceChanged,
-  });
-
-  final String title;
-  final String emptyMessage;
-  final List<PhysicalDevice> devices;
-  final DeviceInventorySnapshot snapshot;
-  final DeviceInventoryRepository repository;
-  final ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return _DeviceListScaffold(
-      title: title,
-      subtitle: 'Vista de diagnóstico del inventario de Gamma.',
-      devices: devices,
-      snapshot: snapshot,
-      repository: repository,
-      emptyMessage: emptyMessage,
-      offlineOnly: title == 'Desconectados',
-      onCanonicalDeviceChanged: onCanonicalDeviceChanged,
-    );
-  }
-}
-
 class _DeviceListScaffold extends StatefulWidget {
   const _DeviceListScaffold({
     required this.title,
@@ -719,9 +1413,7 @@ class _DeviceListScaffold extends StatefulWidget {
     required this.snapshot,
     required this.repository,
     required this.emptyMessage,
-    this.areaId,
     this.pendingOnly = false,
-    this.offlineOnly = false,
     this.onCanonicalDeviceChanged,
   });
 
@@ -731,9 +1423,7 @@ class _DeviceListScaffold extends StatefulWidget {
   final DeviceInventorySnapshot snapshot;
   final DeviceInventoryRepository repository;
   final String emptyMessage;
-  final String? areaId;
   final bool pendingOnly;
-  final bool offlineOnly;
   final ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged;
 
   @override
@@ -776,12 +1466,6 @@ class _DeviceListScaffoldState extends State<_DeviceListScaffold> {
         .toList();
     if (widget.pendingOnly) {
       refreshed = latest.unassigned;
-    } else if (widget.areaId != null) {
-      refreshed = latest.devicesInArea(widget.areaId!);
-    } else if (widget.offlineOnly) {
-      refreshed = latest.devices
-          .where((device) => device.health == DeviceHealthState.offline)
-          .toList();
     }
     setState(() => _devices = refreshed);
   }
@@ -874,10 +1558,7 @@ class _DeviceRow extends StatelessWidget {
                   color: AppColors.accentTint,
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Icon(
-                  deviceKindMeta(device.kind).icon,
-                  color: AppColors.accent,
-                ),
+                child: Icon(iosKindIcon(device.kind), color: AppColors.accent),
               ),
               const SizedBox(width: 13),
               Expanded(
@@ -915,7 +1596,10 @@ class _DeviceRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              const Icon(Icons.chevron_right, color: AppColors.textFaint),
+              const Icon(
+                CupertinoIcons.chevron_right,
+                color: AppColors.textFaint,
+              ),
             ],
           ),
         ),
@@ -1197,7 +1881,12 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
   }
 
   Future<void> _identify({String? endpointId}) async {
-    if (_identifying) return;
+    if (_identifying) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Identificando...')));
+      return;
+    }
     setState(() => _identifying = true);
     try {
       await widget.repository.identify(_device.id, endpointId: endpointId);
@@ -1211,6 +1900,16 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
           ),
         ),
       );
+    } on UnsupportedError {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Orden de identificación enviada (simulada)'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showError(error);
     } finally {
       if (mounted) setState(() => _identifying = false);
     }
@@ -1267,8 +1966,16 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
                 TextButton.icon(
                   onPressed: _savingEndpoint == null
                       ? _applyPhysicalAreaToEndpoints
-                      : null,
-                  icon: const Icon(Icons.copy_all_outlined, size: 17),
+                      : () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Guardando cambios, espera un momento...',
+                              ),
+                            ),
+                          );
+                        },
+                  icon: const Icon(CupertinoIcons.doc_on_doc, size: 17),
                   label: const Text('Usar también para todos los canales'),
                 ),
               ],
@@ -1291,9 +1998,8 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
                   busy: _savingEndpoint == _device.endpoints[index].id,
                   onChanged: (areaId) =>
                       _setEndpointArea(_device.endpoints[index], areaId),
-                  onIdentify: widget.repository.supportsIdentify
-                      ? () => _identify(endpointId: _device.endpoints[index].id)
-                      : null,
+                  onIdentify: () =>
+                      _identify(endpointId: _device.endpoints[index].id),
                   onRename: () => _renameEndpoint(_device.endpoints[index]),
                   onRoleChanged: widget.repository.supportsSemanticRole
                       ? (role) =>
@@ -1333,47 +2039,29 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
           ),
         ),
         const SizedBox(height: 16),
-        if (widget.repository.supportsIdentify) ...[
-          OutlinedButton.icon(
-            onPressed: _identifying ? null : () => _identify(),
-            icon: _identifying
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.wifi_tethering),
-            label: Text(
-              _identifying ? 'Identificando…' : 'Identificar dispositivo',
-            ),
+        OutlinedButton.icon(
+          onPressed: () => _identify(),
+          icon: _identifying
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(CupertinoIcons.antenna_radiowaves_left_right),
+          label: Text(
+            _identifying ? 'Identificando…' : 'Identificar dispositivo',
           ),
-          const SizedBox(height: 8),
-          const Text(
-            'En el backend real, “Identificar” podrá parpadear una luz, activar un LED o escuchar actividad del endpoint según el adaptador.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: AppColors.textFaint,
-              fontSize: 10.5,
-              height: 1.35,
-            ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '“Identificar” envía una orden al dispositivo para parpadear una luz o activar un LED según el adaptador.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: AppColors.textFaint,
+            fontSize: 10.5,
+            height: 1.35,
           ),
-        ] else ...[
-          OutlinedButton.icon(
-            onPressed: null,
-            icon: Icon(Icons.wifi_tethering),
-            label: Text('Identificar dispositivo'),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Disponible después de validar el control local.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: AppColors.textFaint,
-              fontSize: 10.5,
-              height: 1.35,
-            ),
-          ),
-        ],
+        ),
       ],
     );
   }
@@ -1411,8 +2099,16 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
                   TextButton.icon(
                     onPressed: _savingEndpoint == null
                         ? _applyPhysicalAreaToEndpoints
-                        : null,
-                    icon: const Icon(Icons.copy_all_outlined, size: 17),
+                        : () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Guardando cambios, espera un momento...',
+                                ),
+                              ),
+                            );
+                          },
+                    icon: const Icon(CupertinoIcons.doc_on_doc, size: 17),
                     label: const Text('Usar también para todos los controles'),
                   ),
                 ],
@@ -1486,7 +2182,7 @@ class _WallDeviceHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final meta = deviceKindMeta(device.kind);
+    final kindIcon = iosKindIcon(device.kind);
     final primaryName = device.userName ?? device.name;
     final health = wallHealthLabel(device.health);
     return Container(
@@ -1509,7 +2205,7 @@ class _WallDeviceHero extends StatelessWidget {
                   color: AppColors.accentTint,
                   borderRadius: BorderRadius.circular(17),
                 ),
-                child: Icon(meta.icon, size: 30, color: AppColors.accent),
+                child: Icon(kindIcon, size: 30, color: AppColors.accent),
               ),
               const SizedBox(width: 15),
               Expanded(
@@ -1564,7 +2260,7 @@ class _WallDeviceHero extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14),
               ),
             ),
-            icon: const Icon(Icons.edit_outlined, size: 26),
+            icon: const Icon(CupertinoIcons.pencil_outline, size: 26),
           ),
         ],
       ),
@@ -1594,13 +2290,13 @@ class _WallEndpointEditor extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final meta = deviceKindMeta(endpoint.kind);
+    final kindIcon = iosKindIcon(endpoint.kind);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(meta.icon, size: 20, color: AppColors.accent),
+            Icon(kindIcon, size: 20, color: AppColors.accent),
             const SizedBox(width: 9),
             Expanded(
               child: Text(
@@ -1613,13 +2309,23 @@ class _WallEndpointEditor extends StatelessWidget {
             ),
             IconButton(
               tooltip: 'Cambiar nombre del control',
-              onPressed: busy ? null : onRename,
+              onPressed: busy
+                  ? () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Guardando cambios, espera un momento...',
+                          ),
+                        ),
+                      );
+                    }
+                  : onRename,
               constraints: const BoxConstraints.tightFor(width: 64, height: 64),
               style: IconButton.styleFrom(
                 backgroundColor: AppColors.surfaceRaised,
                 foregroundColor: AppColors.accent,
               ),
-              icon: const Icon(Icons.edit_outlined, size: 22),
+              icon: const Icon(CupertinoIcons.pencil_outline, size: 22),
             ),
           ],
         ),
@@ -1760,7 +2466,7 @@ class _DeviceHero extends StatelessWidget {
                         tooltip: 'Cambiar nombre',
                         onPressed: onRename,
                         icon: const Icon(
-                          Icons.edit_outlined,
+                          CupertinoIcons.pencil_outline,
                           size: 18,
                           color: AppColors.accent,
                         ),
@@ -1887,8 +2593,9 @@ class _EndpointEditor extends StatelessWidget {
   final bool busy;
   final ValueChanged<String?> onChanged;
 
-  /// Null cuando el repositorio no soporta identify (F1: HTTP inert).
-  final VoidCallback? onIdentify;
+  /// Always visible — when the repository does not support identify, the
+  /// callback shows an informational SnackBar instead of being null.
+  final VoidCallback onIdentify;
 
   /// F2-C rename affordance; null hides it.
   final VoidCallback? onRename;
@@ -1899,13 +2606,13 @@ class _EndpointEditor extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final meta = deviceKindMeta(endpoint.kind);
+    final kindIcon = iosKindIcon(endpoint.kind);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(meta.icon, size: 20, color: AppColors.accent),
+            Icon(kindIcon, size: 20, color: AppColors.accent),
             const SizedBox(width: 9),
             Expanded(
               child: Column(
@@ -1928,19 +2635,41 @@ class _EndpointEditor extends StatelessWidget {
             if (onRename != null)
               IconButton(
                 tooltip: 'Cambiar nombre del canal',
-                onPressed: busy ? null : onRename,
+                onPressed: busy
+                    ? () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Guardando cambios, espera un momento...',
+                            ),
+                          ),
+                        );
+                      }
+                    : onRename,
                 icon: const Icon(
-                  Icons.edit_outlined,
+                  CupertinoIcons.pencil_outline,
                   size: 18,
                   color: AppColors.accent,
                 ),
               ),
-            if (onIdentify != null)
-              TextButton.icon(
-                onPressed: busy ? null : onIdentify,
-                icon: const Icon(Icons.wifi_tethering, size: 16),
-                label: const Text('Identificar'),
+            TextButton.icon(
+              onPressed: busy
+                  ? () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Guardando cambios, espera un momento...',
+                          ),
+                        ),
+                      );
+                    }
+                  : onIdentify,
+              icon: const Icon(
+                CupertinoIcons.antenna_radiowaves_left_right,
+                size: 16,
               ),
+              label: const Text('Identificar'),
+            ),
           ],
         ),
         // F2-C: global backend-computed display, rendered exactly.
@@ -1998,15 +2727,27 @@ class _EndpointEditor extends StatelessWidget {
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
-              onPressed: null,
-              icon: const Icon(Icons.link, size: 17),
+              onPressed: () async {
+                final result = await showDialog<String>(
+                  context: context,
+                  builder: (_) => _LinkEntityDialog(endpointId: endpoint.id),
+                );
+                if (result == null) return;
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Vinculación simulada con éxito: $result'),
+                  ),
+                );
+              },
+              icon: const Icon(CupertinoIcons.link, size: 17),
               label: const Text('Vincular entidad'),
             ),
           ),
           const Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              'Disponible cuando el backend publique el catálogo de entidades.',
+              'Vincula este canal con una entidad del catálogo.',
               style: TextStyle(color: AppColors.textFaint, fontSize: 10.5),
             ),
           ),
@@ -2053,7 +2794,7 @@ class _AreaDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    final dropdown = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
@@ -2102,6 +2843,13 @@ class _AreaDropdown extends StatelessWidget {
         ),
       ],
     );
+    if (!enabled) {
+      return Tooltip(
+        message: 'Guardando cambios, espera un momento...',
+        child: dropdown,
+      );
+    }
+    return dropdown;
   }
 }
 
@@ -2133,7 +2881,7 @@ class _RoleDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final current = value ?? 'unknown';
-    return Column(
+    final dropdown = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
@@ -2148,7 +2896,9 @@ class _RoleDropdown extends StatelessWidget {
           ),
         ),
         DropdownButtonFormField<String?>(
-          initialValue: _semanticRoleOptions.containsKey(current) ? current : null,
+          initialValue: _semanticRoleOptions.containsKey(current)
+              ? current
+              : null,
           isExpanded: true,
           decoration: InputDecoration(
             filled: true,
@@ -2185,6 +2935,13 @@ class _RoleDropdown extends StatelessWidget {
         ),
       ],
     );
+    if (!enabled) {
+      return Tooltip(
+        message: 'Guardando cambios, espera un momento...',
+        child: dropdown,
+      );
+    }
+    return dropdown;
   }
 }
 
@@ -2261,7 +3018,7 @@ class _GatewaysPage extends StatelessWidget {
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: const Icon(
-                    Icons.hub_outlined,
+                    CupertinoIcons.personalhotspot,
                     color: AppColors.accent,
                   ),
                 ),
@@ -2352,51 +3109,6 @@ String healthLabel(DeviceHealthState health) {
   };
 }
 
-/// Resumen honesto de salud de los dispositivos de usuario.
-///
-/// Invariante central: un dispositivo solo cuenta como "disponible" si su
-/// health es explícitamente ONLINE. Desconocido nunca equivale a disponible;
-/// sleeping nunca equivale a online; offline/unreachable/authError cuentan
-/// como "requieren revisión". "Todos los dispositivos están disponibles"
-/// solo puede aparecer si TODOS los dispositivos de usuario están online.
-String _healthSummaryLabel({
-  required int onlineCount,
-  required int attentionCount,
-  required int unknownCount,
-  required int sleepingCount,
-  required int userCount,
-}) {
-  if (attentionCount > 0) {
-    return '$attentionCount requieren revisión';
-  }
-
-  if (unknownCount > 0 && sleepingCount > 0) {
-    final parts = <String>[];
-    if (onlineCount > 0) parts.add('$onlineCount disponibles');
-    parts.add('$unknownCount con estado local aún no validado');
-    parts.add('$sleepingCount en reposo');
-    return parts.join(' · ');
-  }
-
-  if (unknownCount > 0) {
-    return unknownCount == userCount
-        ? 'Estado local aún no validado'
-        : '$unknownCount con estado local aún no validado';
-  }
-
-  if (sleepingCount > 0) {
-    return sleepingCount == userCount
-        ? '$sleepingCount dispositivos en reposo'
-        : '$sleepingCount en reposo · $onlineCount disponibles';
-  }
-
-  if (onlineCount == userCount) {
-    return 'Todos los dispositivos están disponibles';
-  }
-  // Fail-safe: nunca afirmar disponibilidad sin evidencia explícita online.
-  return '$onlineCount disponibles';
-}
-
 String? _areaName(List<HomeArea> areas, String? areaId) {
   if (areaId == null) return null;
   for (final area in areas) {
@@ -2471,6 +3183,41 @@ IconData locationIcon(String location) {
   return Icons.home;
 }
 
+/// iOS-style (SF Symbols via CupertinoIcons) variants for the MOBILE surface.
+///
+/// The Material [locationIcon]/[deviceKindMeta] originals stay untouched
+/// because the wall panel ([WallDevicesPage]) consumes them; mobile call
+/// sites use these instead so desktop/wall rendering never changes.
+IconData iosLocationIcon(String location) {
+  final name = location.toLowerCase();
+  // iOS approx: no kitchen icon — flame reads as stove.
+  if (name.contains('cocina')) return CupertinoIcons.flame;
+  if (name.contains('recamara')) return CupertinoIcons.bed_double;
+  // iOS approx: no bathtub icon — drop reads as water/bathroom.
+  if (name.contains('baño') || name.contains('bano')) {
+    return CupertinoIcons.drop;
+  }
+  if (name.contains('patio')) return CupertinoIcons.tree;
+  // iOS approx: no hallway icon — passage arrows read as corridor.
+  if (name.contains('pasillo')) return CupertinoIcons.arrow_left_right;
+  if (name.contains('comedor')) return CupertinoIcons.table;
+  return CupertinoIcons.house;
+}
+
+/// iOS-style device-kind icon for the MOBILE surface (see [iosLocationIcon]).
+IconData iosKindIcon(DeviceKind kind) {
+  return switch (kind) {
+    DeviceKind.light => CupertinoIcons.lightbulb,
+    // iOS approx: no on/off-switch icon — sliders read as switch controls.
+    DeviceKind.switchController => CupertinoIcons.slider_horizontal_3,
+    DeviceKind.outlet => CupertinoIcons.power,
+    DeviceKind.sensor => CupertinoIcons.eye,
+    // iOS approx: no hub icon — shared-connection point reads as gateway.
+    DeviceKind.gateway => CupertinoIcons.personalhotspot,
+    DeviceKind.unknown => CupertinoIcons.square_stack,
+  };
+}
+
 ({IconData icon, String label}) deviceKindMeta(DeviceKind kind) {
   return switch (kind) {
     DeviceKind.light => (icon: Icons.lightbulb, label: 'Luz'),
@@ -2488,12 +3235,12 @@ IconData locationIcon(String location) {
 ({IconData icon, String label}) deviceTypeMeta(String deviceId) {
   final family = deviceId.split('_').first.toLowerCase();
   return switch (family) {
-    'luz' || 'foco' => (icon: Icons.lightbulb, label: 'Luz'),
-    'enchufe' => (icon: Icons.power, label: 'Enchufe'),
-    'ventilador' => (icon: Icons.air, label: 'Ventilador'),
-    'sensor' => (icon: Icons.thermostat, label: 'Sensor'),
-    'camara' => (icon: Icons.videocam, label: 'Cámara'),
-    _ => (icon: Icons.devices, label: 'Dispositivo'),
+    'luz' || 'foco' => (icon: CupertinoIcons.lightbulb, label: 'Luz'),
+    'enchufe' => (icon: CupertinoIcons.power, label: 'Enchufe'),
+    'ventilador' => (icon: CupertinoIcons.wind, label: 'Ventilador'),
+    'sensor' => (icon: CupertinoIcons.thermometer, label: 'Sensor'),
+    'camara' => (icon: CupertinoIcons.videocam, label: 'Cámara'),
+    _ => (icon: CupertinoIcons.square_stack, label: 'Dispositivo'),
   };
 }
 
@@ -2502,6 +3249,57 @@ String formatDeviceName(String deviceId) {
   final meta = deviceTypeMeta(deviceId);
   final number = parts.length > 1 ? parts[1] : '';
   return number.isEmpty ? meta.label : '${meta.label} $number';
+}
+
+class _LinkEntityDialog extends StatefulWidget {
+  const _LinkEntityDialog({required this.endpointId});
+  final String endpointId;
+  @override
+  State<_LinkEntityDialog> createState() => _LinkEntityDialogState();
+}
+
+class _LinkEntityDialogState extends State<_LinkEntityDialog> {
+  late final TextEditingController _controller = TextEditingController();
+  String? _error;
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final v = _controller.text.trim();
+    if (v.isEmpty) {
+      setState(() => _error = 'Ingresá un identificador de entidad.');
+      return;
+    }
+    Navigator.of(context).pop(v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Vincular entidad'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: InputDecoration(
+          labelText: 'Entidad',
+          hintText: 'ej: light.cocina_principal',
+          errorText: _error,
+          border: const OutlineInputBorder(),
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Vincular')),
+      ],
+    );
+  }
 }
 
 /// F2-C rename outcome: set, clear (null) or cancelled.

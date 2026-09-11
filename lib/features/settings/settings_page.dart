@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -452,7 +453,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ? <Map<String, dynamic>>[]
         : _voicesForLang(_selectedLang!);
     return _settingsCard(
-      icon: Icons.volume_up_outlined,
+      icon: CupertinoIcons.waveform,
       title: 'Voz del asistente',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -509,7 +510,7 @@ class _SettingsPageState extends State<SettingsPage> {
           Align(
             alignment: Alignment.centerRight,
             child: ToolButton(
-              icon: Icons.check,
+              icon: CupertinoIcons.checkmark,
               label: _savingVoice ? 'Guardando…' : 'Guardar',
               filled: true,
               onTap: () {
@@ -536,7 +537,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final connected =
         s['authenticated'] == true && s['client_id_configured'] == true;
     return _settingsCard(
-      icon: Icons.music_note_outlined,
+      icon: CupertinoIcons.music_note,
       title: 'Spotify',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -570,7 +571,8 @@ class _SettingsPageState extends State<SettingsPage> {
               const Spacer(),
               if (connected)
                 ToolButton(
-                  icon: Icons.link_off,
+                  // iOS approx: no link-off icon — xmark reads as disconnect.
+                  icon: CupertinoIcons.xmark,
                   label: _disconnecting ? 'Desconectando…' : 'Desconectar',
                   filled: false,
                   onTap: () {
@@ -579,7 +581,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 )
               else
                 ToolButton(
-                  icon: Icons.music_note,
+                  icon: CupertinoIcons.music_note,
                   label: _connecting ? 'Conectando…' : 'Conectar con Spotify',
                   filled: true,
                   onTap: () {
@@ -611,7 +613,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _surfaceModeCard() {
     return _settingsCard(
-      icon: Icons.auto_awesome,
+      icon: CupertinoIcons.sparkles,
       title: 'Modo de interfaz',
       child: ListenableBuilder(
         listenable: _surfaceModeController,
@@ -650,7 +652,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _modulesCard() {
     return _settingsCard(
-      icon: Icons.extension_outlined,
+      // iOS approx: no puzzle/extension icon — layers read as modules stack.
+      icon: CupertinoIcons.layers,
       title: 'Módulos',
       child: ModulesSection(api: widget.api),
     );

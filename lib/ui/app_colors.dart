@@ -28,6 +28,26 @@ abstract final class AppColors {
   static const accentTintStrong = Color(0x334665C9);
   static const accentTintHover = Color(0x1F4665C9);
 
+  // Gamma Indigo (mockup primary #4F46E5)
+  static const gammaIndigo = Color(0xFF4F46E5);
+  static const gammaIndigoLight = Color(0xFFEEF2FF);
+
+  // Status mapping per spec: Encendido/Apagado/Desconectado + toast
+  static const statusEncendido = Color(0xFF10B981);
+  static const statusApagado = Color(0xFFEF4444);
+  static const statusDesconectado = Color(0xFF9CA3AF);
+  static const toastDark = Color(0xFF1F2937);
+  // Aliases for design interface
+  static const success = Color(0xFF10B981);
+  static const errorRed = Color(0xFFEF4444);
+  static const greyDesconectado = Color(0xFF9CA3AF);
+
+  // Kind icon badge tints
+  static const kindLight = Color(0xFF8B5CF6);
+  static const kindBlinds = Color(0xFF06B6D4);
+  static const kindFan = Color(0xFF34D399);
+  static const kindSensorGrey = Color(0xFF9CA3AF);
+
   // Status
   static const green = Color(0xFF238457);
   static const red = Color(0xFFC94D5A);
