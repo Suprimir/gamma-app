@@ -9,7 +9,9 @@ import '../../data/device_inventory.dart';
 import 'devices_page.dart';
 import 'wall_touch_name_editor.dart';
 import '../../data/http_device_inventory_repository.dart';
+import '../../ui/device_status.dart';
 import '../../ui/shared_widgets.dart';
+import '../routines/related_routines.dart';
 import '../routines/routines_page.dart';
 import '../areas/area_editor.dart';
 import '../wall_home/wall_area_editor.dart';
@@ -370,6 +372,8 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
                               device.physicalAreaId,
                             ),
                             healthLabel: wallHealthLabel(device.health),
+                            commandsSupported:
+                                _controller.supportsEndpointCommands,
                             onTap: () => _openDevice(device),
                           ),
                           const SizedBox(height: 14),
@@ -1156,12 +1160,17 @@ class _WallDeviceCard extends StatelessWidget {
     required this.device,
     required this.roomName,
     required this.healthLabel,
+    required this.commandsSupported,
     required this.onTap,
   });
 
   final PhysicalDevice device;
   final String roomName;
   final String? healthLabel;
+
+  /// Whether the repository exposes canonical commands. False keeps the
+  /// legacy `powerOn ?? online` pill for plain fakes.
+  final bool commandsSupported;
   final VoidCallback onTap;
 
   @override
@@ -1169,7 +1178,10 @@ class _WallDeviceCard extends StatelessWidget {
     final meta = deviceKindMeta(device.kind);
     final controls = device.endpoints.length;
     final healthColor = _wallHealthColor(device.health);
-    final powerState = _wallPowerState(device);
+    final powerState = _wallPowerState(
+      device,
+      commandsSupported: commandsSupported,
+    );
     return Material(
       color: AppColors.surface,
       borderRadius: BorderRadius.circular(20),
@@ -1336,6 +1348,11 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
   bool _identifying = false;
   bool _deleting = false;
 
+  /// Related routines from `GET /api/v1/routines`, filtered by canonical
+  /// action `device_id`. Null = unknown (still loading or fetch failed): the
+  /// card shows '—', never a fabricated zero.
+  int? _relatedRoutineCount;
+
   /// Desktop parity: display values (power excluded, like desktop) don't
   /// apply instantly — moving a slider only buffers it and arms
   /// Guardar cambios, which converges everything into the shared state.
@@ -1366,29 +1383,117 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
     widget.onCanonicalDeviceChanged?.call(updated);
   }
 
+  @override
+  void initState() {
+    super.initState();
+    _loadRelatedRoutines();
+  }
+
+  Future<void> _loadRelatedRoutines() async {
+    try {
+      final routines = await widget.api.routines().timeout(
+        const Duration(milliseconds: 900),
+      );
+      if (!mounted) return;
+      setState(() {
+        _relatedRoutineCount = countRelatedRoutines(routines, _device.id);
+      });
+    } catch (_) {
+      // Unknown, never a fabricated zero: the card shows '—'.
+      if (!mounted) return;
+      setState(() => _relatedRoutineCount = null);
+    }
+  }
+
   bool get _isSensor =>
       _wallEffectiveType(_device) == _wallTypeSensor || _device.isGateway;
 
   bool get _isGateway =>
       _device.isGateway || _device.kind == DeviceKind.gateway;
 
-  bool get _powerOn => _device.powerOn ?? _device.online;
+  /// Whether the repository exposes the canonical command surface. Plain
+  /// fakes without commands keep the legacy local behavior untouched.
+  bool get _commandsAvailable =>
+      asDeviceCommandRepository(widget.repository) != null;
 
-  /// Desktop parity: power applies instantly and converges the shared state.
-  void _setPower(bool value) {
-    _converge(
-      _device.copyWith(
-        powerOn: value,
-        online: value,
-        health: value ? DeviceHealthState.online : DeviceHealthState.sleeping,
-      ),
-    );
-    unawaited(
-      showWallSuccessSplash(
+  /// Honest power display: with command support, confirmed observations (or
+  /// the demo-only powerOn fallback) decide; unknown is never projected as a
+  /// confident off. Without command support the legacy `powerOn ?? online`
+  /// behavior is preserved.
+  PowerDisplayState get _powerDisplayState {
+    if (!_commandsAvailable) {
+      final legacyOn = _device.powerOn ?? _device.online;
+      return legacyOn ? PowerDisplayState.on : PowerDisplayState.off;
+    }
+    return devicePowerDisplayState(_device);
+  }
+
+  /// Desktop parity: power applies instantly. With command support the
+  /// canonical backend is called and only a confirmed observation converges;
+  /// without it the legacy local convergence stays as fallback.
+  Future<void> _setPower(bool value) async {
+    if (!_commandsAvailable) {
+      _converge(
+        _device.copyWith(
+          powerOn: value,
+          online: value,
+          health: value ? DeviceHealthState.online : DeviceHealthState.sleeping,
+        ),
+      );
+      unawaited(
+        showWallSuccessSplash(
+          context,
+          message: value ? 'Dispositivo encendido' : 'Dispositivo apagado',
+        ),
+      );
+      return;
+    }
+    final endpoint = _device.endpoints.where(hasPowerCapability).firstOrNull;
+    if (endpoint == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('El dispositivo no expone un canal de encendido.'),
+        ),
+      );
+      return;
+    }
+    final commands = asDeviceCommandRepository(widget.repository);
+    if (commands == null) return; // unreachable: guarded by _commandsAvailable
+    try {
+      final result = await commands.setEndpointPower(
+        _device.id,
+        endpoint.id,
+        value,
+      );
+      if (!mounted) return;
+      if (result.responseParsed &&
+          result.observedPower != null &&
+          result.observedQuality != null) {
+        _converge(
+          _device.copyWith(
+            endpoints: [
+              for (final candidate in _device.endpoints)
+                if (candidate.id == endpoint.id)
+                  candidate.copyWith(
+                    observedPower: result.observedPower,
+                    observedQuality: result.observedQuality,
+                    observedAt: result.observedAt,
+                  )
+                else
+                  candidate,
+            ],
+          ),
+        );
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(powerOutcomeMessage(result, requested: value))),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
         context,
-        message: value ? 'Dispositivo encendido' : 'Dispositivo apagado',
-      ),
-    );
+      ).showSnackBar(SnackBar(content: Text(powerFailureMessage(error))));
+    }
   }
 
   void _setBrightness(double value) {
@@ -1597,8 +1702,17 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
     if (_identifying) return;
     setState(() => _identifying = true);
     try {
-      await widget.repository.identify(_device.id);
+      final result = await identifyDeviceWithFallback(
+        widget.repository,
+        _device.id,
+      );
       if (!mounted) return;
+      if (!result.supported) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(identifyUnsupportedMessage(result))),
+        );
+        return;
+      }
       unawaited(
         showWallSuccessSplash(
           context,
@@ -1823,7 +1937,7 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
                     const SizedBox(height: 14),
                     _WallPowerCard(
                       device: _device,
-                      powerOn: _powerOn,
+                      powerState: _powerDisplayState,
                       isSensor: _isSensor,
                       isGateway: _isGateway,
                       onPowerChanged: _setPower,
@@ -1920,7 +2034,10 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    _WallRoutinesCard(onCreate: _openRoutines),
+                    _WallRoutinesCard(
+                      relatedCount: _relatedRoutineCount,
+                      onCreate: _openRoutines,
+                    ),
                     const SizedBox(height: 14),
                     FilledButton.icon(
                       onPressed: _identifying ? null : _testConnection,
@@ -2083,14 +2200,14 @@ String _wallEffectiveType(PhysicalDevice device) {
 class _WallPowerCard extends StatelessWidget {
   const _WallPowerCard({
     required this.device,
-    required this.powerOn,
+    required this.powerState,
     required this.isSensor,
     required this.isGateway,
     required this.onPowerChanged,
   });
 
   final PhysicalDevice device;
-  final bool powerOn;
+  final PowerDisplayState powerState;
   final bool isSensor;
   final bool isGateway;
   final ValueChanged<bool> onPowerChanged;
@@ -2155,15 +2272,41 @@ class _WallPowerCard extends StatelessWidget {
         ),
       );
     }
-    // The on/off action is available on every controllable device, even
-    // when the backend doesn't report an on_off capability (existing
-    // devices): only sensors and gateways have their own card above.
+    // Power requires a real power channel (canonical POWER or legacy on_off);
+    // devices without one get an honest read-only card instead of a fake
+    // switch.
+    if (!device.endpoints.any(hasPowerCapability)) {
+      return const _WallCard(
+        child: Row(
+          children: [
+            Icon(Icons.power_off_outlined, size: 30, color: AppColors.textDim),
+            SizedBox(width: 16),
+            Expanded(
+              child: Text(
+                'Este dispositivo no expone un canal de encendido.',
+                style: TextStyle(color: AppColors.textDim, fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     // Capability-based (not health-based): turning the device off sets
     // health to sleeping, which must not hide the way back on.
-    // Big on/off action: red Apagar when on, green Encender when off,
-    // with the state in matching colors on top.
-    final stateColor = powerOn ? AppColors.green : AppColors.red;
-    final actionColor = powerOn ? AppColors.red : AppColors.green;
+    // Unknown power is never shown as a confident off: the label carries the
+    // truth ('Sin datos') while the action stays enabled to command it.
+    final isOn = powerState == PowerDisplayState.on;
+    final stateColor = switch (powerState) {
+      PowerDisplayState.on => AppColors.green,
+      PowerDisplayState.off => AppColors.red,
+      PowerDisplayState.unknown => AppColors.textDim,
+    };
+    final stateLabel = switch (powerState) {
+      PowerDisplayState.on => 'Encendido',
+      PowerDisplayState.off => 'Apagado',
+      PowerDisplayState.unknown => 'Sin datos',
+    };
+    final actionColor = isOn ? AppColors.red : AppColors.green;
     return _WallCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2178,7 +2321,11 @@ class _WallPowerCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: Icon(
-                  powerOn ? Icons.power_outlined : Icons.power_off_outlined,
+                  switch (powerState) {
+                    PowerDisplayState.on => Icons.power_outlined,
+                    PowerDisplayState.off => Icons.power_off_outlined,
+                    PowerDisplayState.unknown => Icons.help_outline,
+                  },
                   size: 30,
                   color: stateColor,
                 ),
@@ -2189,7 +2336,7 @@ class _WallPowerCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      powerOn ? 'Encendido' : 'Apagado',
+                      stateLabel,
                       style: TextStyle(
                         fontSize: 19,
                         fontWeight: FontWeight.w700,
@@ -2197,9 +2344,14 @@ class _WallPowerCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    const Text(
-                      'Toca el botón para cambiarlo',
-                      style: TextStyle(color: AppColors.textDim, fontSize: 14),
+                    Text(
+                      powerState == PowerDisplayState.unknown
+                          ? 'El dispositivo todavía no reportó su estado.'
+                          : 'Toca el botón para cambiarlo',
+                      style: const TextStyle(
+                        color: AppColors.textDim,
+                        fontSize: 14,
+                      ),
                     ),
                   ],
                 ),
@@ -2208,15 +2360,13 @@ class _WallPowerCard extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           FilledButton.icon(
-            onPressed: () => onPowerChanged(!powerOn),
+            onPressed: () => onPowerChanged(!isOn),
             icon: Icon(
-              powerOn
-                  ? Icons.power_settings_new_outlined
-                  : Icons.power_outlined,
+              isOn ? Icons.power_settings_new_outlined : Icons.power_outlined,
               size: 24,
             ),
             label: Text(
-              powerOn ? 'Apagar' : 'Encender',
+              isOn ? 'Apagar' : 'Encender',
               style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
             ),
             style: FilledButton.styleFrom(
@@ -2736,9 +2886,18 @@ class _WallClimateModeChips extends StatelessWidget {
 /// Touch-first routines entry (desktop parity): related count plus a >= 60dp
 /// creation button into [RoutinesPage].
 class _WallRoutinesCard extends StatelessWidget {
-  const _WallRoutinesCard({required this.onCreate});
+  const _WallRoutinesCard({required this.onCreate, this.relatedCount});
 
   final VoidCallback onCreate;
+
+  /// Related routines count; null while loading or unknown (fetch failed).
+  final int? relatedCount;
+
+  String get _countLabel {
+    final count = relatedCount;
+    if (count == null) return '—';
+    return count == 1 ? '1 rutina' : '$count rutinas';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2746,23 +2905,23 @@ class _WallRoutinesCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(
+              const Icon(
                 Icons.auto_awesome_outlined,
                 size: 22,
                 color: AppColors.accentStrong,
               ),
-              SizedBox(width: 10),
-              Expanded(
+              const SizedBox(width: 10),
+              const Expanded(
                 child: Text(
                   'Rutinas relacionadas',
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
                 ),
               ),
               Text(
-                '0 rutinas',
-                style: TextStyle(color: AppColors.textDim, fontSize: 15),
+                _countLabel,
+                style: const TextStyle(color: AppColors.textDim, fontSize: 15),
               ),
             ],
           ),
@@ -3330,12 +3489,16 @@ String _roomName(List<HomeArea> areas, String? physicalAreaId) {
 }
 
 /// On/off state for the wall device cards (top-right pill): green
-/// Encendido, red Apagado. Available on every device, even when the backend
-/// doesn't report an on_off capability (existing devices). Null when the
-/// state would mislead — sensors, gateways, or unreachable ones (a
-/// disconnected device is not 'Apagado'). Unknown health still shows the
-/// pill: mock/legacy devices report no health at all.
-({String label, Color color})? _wallPowerState(PhysicalDevice device) {
+/// Encendido, red Apagado. Available on every device with a power channel,
+/// even when the backend doesn't report a canonical POWER capability
+/// (existing devices). Null when the state would mislead — sensors, gateways,
+/// or unreachable ones (a disconnected device is not 'Apagado'). With command
+/// support a missing observation is 'Sin datos' instead of a fabricated
+/// 'Apagado'; without it the legacy `powerOn ?? online` behavior stays.
+({String label, Color color})? _wallPowerState(
+  PhysicalDevice device, {
+  required bool commandsSupported,
+}) {
   if (device.isGateway || device.kind == DeviceKind.gateway) return null;
   if (device.kind == DeviceKind.sensor) return null;
   switch (device.health) {
@@ -3347,6 +3510,16 @@ String _roomName(List<HomeArea> areas, String? physicalAreaId) {
     case DeviceHealthState.unreachable:
     case DeviceHealthState.authError:
       return null;
+  }
+  if (commandsSupported) {
+    return switch (devicePowerDisplayState(device)) {
+      PowerDisplayState.on => (label: 'Encendido', color: AppColors.green),
+      PowerDisplayState.off => (label: 'Apagado', color: AppColors.red),
+      PowerDisplayState.unknown => (
+        label: 'Sin datos',
+        color: AppColors.textFaint,
+      ),
+    };
   }
   final on = device.powerOn ?? device.online;
   return (

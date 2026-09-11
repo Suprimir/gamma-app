@@ -119,6 +119,103 @@ class FakeApiClient extends ApiClient {
           .firstWhere((device) => device['device_id'] == deviceId),
     );
   }
+
+  // ---- DeviceCommandRepository surface fakes ----
+
+  final actionCalls = <Map<String, Object?>>[];
+  Map<String, dynamic>? endpointActionData;
+  ApiException? endpointActionError;
+
+  @override
+  Future<Map<String, dynamic>?> endpointAction(
+    String deviceId,
+    String endpointId, {
+    required String action,
+    required Object? value,
+    String? requestId,
+  }) async {
+    actionCalls.add({
+      'device_id': deviceId,
+      'endpoint_id': endpointId,
+      'action': action,
+      'value': value,
+      'request_id': requestId,
+    });
+    if (endpointActionError != null) throw endpointActionError!;
+    return endpointActionData;
+  }
+
+  final identifyCalls = <String>[];
+  Map<String, dynamic> identifyData = const {
+    'supported': false,
+    'reason': 'not supported',
+  };
+
+  @override
+  Future<Map<String, dynamic>> identifyDevice(String deviceId) async {
+    identifyCalls.add(deviceId);
+    return identifyData;
+  }
+
+  final refreshCalls = <String>[];
+  Map<String, dynamic>? refreshedDeviceData;
+
+  @override
+  Future<Map<String, dynamic>> refreshDevice(String deviceId) async {
+    refreshCalls.add(deviceId);
+    return refreshedDeviceData ?? _deviceDto(deviceId);
+  }
+
+  final bindCalls = <Map<String, Object?>>[];
+  final unbindCalls = <Map<String, Object?>>[];
+
+  @override
+  Future<Map<String, dynamic>> bindEntity(
+    String deviceId, {
+    required String endpointId,
+    required String entityId,
+    required String capability,
+    String? controlledAreaId,
+  }) async {
+    bindCalls.add({
+      'device_id': deviceId,
+      'endpoint_id': endpointId,
+      'entity_id': entityId,
+      'capability': capability,
+      'controlled_area_id': controlledAreaId,
+    });
+    final dto = _deviceDto(deviceId);
+    final endpoints = (dto['endpoints'] as List)
+        .cast<Map<String, dynamic>>()
+        .map((endpoint) => Map<String, dynamic>.from(endpoint))
+        .toList();
+    endpoints
+        .firstWhere((endpoint) => endpoint['endpoint_id'] == endpointId)
+        .addAll({'binding_id': 'b_$entityId', 'binding_entity': entityId});
+    dto['endpoints'] = endpoints;
+    return dto;
+  }
+
+  @override
+  Future<Map<String, dynamic>> unbindEntity(
+    String deviceId,
+    String bindingId,
+  ) async {
+    unbindCalls.add({'device_id': deviceId, 'binding_id': bindingId});
+    final dto = _deviceDto(deviceId);
+    final endpoints = (dto['endpoints'] as List)
+        .cast<Map<String, dynamic>>()
+        .map((endpoint) => Map<String, dynamic>.from(endpoint))
+        .toList();
+    for (final endpoint in endpoints) {
+      if (endpoint['binding_id'] == bindingId) {
+        endpoint['binding_id'] = null;
+        endpoint['binding_entity'] = null;
+      }
+    }
+    dto['endpoints'] = endpoints;
+    return dto;
+  }
 }
 
 Map<String, dynamic> inventoryWith(Map<String, dynamic> device) {
@@ -716,6 +813,261 @@ void main() {
       final snapshot = await HttpDeviceInventoryRepository(fake).load();
 
       expect(snapshot.gateways.single.health, DeviceHealthState.unknown);
+    });
+  });
+
+  group('device command surface', () {
+    test(
+      'observed_state fills observedPower/Quality/At on endpoints',
+      () async {
+        final fake = FakeApiClient(
+          inventoryData: inventoryWith(
+            deviceMap(
+              id: 'device_x',
+              fields: {
+                'endpoints': <Map<String, dynamic>>[
+                  {
+                    'endpoint_id': 'relay_1',
+                    'display_name': 'Canal 1',
+                    'observed_state': <String, dynamic>{
+                      'power': true,
+                      'quality': 'confirmed',
+                      'observed_at': '2026-09-11T12:00:00Z',
+                    },
+                  },
+                ],
+              },
+            ),
+          ),
+        );
+
+        final snapshot = await HttpDeviceInventoryRepository(fake).load();
+        final endpoint = snapshot.devices.single.endpoints.single;
+
+        expect(endpoint.observedPower, isTrue);
+        expect(endpoint.observedQuality, 'confirmed');
+        expect(endpoint.observedAt, '2026-09-11T12:00:00Z');
+      },
+    );
+
+    test('null or malformed observed_state degrades to null fields', () async {
+      final fake = FakeApiClient(
+        inventoryData: inventoryWith(
+          deviceMap(
+            id: 'device_x',
+            fields: {
+              'endpoints': <Map<String, dynamic>>[
+                {'endpoint_id': 'relay_1', 'display_name': 'Canal 1'},
+                {
+                  'endpoint_id': 'relay_2',
+                  'display_name': 'Canal 2',
+                  'observed_state': <String, dynamic>{
+                    'power': 'yes',
+                    'quality': '',
+                    'observed_at': 42,
+                  },
+                },
+                {
+                  'endpoint_id': 'relay_3',
+                  'display_name': 'Canal 3',
+                  'observed_state': null,
+                },
+              ],
+            },
+          ),
+        ),
+      );
+
+      final snapshot = await HttpDeviceInventoryRepository(fake).load();
+      final endpoints = snapshot.devices.single.endpoints;
+
+      expect(endpoints, hasLength(3));
+      for (final endpoint in endpoints) {
+        expect(endpoint.observedPower, isNull);
+        expect(endpoint.observedQuality, isNull);
+        expect(endpoint.observedAt, isNull);
+      }
+    });
+
+    test('asDeviceCommandRepository narrows only command repositories', () {
+      final repository = HttpDeviceInventoryRepository(FakeApiClient());
+
+      expect(asDeviceCommandRepository(repository), same(repository));
+      expect(
+        asDeviceCommandRepository(MockDeviceInventoryRepository()),
+        isNull,
+      );
+    });
+
+    test(
+      'setEndpointPower maps the typed outcome and observed state',
+      () async {
+        final fake = FakeApiClient()
+          ..endpointActionData = {
+            'outcome': 'SUCCESS',
+            'changed': true,
+            'observed_state': {
+              'power': true,
+              'quality': 'confirmed',
+              'observed_at': '2026-09-11T12:00:00Z',
+            },
+            'error_code': null,
+            'error_detail': null,
+          };
+        final repository = HttpDeviceInventoryRepository(fake);
+
+        final result = await repository.setEndpointPower(
+          'device_1',
+          'relay_1',
+          true,
+        );
+
+        expect(result.outcome, 'SUCCESS');
+        expect(result.changed, isTrue);
+        expect(result.observedPower, isTrue);
+        expect(result.observedQuality, 'confirmed');
+        expect(result.observedAt, '2026-09-11T12:00:00Z');
+        expect(result.errorCode, isNull);
+        expect(result.errorDetail, isNull);
+        expect(result.responseParsed, isTrue);
+        expect(fake.actionCalls.single, {
+          'device_id': 'device_1',
+          'endpoint_id': 'relay_1',
+          'action': 'set_power',
+          'value': true,
+          'request_id': null,
+        });
+      },
+    );
+
+    test(
+      'setEndpointPower reports unconfirmed when the body is null',
+      () async {
+        final fake = FakeApiClient();
+        final repository = HttpDeviceInventoryRepository(fake);
+
+        final result = await repository.setEndpointPower(
+          'device_1',
+          'relay_1',
+          false,
+        );
+
+        expect(result.outcome, 'unconfirmed');
+        expect(result.responseParsed, isFalse);
+        expect(result.changed, isNull);
+        expect(result.observedPower, isNull);
+        expect(result.observedQuality, isNull);
+        expect(fake.actionCalls.single['value'], false);
+      },
+    );
+
+    test('setEndpointPower propagates ApiException untouched', () async {
+      final fake = FakeApiClient()
+        ..endpointActionError = ApiException(422, {'detail': 'unknown_action'});
+      final repository = HttpDeviceInventoryRepository(fake);
+
+      await expectLater(
+        repository.setEndpointPower('device_1', 'relay_1', true),
+        throwsA(
+          isA<ApiException>().having((error) => error.statusCode, 'code', 422),
+        ),
+      );
+    });
+
+    test('identifyDevice maps supported/reason from the API', () async {
+      final fake = FakeApiClient()
+        ..identifyData = {
+          'supported': false,
+          'reason': 'identify not supported by the simulated home',
+        };
+      final repository = HttpDeviceInventoryRepository(fake);
+
+      final result = await repository.identifyDevice('device_1');
+
+      expect(result.supported, isFalse);
+      expect(result.reason, 'identify not supported by the simulated home');
+      expect(fake.identifyCalls, ['device_1']);
+    });
+
+    test('bindEntity calls through and parses the returned device', () async {
+      final fake = FakeApiClient();
+      final repository = HttpDeviceInventoryRepository(fake);
+      await repository.load();
+
+      final device = await repository.bindEntity(
+        'device_1',
+        endpointId: 'relay_1',
+        entityId: 'luz_sala',
+        capability: 'POWER',
+        controlledAreaId: 'sala',
+      );
+
+      expect(device.id, 'device_1');
+      expect(fake.bindCalls.single, {
+        'device_id': 'device_1',
+        'endpoint_id': 'relay_1',
+        'entity_id': 'luz_sala',
+        'capability': 'POWER',
+        'controlled_area_id': 'sala',
+      });
+      final endpoint = device.endpoints.firstWhere(
+        (endpoint) => endpoint.id == 'relay_1',
+      );
+      expect(endpoint.bindings.single.targetEntityId, 'luz_sala');
+    });
+
+    test('unbindEntity calls through and clears the binding', () async {
+      final fake = FakeApiClient();
+      final repository = HttpDeviceInventoryRepository(fake);
+      await repository.load();
+      await repository.bindEntity(
+        'device_1',
+        endpointId: 'relay_1',
+        entityId: 'luz_sala',
+        capability: 'POWER',
+      );
+
+      final device = await repository.unbindEntity('device_1', 'b_luz_sala');
+
+      expect(fake.unbindCalls.single, {
+        'device_id': 'device_1',
+        'binding_id': 'b_luz_sala',
+      });
+      final endpoint = device.endpoints.firstWhere(
+        (endpoint) => endpoint.id == 'relay_1',
+      );
+      expect(endpoint.bindings, isEmpty);
+    });
+
+    test('refreshDevice returns the fresh DTO through the cache', () async {
+      final fake = FakeApiClient(
+        inventoryData: {
+          'devices': [
+            deviceMap(id: 'target_1'),
+            deviceMap(
+              id: 'child_x',
+              fields: {'is_subdevice': true, 'parent_device_id': 'target_1'},
+            ),
+          ],
+        },
+      );
+      final repository = HttpDeviceInventoryRepository(fake);
+      await repository.load();
+
+      // The refreshed DTO has no is_gateway flag; the cached child pointing to
+      // target_1 must still route the mapping through the gateway partition.
+      final dto = Map<String, dynamic>.from(
+        (fake.inventoryData['devices'] as List)
+            .cast<Map<String, dynamic>>()
+            .firstWhere((device) => device['device_id'] == 'target_1'),
+      )..remove('is_gateway');
+      fake.refreshedDeviceData = dto;
+
+      final device = await repository.refreshDevice('target_1');
+
+      expect(fake.refreshCalls, ['target_1']);
+      expect(device.id, 'target_1');
+      expect(device.kind, DeviceKind.gateway);
     });
   });
 }

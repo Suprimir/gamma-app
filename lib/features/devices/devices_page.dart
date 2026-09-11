@@ -8,6 +8,7 @@ import '../../ui/app_colors.dart';
 import 'desktop_devices_page.dart';
 import '../../data/device_inventory.dart';
 import '../../data/http_device_inventory_repository.dart';
+import '../../ui/device_status.dart';
 import '../../ui/shared_widgets.dart';
 import 'wall_devices_page.dart';
 
@@ -321,6 +322,7 @@ class _DevicesPageState extends State<DevicesPage> {
                             area: area,
                             snapshot: snapshot,
                             repository: widget.repository,
+                            controller: _controller,
                             onCanonicalDeviceChanged:
                                 _controller.applyCanonicalDevice,
                           ),
@@ -359,6 +361,7 @@ class _DevicesPageState extends State<DevicesPage> {
                           _MobileDeviceGridPage.all(
                             snapshot: snapshot,
                             repository: widget.repository,
+                            controller: _controller,
                             onCanonicalDeviceChanged:
                                 _controller.applyCanonicalDevice,
                           ),
@@ -380,6 +383,7 @@ class _DevicesPageState extends State<DevicesPage> {
                               areas: snapshot.areas,
                               gateways: snapshot.gateways,
                               repository: widget.repository,
+                              controller: _controller,
                               emptyMessage:
                                   'No hay dispositivos sin ubicación.',
                               onCanonicalDeviceChanged:
@@ -422,6 +426,7 @@ class _DevicesPageState extends State<DevicesPage> {
                               areas: snapshot.areas,
                               gateways: snapshot.gateways,
                               repository: widget.repository,
+                              controller: _controller,
                               emptyMessage:
                                   'No hay dispositivos desconectados.',
                               onCanonicalDeviceChanged:
@@ -580,7 +585,8 @@ class _DashboardDeviceCard extends StatelessWidget {
   const _DashboardDeviceCard({
     required this.device,
     required this.areaName,
-    required this.isOn,
+    required this.powerState,
+    required this.canCommandPower,
     required this.onToggle,
     required this.onTap,
     required this.onMenu,
@@ -588,14 +594,21 @@ class _DashboardDeviceCard extends StatelessWidget {
 
   final PhysicalDevice device;
   final String? areaName;
-  final bool isOn;
+  final PowerDisplayState powerState;
 
-  /// Acción principal (solo se invoca cuando hay comunicación y on_off).
+  /// Whether the repository exposes canonical commands. When true, an
+  /// unknown/sleeping health still allows the quick power action (the toggle
+  /// commands the backend and the label carries the truth).
+  final bool canCommandPower;
+
+  /// Primary action (only invoked with connectivity and a power channel).
+  /// The requested value derives from [powerState]: unknown turns on (it is
+  /// never presented as a confident off).
   final ValueChanged<bool> onToggle;
 
   /// Toque principal: alterna si es controlable, abre el detalle si no tiene
-  /// on_off, o informa falta de comunicación. Lo decide el padre con
-  /// [_cardState]; la tarjeta solo refleja el estado.
+  /// canal de encendido, o informa falta de comunicación. Lo decide el padre
+  /// con [_cardState]; la tarjeta solo refleja el estado.
   final VoidCallback onTap;
 
   /// Interacción secundaria (long-press o botón ···): controles avanzados.
@@ -605,7 +618,11 @@ class _DashboardDeviceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final kindIcon = iosKindIcon(device.kind);
     final displayName = device.userName ?? device.name;
-    final state = _cardState(device, isOn);
+    final state = _cardState(
+      device,
+      powerState,
+      canCommandPower: canCommandPower,
+    );
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(16),
@@ -650,7 +667,10 @@ class _DashboardDeviceCard extends StatelessWidget {
                     ),
                     const Spacer(),
                     if (state.controllable)
-                      _DashboardToggle(isOn: isOn, onChanged: onToggle),
+                      _DashboardToggle(
+                        powerState: powerState,
+                        onChanged: onToggle,
+                      ),
                   ],
                 ),
                 const Spacer(),
@@ -729,12 +749,20 @@ class _DashboardDeviceCard extends StatelessWidget {
 }
 
 /// Estado honesto de la tarjeta: la falta de comunicación nunca se presenta
-/// como apagado. Solo [controllable] habilita la acción rápida (tap/switch);
-/// sin on_off el tap abre el detalle; sin comunicación el tap informa.
+/// como apagado, y una potencia sin observación confirmada se muestra como
+/// 'Sin datos' (nunca como un apagado confiado). Solo [controllable] habilita
+/// la acción rápida (tap/switch); sin canal de encendido el tap abre el
+/// detalle; sin comunicación el tap informa.
+///
+/// [canCommandPower] is true when the repository exposes the canonical
+/// command surface. With unknown/sleeping health and a real power channel the
+/// device can still be commanded, so the honest label is 'Sin datos' and the
+/// quick action stays enabled instead of a dead 'Estado desconocido'.
 ({String label, Color dot, bool controllable, bool opensDetail}) _cardState(
   PhysicalDevice device,
-  bool isOn,
-) {
+  PowerDisplayState powerState, {
+  required bool canCommandPower,
+}) {
   switch (device.health) {
     case DeviceHealthState.offline:
     case DeviceHealthState.unreachable:
@@ -747,17 +775,25 @@ class _DashboardDeviceCard extends StatelessWidget {
       );
     case DeviceHealthState.unknown:
     case DeviceHealthState.sleeping:
+      final canCommand =
+          canCommandPower && device.endpoints.any(hasPowerCapability);
+      if (!canCommand) {
+        return (
+          label: 'Estado desconocido',
+          dot: AppColors.amber,
+          controllable: false,
+          opensDetail: false,
+        );
+      }
       return (
-        label: 'Estado desconocido',
-        dot: AppColors.amber,
-        controllable: false,
+        label: 'Sin datos',
+        dot: AppColors.textFaint,
+        controllable: true,
         opensDetail: false,
       );
     case DeviceHealthState.online:
-      final hasOnOff = device.endpoints.any(
-        (endpoint) => endpoint.capabilities.contains('on_off'),
-      );
-      if (!hasOnOff) {
+      final hasPower = device.endpoints.any(hasPowerCapability);
+      if (!hasPower) {
         return (
           label: 'Ver detalle',
           dot: AppColors.textFaint,
@@ -765,19 +801,26 @@ class _DashboardDeviceCard extends StatelessWidget {
           opensDetail: true,
         );
       }
-      return isOn
-          ? (
-              label: 'Encendido',
-              dot: AppColors.statusEncendido,
-              controllable: true,
-              opensDetail: false,
-            )
-          : (
-              label: 'Apagado',
-              dot: AppColors.statusApagado,
-              controllable: true,
-              opensDetail: false,
-            );
+      return switch (powerState) {
+        PowerDisplayState.on => (
+          label: 'Encendido',
+          dot: AppColors.statusEncendido,
+          controllable: true,
+          opensDetail: false,
+        ),
+        PowerDisplayState.off => (
+          label: 'Apagado',
+          dot: AppColors.statusApagado,
+          controllable: true,
+          opensDetail: false,
+        ),
+        PowerDisplayState.unknown => (
+          label: 'Sin datos',
+          dot: AppColors.textFaint,
+          controllable: true,
+          opensDetail: false,
+        ),
+      };
   }
 }
 
@@ -791,10 +834,15 @@ Future<_QuickAction?> _showDeviceQuickSheet({
   required BuildContext context,
   required PhysicalDevice device,
   required String? areaName,
-  required bool isOn,
+  required PowerDisplayState powerState,
+  required bool canCommandPower,
 }) {
   final displayName = device.userName ?? device.name;
-  final state = _cardState(device, isOn);
+  final state = _cardState(
+    device,
+    powerState,
+    canCommandPower: canCommandPower,
+  );
   final meta = [device.provider, device.model, ?areaName].join(' · ');
   return showModalBottomSheet<_QuickAction>(
     context: context,
@@ -921,18 +969,23 @@ Future<_QuickAction?> _showDeviceQuickSheet({
 }
 
 class _DashboardToggle extends StatelessWidget {
-  const _DashboardToggle({required this.isOn, required this.onChanged});
+  const _DashboardToggle({required this.powerState, required this.onChanged});
 
-  final bool isOn;
+  final PowerDisplayState powerState;
   final ValueChanged<bool> onChanged;
 
   @override
   Widget build(BuildContext context) {
     const blue = AppColors.accent;
     const trackOff = Color(0xFFE5E7EB);
+    final isOn = powerState == PowerDisplayState.on;
     return Semantics(
-      label: isOn ? 'Encendido' : 'Apagado',
-      toggled: isOn,
+      label: switch (powerState) {
+        PowerDisplayState.on => 'Encendido',
+        PowerDisplayState.off => 'Apagado',
+        PowerDisplayState.unknown => 'Sin datos',
+      },
+      toggled: powerState == PowerDisplayState.unknown ? null : isOn,
       button: true,
       child: GestureDetector(
         onTap: () => onChanged(!isOn),
@@ -1135,6 +1188,7 @@ class _MobileDeviceGridPage extends StatefulWidget {
     required this.areas,
     required this.gateways,
     required this.repository,
+    required this.controller,
     required this.emptyMessage,
     this.hideAreaName = false,
     this.onCanonicalDeviceChanged,
@@ -1146,6 +1200,7 @@ class _MobileDeviceGridPage extends StatefulWidget {
     required HomeArea area,
     required DeviceInventorySnapshot snapshot,
     required DeviceInventoryRepository repository,
+    required AdaptiveFeatureController controller,
     ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged,
   }) {
     return _MobileDeviceGridPage(
@@ -1155,6 +1210,7 @@ class _MobileDeviceGridPage extends StatefulWidget {
       areas: snapshot.areas,
       gateways: snapshot.gateways,
       repository: repository,
+      controller: controller,
       emptyMessage: 'No hay dispositivos asignados a ${area.name}.',
       hideAreaName: true,
       onCanonicalDeviceChanged: onCanonicalDeviceChanged,
@@ -1165,6 +1221,7 @@ class _MobileDeviceGridPage extends StatefulWidget {
   factory _MobileDeviceGridPage.all({
     required DeviceInventorySnapshot snapshot,
     required DeviceInventoryRepository repository,
+    required AdaptiveFeatureController controller,
     ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged,
   }) {
     return _MobileDeviceGridPage(
@@ -1174,6 +1231,7 @@ class _MobileDeviceGridPage extends StatefulWidget {
       areas: snapshot.areas,
       gateways: snapshot.gateways,
       repository: repository,
+      controller: controller,
       emptyMessage: 'No hay dispositivos configurados.',
       onCanonicalDeviceChanged: onCanonicalDeviceChanged,
     );
@@ -1185,6 +1243,7 @@ class _MobileDeviceGridPage extends StatefulWidget {
   final List<HomeArea> areas;
   final List<GatewayInfo> gateways;
   final DeviceInventoryRepository repository;
+  final AdaptiveFeatureController controller;
   final String emptyMessage;
   final bool hideAreaName;
   final ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged;
@@ -1197,15 +1256,22 @@ class _MobileDeviceGridPageState extends State<_MobileDeviceGridPage> {
   late final List<PhysicalDevice> _devices = List.of(widget.devices);
   final Map<String, bool> _powerOverrides = {};
 
-  void _toggle(PhysicalDevice device, bool value) {
-    setState(() => _powerOverrides[device.id] = value);
-    final verb = value ? 'Encendido' : 'Apagado';
-    final displayName = device.userName ?? device.name;
+  /// Local fallback used only when the repository has no command support
+  /// (plain test fakes); production always takes the canonical command path.
+  /// Computed from the repository in scope, which is also the one the
+  /// controller wraps.
+  bool get _commandsAvailable =>
+      asDeviceCommandRepository(widget.repository) != null;
+
+  void _showSnack(
+    String message, {
+    Color background = const Color(0xFF374151),
+  }) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('$displayName — $verb'),
+        content: Text(message),
         behavior: SnackBarBehavior.floating,
-        backgroundColor: value ? AppColors.accent : const Color(0xFF374151),
+        backgroundColor: background,
         duration: const Duration(seconds: 2),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -1213,13 +1279,59 @@ class _MobileDeviceGridPageState extends State<_MobileDeviceGridPage> {
     );
   }
 
-  /// Toque principal honesto: solo alterna con comunicación y on_off; sin
-  /// on_off abre el detalle; sin comunicación informa el estado real en vez
-  /// de fingir un encendido/apagado.
-  void _handleTap(PhysicalDevice device, bool isOn) {
-    final state = _cardState(device, isOn);
+  Future<void> _toggle(PhysicalDevice device, bool value) async {
+    final displayName = device.userName ?? device.name;
+    if (!_commandsAvailable) {
+      setState(() => _powerOverrides[device.id] = value);
+      _showSnack(
+        '$displayName — ${value ? 'Encendido' : 'Apagado'}',
+        background: value ? AppColors.accent : const Color(0xFF374151),
+      );
+      return;
+    }
+    try {
+      final result = await widget.controller.setDevicePower(device.id, value);
+      if (!mounted) return;
+      _syncFromController(device.id);
+      _showSnack(
+        '$displayName — ${powerOutcomeMessage(result, requested: value)}',
+        background: result.outcome == 'SUCCESS'
+            ? (value ? AppColors.accent : const Color(0xFF374151))
+            : const Color(0xFF374151),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack('$displayName — ${powerFailureMessage(error)}');
+    }
+  }
+
+  /// Mirrors the canonical device (with a merged observation) into the local
+  /// list so the pushed grid reflects the same state as the shared snapshot.
+  void _syncFromController(String deviceId) {
+    final snapshot = widget.controller.snapshot;
+    if (snapshot == null) return;
+    for (final updated in snapshot.devices) {
+      if (updated.id != deviceId) continue;
+      setState(() {
+        final index = _devices.indexWhere((d) => d.id == deviceId);
+        if (index >= 0) _devices[index] = updated;
+      });
+      return;
+    }
+  }
+
+  /// Toque principal honesto: solo alterna con comunicación y un canal de
+  /// encendido; sin canal abre el detalle; sin comunicación informa el estado
+  /// real en vez de fingir un encendido/apagado. Con comandos disponibles un
+  /// estado desconocido sigue siendo comandable (encender).
+  void _handleTap(PhysicalDevice device, PowerDisplayState powerState) {
+    final state = _cardState(
+      device,
+      powerState,
+      canCommandPower: _commandsAvailable,
+    );
     if (state.controllable) {
-      _toggle(device, !isOn);
+      _toggle(device, powerState != PowerDisplayState.on);
       return;
     }
     if (state.opensDetail) {
@@ -1227,26 +1339,21 @@ class _MobileDeviceGridPageState extends State<_MobileDeviceGridPage> {
       return;
     }
     final displayName = device.userName ?? device.name;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$displayName — ${state.label}'),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF374151),
-        duration: const Duration(seconds: 2),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      ),
-    );
+    _showSnack('$displayName — ${state.label}');
   }
 
-  Future<void> _showSheet(PhysicalDevice device, bool isOn) async {
+  Future<void> _showSheet(
+    PhysicalDevice device,
+    PowerDisplayState powerState,
+  ) async {
     final action = await _showDeviceQuickSheet(
       context: context,
       device: device,
       areaName: widget.hideAreaName
           ? null
           : _areaName(widget.areas, device.physicalAreaId),
-      isOn: isOn,
+      powerState: powerState,
+      canCommandPower: _commandsAvailable,
     );
     if (!mounted || action == null) return;
     switch (action) {
@@ -1259,8 +1366,15 @@ class _MobileDeviceGridPageState extends State<_MobileDeviceGridPage> {
 
   Future<void> _identify(PhysicalDevice device) async {
     try {
-      await widget.repository.identify(device.id);
+      final result = await identifyDeviceWithFallback(
+        widget.repository,
+        device.id,
+      );
       if (!mounted) return;
+      if (!result.supported) {
+        _showSnack(identifyUnsupportedMessage(result));
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Se envió la orden de identificación al dispositivo.'),
@@ -1358,15 +1472,19 @@ class _MobileDeviceGridPageState extends State<_MobileDeviceGridPage> {
                         final areaName = widget.hideAreaName
                             ? null
                             : _areaName(widget.areas, device.physicalAreaId);
-                        final isOn =
-                            _powerOverrides[device.id] ?? device.online;
+                        final powerState = _commandsAvailable
+                            ? devicePowerDisplayState(device)
+                            : (_powerOverrides[device.id] ?? device.online)
+                            ? PowerDisplayState.on
+                            : PowerDisplayState.off;
                         return _DashboardDeviceCard(
                           device: device,
                           areaName: areaName,
-                          isOn: isOn,
+                          powerState: powerState,
+                          canCommandPower: _commandsAvailable,
                           onToggle: (value) => _toggle(device, value),
-                          onTap: () => _handleTap(device, isOn),
-                          onMenu: () => _showSheet(device, isOn),
+                          onTap: () => _handleTap(device, powerState),
+                          onMenu: () => _showSheet(device, powerState),
                         );
                       }, childCount: _devices.length),
                     ),
@@ -1889,8 +2007,18 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
     }
     setState(() => _identifying = true);
     try {
-      await widget.repository.identify(_device.id, endpointId: endpointId);
+      final result = await identifyDeviceWithFallback(
+        widget.repository,
+        _device.id,
+        endpointId: endpointId,
+      );
       if (!mounted) return;
+      if (!result.supported) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(identifyUnsupportedMessage(result))),
+        );
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -1912,6 +2040,42 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
       _showError(error);
     } finally {
       if (mounted) setState(() => _identifying = false);
+    }
+  }
+
+  /// Binds a catalog entity to [endpoint] through the segregated command
+  /// layer. Only wired when the repository supports commands; the returned
+  /// canonical device converges into the shared snapshot. Capability prefers
+  /// the canonical `POWER`, falling back to the first declared capability.
+  Future<void> _bindEntity(DeviceEndpoint endpoint, String entityId) async {
+    final commands = asDeviceCommandRepository(widget.repository);
+    if (commands == null) return;
+    final capability = endpoint.capabilities.contains('POWER')
+        ? 'POWER'
+        : endpoint.capabilities.firstOrNull;
+    if (capability == null || capability.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('El canal no declara capacidades para vincular.'),
+        ),
+      );
+      return;
+    }
+    try {
+      final updated = await commands.bindEntity(
+        _device.id,
+        endpointId: endpoint.id,
+        entityId: entityId,
+        capability: capability,
+      );
+      if (!mounted) return;
+      setState(() => _device = updated);
+      widget.onCanonicalDeviceChanged?.call(updated);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Entidad vinculada')));
+    } catch (error) {
+      if (mounted) _showError(error);
     }
   }
 
@@ -2005,6 +2169,11 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
                       ? (role) =>
                             _setEndpointRole(_device.endpoints[index], role)
                       : null,
+                  onBindEntity:
+                      asDeviceCommandRepository(widget.repository) == null
+                      ? null
+                      : (entityId) =>
+                            _bindEntity(_device.endpoints[index], entityId),
                 ),
                 if (index != _device.endpoints.length - 1)
                   const Divider(height: 28, color: AppColors.border),
@@ -2586,6 +2755,7 @@ class _EndpointEditor extends StatelessWidget {
     required this.onIdentify,
     this.onRename,
     this.onRoleChanged,
+    this.onBindEntity,
   });
 
   final DeviceEndpoint endpoint;
@@ -2603,6 +2773,10 @@ class _EndpointEditor extends StatelessWidget {
   /// F2-D closure: user semantic-role override (null = clear). Null hides
   /// the role selector (e.g. unsupported repository).
   final ValueChanged<String?>? onRoleChanged;
+
+  /// Real binding through the command layer. Null keeps the legacy simulated
+  /// confirmation (plain test fakes without command support).
+  final Future<void> Function(String entityId)? onBindEntity;
 
   @override
   Widget build(BuildContext context) {
@@ -2734,6 +2908,11 @@ class _EndpointEditor extends StatelessWidget {
                 );
                 if (result == null) return;
                 if (!context.mounted) return;
+                final bindEntity = onBindEntity;
+                if (bindEntity != null) {
+                  await bindEntity(result);
+                  return;
+                }
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('Vinculación simulada con éxito: $result'),

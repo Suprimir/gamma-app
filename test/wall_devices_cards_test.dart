@@ -7,6 +7,8 @@ import 'package:gamma_app/data/device_inventory.dart';
 import 'package:gamma_app/features/devices/wall_devices_page.dart';
 import 'package:gamma_app/features/wall_home/wall_panel_home_page.dart';
 
+import 'fixtures/command_device_fake_repo.dart';
+
 /// F3-C Phase 5: touch-first Wall Panel Devices — large tappable cards,
 /// simplified detail reusing DeviceDetailView, no raw technical vocabulary,
 /// no physical controls, wall home attention entry.
@@ -177,6 +179,52 @@ void main() {
     );
     expect(find.text('Interruptor triple'), findsOneWidget);
   });
+
+  testWidgets('wall power command reaches the repository honestly', (
+    tester,
+  ) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_wallCommandLight],
+      areas: const [HomeArea(id: 'sala', name: 'Sala')],
+    );
+    await pumpWall(tester, repo);
+
+    // No confirmed observation yet: neutral pill, never a fake "Apagado".
+    expect(find.text('Sin datos'), findsOneWidget);
+
+    await tester.tap(find.text('Luz sala'));
+    await tester.pumpAndSettle();
+    expect(find.text('Configurar dispositivo'), findsOneWidget);
+    expect(find.text('Sin datos'), findsOneWidget);
+
+    await tester.tap(find.text('Encender'));
+    await tester.pump();
+
+    expect(repo.powerCalls, [('dev_power_01', 'light', true)]);
+    expect(find.text('Encendido'), findsWidgets);
+  });
+
+  testWidgets('wall TIMEOUT reports honestly and keeps the state unknown', (
+    tester,
+  ) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_wallCommandLight],
+      areas: const [HomeArea(id: 'sala', name: 'Sala')],
+      powerResult: const EndpointPowerResult(outcome: 'TIMEOUT'),
+    );
+    await pumpWall(tester, repo);
+
+    await tester.tap(find.text('Luz sala'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Encender'));
+    await tester.pump();
+
+    expect(repo.powerCalls, [('dev_power_01', 'light', true)]);
+    expect(find.text('Sin respuesta del dispositivo'), findsOneWidget);
+    // No parsed observation: the state stays neutral, never fabricated.
+    expect(find.text('Sin datos'), findsOneWidget);
+  });
 }
 
 Future<void> pumpWall(
@@ -266,6 +314,27 @@ const _wallFan = PhysicalDevice(
       kind: DeviceKind.outlet,
       controlledAreaId: 'pasillo',
       capabilities: {'on_off'},
+    ),
+  ],
+);
+
+const _wallCommandLight = PhysicalDevice(
+  id: 'dev_power_01',
+  name: 'Luz sala',
+  kind: DeviceKind.light,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'ZB-DL01',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'sala',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      capabilities: {'POWER'},
     ),
   ],
 );

@@ -11,6 +11,8 @@ import 'package:gamma_app/data/device_inventory.dart';
 import 'package:gamma_app/features/devices/devices_page.dart';
 import 'package:gamma_app/features/devices/wall_devices_page.dart';
 
+import 'fixtures/command_device_fake_repo.dart';
+
 /// F3-C Phase 9: multi-gang correctness across the three adaptive surfaces.
 /// A physical device keeps one physical identity, three independent controls,
 /// three independent controlled areas, endpoint-scoped role/user_name
@@ -262,6 +264,72 @@ void main() {
     expect(find.text('Canal 2'), findsOneWidget);
     expect(find.text('Canal 3'), findsOneWidget);
   });
+
+  testWidgets('mobile power toggle issues the canonical command', (
+    tester,
+  ) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_commandLight],
+      areas: const [HomeArea(id: 'sala', name: 'Sala')],
+    );
+    await pumpMobileDevicesWide(tester, repo);
+
+    await tester.tap(find.text('Sala'));
+    await tester.pumpAndSettle();
+
+    // No confirmed observation: the card is honest, never a fake "Apagado".
+    expect(find.text('Sin datos'), findsOneWidget);
+
+    await tester.tap(find.text('Luz sala'));
+    await tester.pump();
+
+    expect(repo.powerCalls, [('dev_power_01', 'light', true)]);
+    expect(find.text('Luz sala — Encendido'), findsOneWidget);
+
+    await tester.pumpAndSettle();
+    expect(find.text('Encendido'), findsWidgets);
+  });
+
+  testWidgets('mobile unknown health with commands powers on', (tester) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_commandUnknownLight],
+      areas: const [HomeArea(id: 'sala', name: 'Sala')],
+    );
+    await pumpMobileDevicesWide(tester, repo);
+
+    await tester.tap(find.text('Sala'));
+    await tester.pumpAndSettle();
+
+    // Health is unvalidated but the device is commandable: honest 'Sin datos',
+    // not a dead 'Estado desconocido'.
+    expect(find.text('Estado desconocido'), findsNothing);
+    expect(find.text('Sin datos'), findsOneWidget);
+
+    await tester.tap(find.text('Luz sin validar'));
+    await tester.pump();
+
+    // Unknown power resolves to power-on, never off.
+    expect(repo.powerCalls, [('dev_unknown_01', 'light', true)]);
+    expect(find.text('Luz sin validar — Encendido'), findsOneWidget);
+  });
+
+  testWidgets('mobile unknown health without commands stays unknowable', (
+    tester,
+  ) async {
+    final repo = _MultiGangFakeRepo(devices: const [_legacyUnknownLight]);
+    await pumpMobileDevicesWide(tester, repo);
+
+    await tester.tap(find.text('Sala'));
+    await tester.pumpAndSettle();
+
+    // Plain fakes keep the exact old behavior: not controllable.
+    expect(find.text('Estado desconocido'), findsOneWidget);
+    expect(find.text('Sin datos'), findsNothing);
+
+    await tester.tap(find.text('Luz sin validar'));
+    await tester.pump();
+    expect(find.text('Luz sin validar — Estado desconocido'), findsOneWidget);
+  });
 }
 
 Future<AdaptiveFeatureController> pumpDesktop(
@@ -292,6 +360,29 @@ Future<void> pumpMobileDevices(
   DeviceInventoryRepository repo,
 ) async {
   tester.view.physicalSize = const Size(390, 844);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: DevicesPage(
+          api: ApiClient(baseUrl: 'http://127.0.0.1:8420'),
+          repository: repo,
+        ),
+      ),
+    ),
+  );
+  await tester.pump(const Duration(milliseconds: 150));
+}
+
+/// Mobile-area-first pump at 520 dp: the pre-existing home header overflow at
+/// 390 dp (known failing `mobile endpoint independence`) is unrelated to the
+/// power flow and would fail any test that navigates the grid at that width.
+Future<void> pumpMobileDevicesWide(
+  WidgetTester tester,
+  DeviceInventoryRepository repo,
+) async {
+  tester.view.physicalSize = const Size(520, 1000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
@@ -391,6 +482,74 @@ const _fan = PhysicalDevice(
       name: 'Ventilador',
       kind: DeviceKind.outlet,
       controlledAreaId: 'pasillo',
+      capabilities: {'on_off'},
+    ),
+  ],
+);
+
+const _commandLight = PhysicalDevice(
+  id: 'dev_power_01',
+  name: 'Luz sala',
+  kind: DeviceKind.light,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'ZB-DL01',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'sala',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      capabilities: {'POWER'},
+    ),
+  ],
+);
+
+/// HTTP-parsed shape: health is unvalidated (unknown) but the device exposes
+/// a canonical POWER channel, so with a command repository it stays
+/// commandable.
+const _commandUnknownLight = PhysicalDevice(
+  id: 'dev_unknown_01',
+  name: 'Luz sin validar',
+  kind: DeviceKind.light,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'ZB-DL01',
+  provisioningState: DeviceProvisioningState.configured,
+  online: false,
+  health: DeviceHealthState.unknown,
+  physicalAreaId: 'sala',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      capabilities: {'POWER'},
+    ),
+  ],
+);
+
+/// Same unvalidated shape with a legacy `on_off` channel for the plain-fake
+/// fallback path.
+const _legacyUnknownLight = PhysicalDevice(
+  id: 'dev_unknown_01',
+  name: 'Luz sin validar',
+  kind: DeviceKind.light,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'ZB-DL01',
+  provisioningState: DeviceProvisioningState.configured,
+  online: false,
+  health: DeviceHealthState.unknown,
+  physicalAreaId: 'sala',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
       capabilities: {'on_off'},
     ),
   ],

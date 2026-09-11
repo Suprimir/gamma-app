@@ -1,0 +1,168 @@
+# Endpoints pendientes del core (post-conexión del cliente)
+
+El cliente Flutter quedó conectado a la API canónica en todo lo que el
+contrato actual permite. Este documento lista, priorizado, lo que falta
+programar en el core (`0.0.0.0:8420`) para cerrar el resto, con evidencia
+exacta y la forma sugerida de cada endpoint.
+
+## Camino rápido (qué programar primero)
+
+1. **Fix del resultado de acciones** — `POST /api/v1/devices/{device_id}/endpoints/{endpoint_id}/actions` devuelve `null` en éxito.
+2. **Acciones de endpoint más allá de `set_power`** — brightness, position, color, color_temperature, speed, mode.
+3. **Poblar `observed_state`** en los DTOs de devices/endpoints.
+4. Resto por feature: Spotify playback, STT puro, rutinas (`enabled` + ejecución), catálogo de entidades, ciclo de vida de dispositivos, clima.
+
+---
+
+## 1. 🔴 Bug crítico: la ruta de acciones nunca devuelve su resultado
+
+- Ruta: `POST /api/v1/devices/{device_id}/endpoints/{endpoint_id}/actions`.
+- Evidencia: `src/api/device_provisioning_routes.py:620` — el
+  `return result.to_public_dict()` está indentado dentro del bloque
+  `if result.error_code is EndpointActionErrorCode.UNKNOWN_ENDPOINT`
+  (después de un `return`), así que es inalcanzable. En éxito la ruta
+  retorna `None` → HTTP 200 con body `null`.
+- Verificado en vivo:
+
+  ```bash
+  curl -X POST http://127.0.0.1:8420/api/v1/devices/dev_6/endpoints/main/actions \
+       -H 'Content-Type: application/json' \
+       -d '{"action":"set_power","value":true}'
+  # → null (HTTP 200)
+  ```
+
+- Fix: des-indentar ese `return` al cuerpo de la función, después de los dos
+  `if` de error. El shape ya está implementado en
+  `EndpointExecutionResult.to_public_dict` (`src/core/devices/endpoint_actions.py:169-186`).
+- Impacto en el cliente: la app ya tolera ambos shapes. Hoy, con `null`,
+  muestra "Orden enviada — sin confirmación del dispositivo". Con el fix
+  podrá mostrar `SUCCESS` / `NO_CHANGE` / `EXECUTION_DISABLED` / etc. y el
+  `observed_state` post-ejecución.
+
+## 2. Acciones de endpoint faltantes
+
+Extender `EndpointActionName` (`src/core/devices/endpoint_actions.py:31-38`)
+con las escrituras que las capabilities ya declaran como `writable`:
+
+| Acción sugerida | Capability | Evidencia en vivo | UI del cliente que la espera |
+|---|---|---|---|
+| `set_brightness` | `BRIGHTNESS` (range 0–100) | `dev_3`, `dev_6` | Slider "Brillo" (desktop/wall detalle) — hoy local |
+| `set_position` | `POSITION` | `dev_1` (persiana) | Control de posición en detalle |
+| `set_color` | `COLOR` | cuando el provider la declare | Selector de color |
+| `set_color_temperature` | `COLOR_TEMPERATURE` | cuando aplique | Selector de temperatura de color |
+| `set_speed` | `SPEED` | ventiladores | Control de velocidad (desktop) |
+| `set_mode` | `MODE` (`enum_values`) | cuando aplique | Selector de modo (climate) |
+
+Mantener la misma disciplina que `set_power`: parser estricto sin coerción,
+`error_code` estables (`unknown_action`, `invalid_value`), y `observed_state`
+en el resultado.
+
+## 3. Estado observado (`observed_state`)
+
+- El contrato ya lo expone: cada endpoint del DTO trae
+  `observed_state` (`power`, `quality`, `observed_at`) —
+  `src/api/device_provisioning_routes.py:95-99, 116-118`.
+- Hoy viene `null` en los 7 dispositivos del server vivo, así que la UI
+  muestra "Sin datos" (honesto) pero no puede mostrar estado real.
+- Pedido: poblarlo tras ejecuciones confirmadas y sync del provider, con
+  `quality: confirmed|stale` y `observed_at`. Idealmente, que el resultado
+  de las acciones incluya la observación post-ejecución.
+- **Nota de identidad**: no existe señal canónica de reachability/last_seen.
+  El legacy `GET /api/v1/status` (402 entradas, ids `luz_1@comedor_1`)
+  **no mapea** a los ids canónicos `dev_*`; si la UI debe mostrar "en
+  línea"/"última conexión" por dispositivo, esa señal tiene que vivir en el
+  contrato canónico (p. ej. dentro de `observed_state`).
+
+## 4. Spotify: falta reproducción
+
+Hoy la API cubre búsqueda, playlists, settings y auth. Faltan controles de
+reproducción (play/pause/resume/next/previous/volume/transfer device y
+"reproducir playlist/uri"). Forma sugerida:
+
+- `POST /api/v1/spotify/play` body `{ "uri" | "context_uri", "device_id"? }`
+- `POST /api/v1/spotify/pause`
+- `POST /api/v1/spotify/next`, `POST /api/v1/spotify/previous`
+- `PUT /api/v1/spotify/volume` body `{ "volume_percent" }`
+- `POST /api/v1/spotify/transfer` body `{ "device_id" }`
+
+La UI ya tiene el tap de playlist (home desktop) y el card de música (wall);
+hoy no pueden reproducir.
+
+## 5. Voz: STT puro para dictado
+
+El dictado de nombres de dispositivos/áreas usa `POST /voice/audio-turn`,
+que **ejecuta el turno completo**: lo dictado puede disparar acciones.
+Falta un endpoint de transcripción sin ejecución, p. ej.
+`POST /api/v1/voice/transcribe` → `{ "text": str, "confidence"?: float }`.
+
+## 6. Rutinas: `enabled` y ejecución manual
+
+- El toggle de la app envía `enabled` dentro de `PUT /routines/{id}`, pero
+  `RoutineWriteRequest` / `RoutineDefinition` no tienen ese campo y el
+  backend lo descarta → el switch revierte al recargar. Evidencia:
+  `src/api/routes.py:266-300` (create/update/delete de rutinas).
+- Falta ejecución manual: `POST /api/v1/routines/{routine_id}/execute`
+  (o equivalente). Hoy no hay forma de correr una rutina desde la UI.
+- Opcional: `last_run` en la definición para futuras vistas.
+
+## 7. Bindings: catálogo de entidades
+
+La UI ya pide el `entity_id` como texto libre y ahora llama al
+`POST /bindings` real. Falta `GET /api/v1/entities` (o similar) para
+ofrecer un catálogo seleccionable en vez de texto libre.
+
+## 8. Ciclo de vida canónico de dispositivos
+
+- El alta manual es solo local (`dev_manual_*`) y no existe `POST /devices`;
+  el intake es discovery.
+- No existe `DELETE /devices/{id}`; la UI solo quita de la vista local.
+- Si el producto requiere gestión completa: definir rutas (o documentar que
+  `PUT /enabled` es el mecanismo de baja).
+
+## 9. Clima (opcional)
+
+La app usa Open-Meteo externo con coordenadas hardcodeadas (Culiacán). Si se
+quiere server-side: endpoint de clima por ubicación configurable.
+
+## 10. Menores / notas
+
+- Con `writes_enabled=false` (modo demo), el resultado tipado esperado es
+  `EXECUTION_DISABLED`; la UI lo reporta honestamente una vez aplicado el
+  fix del punto 1.
+- `POST /devices/{provider_id}/scan` existe; la app usa discovery global.
+- `GET /api/v1/shadow/*` es diagnóstico; sin UI.
+- Legacy `GET /api/v1/status`, `GET /api/v1/catalog` y
+  `PUT /devices/{location}/{device_id}/power`: la app canónica ya no los usa
+  (solo la página legacy fuera de navegación). Candidatos a retiro.
+
+---
+
+## Lo que quedó conectado del lado app (contexto)
+
+- **Power canónico** (`set_power`) en wall/mobile/desktop, con estados
+  honestos ("Sin datos"), outcomes tipados y manejo de `null`.
+- **`observed_state`** parseado y listo para mostrar on/off confirmado.
+- **Dashboards**: sin fallback a mock, cámaras por `/cameras/status`,
+  playlists con metadata real, tarjeta de estado sin inventar.
+- **Turns** con `session_id` desde chips mobile, acciones desktop y wall.
+- **Rutinas relacionadas** reales (GET /routines filtrado), **TTS preview**,
+  **card de Sistema** (health), **bindings reales**, **identify honesto**,
+  **rename sin falso éxito** y **SSE de voz con Last-Event-ID**.
+
+## Estado de verificación del cliente
+
+- `flutter analyze`: 0 errores (9 infos preexistentes del baseline).
+- `flutter test`: 463 pasan / 118 fallan — los 118 son fallos
+  **preexistentes** del rediseño (expectativas de tests viejas), sin
+  regresiones nuevas; 5 de ellos quedaron arreglados durante este trabajo.
+
+## Checklist de verificación (para el core)
+
+- [ ] `POST .../actions` con `set_power` devuelve el DTO tipado
+      (`outcome`, `observed_state`).
+- [ ] `EXECUTION_DISABLED` se devuelve tipado con `writes_enabled=false`.
+- [ ] `observed_state` poblado tras una ejecución confirmada.
+- [ ] Las acciones nuevas rechazan valores inválidos sin coerción (mismos
+      `error_code`).
+- [ ] `PUT /routines/{id}` persiste `enabled` (o endpoint dedicado).
+- [ ] Existe ejecución manual de rutinas.

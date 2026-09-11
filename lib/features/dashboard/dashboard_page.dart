@@ -36,6 +36,7 @@ class _DashboardPageState extends State<DashboardPage> {
   String? _error;
   bool _listening = false;
   bool _busy = false;
+  bool _suggestionBusy = false;
   MicStream? _mic;
   // Stop del VAD en vuelo: se lanza sin bloquear el envío en _onSpeechEnd y
   // se espera aquí antes de arrancar una nueva escucha.
@@ -119,10 +120,30 @@ class _DashboardPageState extends State<DashboardPage> {
     return '$weekday ${now.day} de $month';
   }
 
-  void _onSuggestionTap(String suggestion) {
+  Future<void> _onSuggestionTap(String suggestion) async {
+    if (_suggestionBusy || _busy) return;
     setState(() {
+      _suggestionBusy = true;
       _thought = '«$suggestion»';
+      _error = null;
     });
+    try {
+      final sessionId = await _sessionId;
+      final result = await widget.api.turn(suggestion, sessionId: sessionId);
+      if (!mounted) return;
+      final speech = result['speech']?.toString();
+      setState(() {
+        _suggestionBusy = false;
+        if (speech != null && speech.isNotEmpty) _thought = speech;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _suggestionBusy = false;
+        _state = LoopState.error;
+        _error = 'Error: $e';
+      });
+    }
   }
 
   Future<void> _loadTheme() async {

@@ -35,6 +35,7 @@ class WallVoiceController extends ChangeNotifier {
   String? _error;
   bool _listening = false;
   bool _busy = false;
+  int _completedTurns = 0;
   MicStream? _mic;
   Future<void>? _vadStopInFlight;
   Future<String>? _sessionId;
@@ -45,6 +46,11 @@ class WallVoiceController extends ChangeNotifier {
   String? get error => _error;
   bool get listening => _listening;
   bool get busy => _busy;
+
+  /// Monotonic count of turns the assistant fully answered (speech parsed,
+  /// no transport failure). Surfaces watch it to refresh canonical state
+  /// after a spoken action without polling.
+  int get completedTurns => _completedTurns;
 
   /// Pre-warms the VAD model and session id without starting capture.
   void warmUp() {
@@ -148,6 +154,7 @@ class WallVoiceController extends ChangeNotifier {
       _state = LoopState.idle;
       _thought = transcript.isNotEmpty ? '«$transcript»' : '';
       if (speech != null && speech.isNotEmpty) _thought = speech;
+      _completedTurns++;
       notifyListeners();
       if (audioB64 != null && audioB64.isNotEmpty) {
         await _playResponse(audioB64);

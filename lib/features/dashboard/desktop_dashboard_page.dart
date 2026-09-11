@@ -28,6 +28,7 @@ import '../voice/vad_model.dart';
 import '../voice/voice_session.dart';
 import '../wall_home/wall_home_projection.dart';
 import '../wall_home/wall_quick_actions_usage.dart';
+import 'home_derivations.dart';
 import 'home_theme.dart';
 import 'home_theme_controller.dart';
 
@@ -49,7 +50,11 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   Object? _error;
   Object? _refreshError;
   bool _loading = true;
-  int _onlineCameras = 0;
+
+  /// Cameras explicitly reported online by `GET /api/v1/cameras/status`, or
+  /// null when that call failed: unknown is never rendered as a count/dot.
+  CameraStatusJoin? _cameraStatuses;
+  int? _onlineCameras;
 
   /// Home sections render from the same single source loaded in [_loadData]:
   /// the canonical snapshot plus the already-fetched camera/routine/spotify
@@ -326,7 +331,8 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
       _voiceError = null;
     });
     try {
-      final result = await widget.api.turn(text);
+      final sessionId = await _sessionId;
+      final result = await widget.api.turn(text, sessionId: sessionId);
       if (!mounted) return;
       final speech = result['speech'] as String?;
       final deviceResults = result['device_results'] as List?;
@@ -363,7 +369,8 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     try {
       // Best-effort cross-surface usage count; never gates the action.
       unawaited(WallQuickActionsUsage.recordUse(key));
-      final result = await widget.api.turn(command);
+      final sessionId = await _sessionId;
+      final result = await widget.api.turn(command, sessionId: sessionId);
       if (!mounted) return;
       final speech = result['speech']?.toString() ?? 'Listo.';
       ScaffoldMessenger.of(
@@ -468,50 +475,35 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   }
 
   Future<void> _loadData() async {
-    final hadSnapshot = _snapshot != null;
     setState(() {
       _loading = true;
-      if (!hadSnapshot) _error = null;
+      _error = null;
       _refreshError = null;
-      if (!hadSnapshot && _snapshot == null) {
-        _snapshot = const DeviceInventorySnapshot(
-          areas: [],
-          devices: [],
-          gateways: [],
-          lastDiscoveryLabel: '',
-        );
-      }
     });
     try {
       final repository = HttpDeviceInventoryRepository(widget.api);
-      DeviceInventorySnapshot snapshot;
-      try {
-        snapshot = await repository.load().timeout(
-          const Duration(milliseconds: 1200),
-        );
-      } catch (e) {
-        debugPrint('DesktopDashboard _loadData snapshot error: $e');
-        try {
-          snapshot = await MockDeviceInventoryRepository.shared.load().timeout(
-            const Duration(milliseconds: 800),
-          );
-        } catch (_) {
-          snapshot =
-              _snapshot ??
-              const DeviceInventorySnapshot(
-                areas: [],
-                devices: [],
-                gateways: [],
-                lastDiscoveryLabel: '',
-              );
-        }
-      }
+      final snapshot = await repository.load().timeout(
+        const Duration(milliseconds: 1200),
+      );
       final camFuture = widget.api
           .cameraModule()
           .timeout(const Duration(milliseconds: 900))
           .then<({List<Map<String, dynamic>> cameras, bool enabled})>(
             (v) => v,
             onError: (_) => (cameras: <Map<String, dynamic>>[], enabled: false),
+          );
+      final cameraStatusFuture = widget.api
+          .cameraStatus()
+          .timeout(const Duration(milliseconds: 900))
+          .then<({List<Map<String, dynamic>> statuses, bool ok})>(
+            (data) => (
+              statuses:
+                  (data['statuses'] as List?)?.cast<Map<String, dynamic>>() ??
+                  const <Map<String, dynamic>>[],
+              ok: true,
+            ),
+            onError: (_) =>
+                (statuses: const <Map<String, dynamic>>[], ok: false),
           );
       final routinesFuture = widget.api
           .routines()
@@ -528,6 +520,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
 
       final results = await Future.wait([
         camFuture,
+        cameraStatusFuture,
         routinesFuture,
         spotifySettingsFuture,
         spotifyPlaylistsFuture,
@@ -535,21 +528,28 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
 
       final camResult =
           results[0] as ({List<Map<String, dynamic>> cameras, bool enabled});
-      final routines = results[1] as List<Map<String, dynamic>>;
-      final spotifySettings = results[2] as Map<String, dynamic>;
-      final playlistsData = results[3] as Map<String, dynamic>;
+      final cameraStatusResult =
+          results[1] as ({List<Map<String, dynamic>> statuses, bool ok});
+      final routines = results[2] as List<Map<String, dynamic>>;
+      final spotifySettings = results[3] as Map<String, dynamic>;
+      final playlistsData = results[4] as Map<String, dynamic>;
 
       final cameras = camResult.cameras;
-      final onlineCameras = cameras.where((c) {
-        if (c.containsKey('enabled')) return c['enabled'] != false;
-        return true;
-      }).length;
+      // Only an explicit `online` from /cameras/status counts or lights a
+      // dot; a failed status call keeps the count unknown ('—/neutral').
+      final cameraStatuses = cameraStatusResult.ok
+          ? joinCameraStatuses(cameraStatusResult.statuses)
+          : null;
+      final onlineCameras = cameraStatuses == null
+          ? null
+          : countOnlineCameras(cameras, cameraStatuses);
 
       if (!mounted) return;
       setState(() {
         _snapshot = snapshot;
         _cameras = cameras;
         _routines = routines;
+        _cameraStatuses = cameraStatuses;
         _onlineCameras = onlineCameras;
         _spotifyConnected =
             spotifySettings['authenticated'] == true &&
@@ -914,12 +914,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   }
 
   Widget _buildHomeStatusCard(DeviceInventorySnapshot snapshot) {
-    final activeDevices = snapshot.userDevices
-        .where((d) => d.health == DeviceHealthState.online)
-        .length;
-    final hasIssues =
-        _refreshError != null ||
-        snapshot.userDevices.any((d) => d.health != DeviceHealthState.online);
+    final status = deriveHomeStatus(snapshot);
     return _HomeCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -953,18 +948,19 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
             ],
           ),
           const SizedBox(height: 10),
-          _StatusPill(ok: !hasIssues),
+          _StatusPill(tone: status.tone),
           const SizedBox(height: 6),
           _StatusRow(
             icon: Icons.lightbulb_outline,
             label: 'Dispositivos activos',
-            value: '$activeDevices',
+            value: status.valueLabel,
+            subtitle: status.subtitle,
           ),
           const Divider(height: 20, color: AppColors.border),
           _StatusRow(
             icon: Icons.videocam_outlined,
             label: 'Cámaras conectadas',
-            value: '$_onlineCameras',
+            value: _onlineCameras?.toString() ?? '—',
           ),
           const Divider(height: 20, color: AppColors.border),
           _StatusRow(
@@ -1014,6 +1010,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
                   key: ValueKey('desktop-area-${area.areaId}'),
                   name: area.name,
                   count: area.controlCount,
+                  hasOn: areaHasPowerOn(snapshot, area.areaId),
                   index: i,
                   onTap: () => _onAreaTap(area),
                 );
@@ -1141,6 +1138,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   /// Estado del hogar): a horizontal strip of thumbnails, one per
   /// configured camera.
   Widget _buildCamerasSection() {
+    final online = _onlineCameras;
     return _HomeCard(
       padding: const EdgeInsets.all(12),
       child: Column(
@@ -1149,7 +1147,12 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
           _CardHeader(
             icon: Icons.videocam_outlined,
             title: 'Cámaras en vivo',
-            pill: _cameras.isEmpty ? null : '$_onlineCameras en línea',
+            pill: _cameras.isEmpty
+                ? null
+                : online == null
+                ? '— en línea'
+                : '$online en línea',
+            pillOk: online != null && online > 0,
             actionLabel: _cameras.isEmpty ? null : 'Ver todas',
             onAction: _cameras.isEmpty ? null : _openAllCameras,
           ),
@@ -1173,6 +1176,9 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
                       ),
                       camera: _cameras[i],
                       api: widget.api,
+                      online: _cameraStatuses?.onlineFor(
+                        _cameras[i]['camera_id']?.toString(),
+                      ),
                       onTap: () => _openCameraLive(_cameras[i]),
                     ),
                   ],
@@ -1505,6 +1511,7 @@ class _CardHeader extends StatelessWidget {
     required this.icon,
     required this.title,
     this.pill,
+    this.pillOk = true,
     this.actionLabel,
     this.onAction,
   });
@@ -1512,6 +1519,9 @@ class _CardHeader extends StatelessWidget {
   final IconData icon;
   final String title;
   final String? pill;
+
+  /// Pill tone; false renders the neutral (unknown) variant.
+  final bool pillOk;
   final String? actionLabel;
   final VoidCallback? onAction;
 
@@ -1536,7 +1546,7 @@ class _CardHeader extends StatelessWidget {
               ),
               if (pill != null) ...[
                 const SizedBox(width: 8),
-                _Pill(text: pill!, ok: true),
+                _Pill(text: pill!, ok: pillOk),
               ],
             ],
           ),
@@ -1590,26 +1600,41 @@ class _Pill extends StatelessWidget {
 }
 
 class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.ok});
+  const _StatusPill({required this.tone});
 
-  final bool ok;
+  final HomeStatusTone tone;
 
   @override
   Widget build(BuildContext context) {
+    final (label, color, background) = switch (tone) {
+      HomeStatusTone.ok => (
+        'Todo funcionando',
+        AppColors.green,
+        AppColors.statusEncendido.withValues(alpha: 0.12),
+      ),
+      HomeStatusTone.check => (
+        'Revisar',
+        AppColors.amber,
+        AppColors.amber.withValues(alpha: 0.15),
+      ),
+      HomeStatusTone.neutral => (
+        'Sin validar',
+        AppColors.textDim,
+        AppColors.textFaint.withValues(alpha: 0.15),
+      ),
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: ok
-            ? AppColors.statusEncendido.withValues(alpha: 0.12)
-            : AppColors.amber.withValues(alpha: 0.15),
+        color: background,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
-        ok ? 'Todo funcionando' : 'Revisar',
+        label,
         style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.w600,
-          color: ok ? AppColors.green : AppColors.amber,
+          color: color,
         ),
       ),
     );
@@ -1621,11 +1646,13 @@ class _StatusRow extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.value,
+    this.subtitle,
   });
 
   final IconData icon;
   final String label;
   final String value;
+  final String? subtitle;
 
   @override
   Widget build(BuildContext context) {
@@ -1634,9 +1661,23 @@ class _StatusRow extends StatelessWidget {
         Icon(icon, size: 18, color: AppColors.textDim),
         const SizedBox(width: 10),
         Expanded(
-          child: Text(
-            label,
-            style: const TextStyle(fontSize: 13, color: AppColors.textDim),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(fontSize: 13, color: AppColors.textDim),
+              ),
+              if (subtitle != null)
+                Text(
+                  subtitle!,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textFaint,
+                  ),
+                ),
+            ],
           ),
         ),
         Text(
@@ -1703,12 +1744,16 @@ class _AreaPhotoTile extends StatelessWidget {
     super.key,
     required this.name,
     required this.count,
+    required this.hasOn,
     required this.index,
     required this.onTap,
   });
 
   final String name;
   final int count;
+
+  /// True when a device linked to this area has a confirmed "on" state.
+  final bool hasOn;
   final int index;
   final VoidCallback onTap;
 
@@ -1779,9 +1824,11 @@ class _AreaPhotoTile extends StatelessWidget {
                   Container(
                     width: 7,
                     height: 7,
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: AppColors.statusEncendido,
+                      color: hasOn
+                          ? AppColors.statusEncendido
+                          : AppColors.statusDesconectado,
                     ),
                   ),
                   const SizedBox(width: 6),
@@ -1926,17 +1973,21 @@ class _CameraThumb extends StatelessWidget {
     required this.camera,
     required this.api,
     required this.onTap,
+    this.online,
   });
 
   final Map<String, dynamic> camera;
   final ApiClient api;
   final VoidCallback onTap;
 
+  /// Explicit `/cameras/status` online flag. Null = the backend did not
+  /// report this camera, so the dot stays neutral (never fabricated green).
+  final bool? online;
+
   @override
   Widget build(BuildContext context) {
     final cameraId = camera['camera_id']?.toString();
     final name = camera['name']?.toString() ?? 'Cámara';
-    final online = camera['enabled'] != false;
     return InkWell(
       borderRadius: BorderRadius.circular(14),
       onTap: onTap,
@@ -1994,7 +2045,11 @@ class _CameraThumb extends StatelessWidget {
                 height: 10,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: online ? AppColors.statusEncendido : AppColors.red,
+                  color: online == true
+                      ? AppColors.statusEncendido
+                      : online == false
+                      ? AppColors.red
+                      : AppColors.statusDesconectado,
                 ),
               ),
             ),
@@ -2104,12 +2159,29 @@ class _PlaylistRow extends StatelessWidget {
         playlist['name']?.toString() ??
         playlist['title']?.toString() ??
         'Playlist';
-    final trackCount = playlist['track_count']?.toString();
-    final tracks = playlist['tracks'];
-    final countLabel =
-        trackCount ??
-        (tracks is List ? '${tracks.length} canciones' : null) ??
-        'Playlist · Spotify';
+    // `/api/v1/spotify/playlists` returns SpotifySearchItem entries: the
+    // only honest metadata is `subtitle` plus `image_url`. The old
+    // track_count/tracks reads never existed in that contract.
+    final rawSubtitle = playlist['subtitle']?.toString();
+    final subtitle = (rawSubtitle != null && rawSubtitle.isNotEmpty)
+        ? rawSubtitle
+        : 'Playlist · Spotify';
+    final imageUrl = playlist['image_url']?.toString();
+    final hasImage = imageUrl != null && imageUrl.isNotEmpty;
+    Widget artworkFallback() => Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF7C6FF0), Color(0xFF4F46E5)],
+        ),
+      ),
+      child: const Icon(
+        Icons.music_note_rounded,
+        size: 20,
+        color: Colors.white,
+      ),
+    );
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: onTap,
@@ -2122,21 +2194,19 @@ class _PlaylistRow extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0xFF7C6FF0), Color(0xFF4F46E5)],
-                ),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
-                Icons.music_note_rounded,
-                size: 20,
-                color: Colors.white,
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: SizedBox(
+                width: 40,
+                height: 40,
+                child: hasImage
+                    ? Image.network(
+                        imageUrl,
+                        fit: BoxFit.cover,
+                        gaplessPlayback: true,
+                        errorBuilder: (context, _, _) => artworkFallback(),
+                      )
+                    : artworkFallback(),
               ),
             ),
             const SizedBox(width: 10),
@@ -2157,7 +2227,7 @@ class _PlaylistRow extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    countLabel,
+                    subtitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(

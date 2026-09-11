@@ -35,11 +35,23 @@ class ApiClient {
     return _decode(resp);
   }
 
-  Future<Map<String, dynamic>> turn(String text) async {
+  /// POSTs a chat turn. Optional `session_id`/`client_id` isolate voice and
+  /// surface clients; null fields are omitted from the JSON body.
+  Future<Map<String, dynamic>> turn(
+    String text, {
+    String? sessionId,
+    String? clientId,
+    String? speakerName,
+  }) async {
     final resp = await _client.post(
       Uri.parse('$baseUrl/api/v1/turns'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'text': text}),
+      body: jsonEncode({
+        'text': text,
+        'session_id': ?sessionId,
+        'client_id': ?clientId,
+        'speaker_name': ?speakerName,
+      }),
     );
     return _decode(resp);
   }
@@ -141,6 +153,97 @@ class ApiClient {
     return _decode(resp);
   }
 
+  /// POSTs one canonical endpoint action (e.g. `set_power`).
+  ///
+  /// The live backend currently answers HTTP 200 with a literal `null` body
+  /// (known gap); a typed result DTO is returned once the backend fix lands.
+  /// Both shapes are tolerated. Errors surface as [ApiException] with the
+  /// decoded JSON body (422 `detail`; 404 `error_code`/`detail`).
+  Future<Map<String, dynamic>?> endpointAction(
+    String deviceId,
+    String endpointId, {
+    required String action,
+    required Object? value,
+    String? requestId,
+  }) async {
+    final resp = await _client.post(
+      Uri.parse(
+        '$baseUrl/api/v1/devices/${Uri.encodeComponent(deviceId)}'
+        '/endpoints/${Uri.encodeComponent(endpointId)}/actions',
+      ),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'action': action,
+        'value': value,
+        'request_id': ?requestId,
+      }),
+    );
+    final decoded = _decodeBodyOrNull(resp);
+    if (resp.statusCode >= 400) {
+      throw ApiException(resp.statusCode, decoded ?? resp.body);
+    }
+    if (decoded == null) return null;
+    return (decoded as Map).cast<String, dynamic>();
+  }
+
+  /// Asks the provider to flash/beep a device for physical identification.
+  Future<Map<String, dynamic>> identifyDevice(String deviceId) async {
+    final resp = await _client.post(
+      Uri.parse(
+        '$baseUrl/api/v1/devices/${Uri.encodeComponent(deviceId)}/identify',
+      ),
+    );
+    return _decode(resp);
+  }
+
+  /// Provider-neutral refresh/enrich; returns the normalized DeviceDTO.
+  Future<Map<String, dynamic>> refreshDevice(String deviceId) async {
+    final resp = await _client.post(
+      Uri.parse(
+        '$baseUrl/api/v1/devices/${Uri.encodeComponent(deviceId)}/refresh',
+      ),
+    );
+    return _decode(resp);
+  }
+
+  /// Binds a logical entity to an endpoint (returns the DeviceDTO).
+  /// `controlled_area_id` is omitted when null.
+  Future<Map<String, dynamic>> bindEntity(
+    String deviceId, {
+    required String endpointId,
+    required String entityId,
+    required String capability,
+    String? controlledAreaId,
+  }) async {
+    final resp = await _client.post(
+      Uri.parse(
+        '$baseUrl/api/v1/devices/${Uri.encodeComponent(deviceId)}/bindings',
+      ),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'endpoint_id': endpointId,
+        'entity_id': entityId,
+        'capability': capability,
+        'controlled_area_id': ?controlledAreaId,
+      }),
+    );
+    return _decode(resp);
+  }
+
+  /// Removes a binding (returns the DeviceDTO).
+  Future<Map<String, dynamic>> unbindEntity(
+    String deviceId,
+    String bindingId,
+  ) async {
+    final resp = await _client.delete(
+      Uri.parse(
+        '$baseUrl/api/v1/devices/${Uri.encodeComponent(deviceId)}'
+        '/bindings/${Uri.encodeComponent(bindingId)}',
+      ),
+    );
+    return _decode(resp);
+  }
+
   /// F2-D closure: set (role key) or clear (null) the endpoint semantic
   /// role (user override). Metadata only.
   Future<Map<String, dynamic>> updateEndpointSemanticRole(
@@ -211,6 +314,17 @@ class ApiClient {
     }
   }
 
+  /// Nullable variant of [_decodeBody]: `jsonDecode` can legitimately return
+  /// null for a literal `null` body, and endpoint actions need to tell that
+  /// apart from a malformed body.
+  Object? _decodeBodyOrNull(http.Response resp) {
+    try {
+      return jsonDecode(utf8.decode(resp.bodyBytes));
+    } catch (_) {
+      return resp.body;
+    }
+  }
+
   Future<List<Map<String, dynamic>>> cameras() async {
     final data = await _get('/api/v1/cameras');
     return (data['cameras'] as List).cast<Map<String, dynamic>>();
@@ -240,11 +354,16 @@ class ApiClient {
   Future<Map<String, dynamic>> cameraStream(
     String cameraId, {
     String profile = 'sub',
-  }) => _get('/api/v1/cameras/$cameraId/stream?profile=$profile');
+  }) => _get(
+    '/api/v1/cameras/${Uri.encodeComponent(cameraId)}/stream?profile=$profile',
+  );
 
   Future<String> webrtcAnswer(String cameraId, String offerSdp) async {
     final resp = await _client.post(
-      Uri.parse('$baseUrl/api/v1/cameras/$cameraId/webrtc?profile=sub'),
+      Uri.parse(
+        '$baseUrl/api/v1/cameras/'
+        '${Uri.encodeComponent(cameraId)}/webrtc?profile=sub',
+      ),
       headers: {'Content-Type': 'application/sdp'},
       body: offerSdp,
     );
@@ -304,6 +423,21 @@ class ApiClient {
   Future<Map<String, dynamic>> voiceStatus() => _get('/api/v1/voice/status');
 
   Future<Map<String, dynamic>> ttsSettings() => _get('/api/v1/tts/settings');
+
+  /// Synthesizes a voice preview; returns the raw WAV bytes. Backend errors
+  /// (400 missing voice, 502 synthesis failure) throw [ApiException] with the
+  /// decoded JSON body when possible.
+  Future<Uint8List> ttsPreview(String voice, String text) async {
+    final resp = await _client.post(
+      Uri.parse('$baseUrl/api/v1/tts/preview'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'voice': voice, 'text': text}),
+    );
+    if (resp.statusCode >= 400) {
+      throw ApiException(resp.statusCode, _decodeBody(resp));
+    }
+    return resp.bodyBytes;
+  }
 
   Future<Map<String, dynamic>> ttsVoices() => _get('/api/v1/tts/voices');
 
@@ -371,13 +505,15 @@ class ApiClient {
     return _decode(resp);
   }
 
-  /// Flujo SSE de voz de una sesión: reenvía Last-Event-ID y termina con
+  /// Flujo SSE de voz de una sesión: reenvía Last-Event-ID al reconectar
+  /// (desde las líneas `id:` y/o `payload.data.sequence`) y termina con
   /// `voice_finished` o si la sesión ya no existe (HTTP != 200).
   /// `isCancelled()` evita reconexiones tras un stop o dispose.
   Stream<Map<String, dynamic>> voiceEvents(
     String sessionId, {
     required bool Function() isCancelled,
   }) async* {
+    String? lastEventId;
     while (!isCancelled()) {
       final req = http.Request(
         'GET',
@@ -385,6 +521,7 @@ class ApiClient {
           '$baseUrl/api/v1/voice/events/${Uri.encodeComponent(sessionId)}',
         ),
       );
+      if (lastEventId != null) req.headers['Last-Event-ID'] = lastEventId;
       final resp = await _client.send(req);
       if (resp.statusCode != 200) return;
 
@@ -397,6 +534,13 @@ class ApiClient {
         if (line.isEmpty) {
           if (eventName != null) {
             final payload = jsonDecode(data.toString());
+            // The backend emits both `id:` and `data.sequence`; the payload
+            // value is the fallback when the id line is missing.
+            if (payload is Map) {
+              final inner = payload['data'];
+              final sequence = inner is Map ? inner['sequence'] : null;
+              if (sequence != null) lastEventId = sequence.toString();
+            }
             yield {'event': eventName, 'data': payload};
             if (eventName == 'voice_finished') return;
           }
@@ -409,6 +553,8 @@ class ApiClient {
           eventName = line.substring('event:'.length).trim();
         } else if (line.startsWith('data:')) {
           data.writeln(line.substring('data:'.length).trim());
+        } else if (line.startsWith('id:')) {
+          lastEventId = line.substring('id:'.length).trim();
         }
       }
       await Future<void>.delayed(const Duration(seconds: 2));

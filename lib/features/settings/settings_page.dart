@@ -12,16 +12,23 @@ import '../../data/api_client.dart';
 import '../../ui/app_colors.dart';
 import '../modules/modules_section.dart';
 import '../../ui/shared_widgets.dart';
+import 'tts_preview_player.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({
     super.key,
     required this.api,
     this.surfaceModeController,
+    this.ttsPreviewPlayer,
   });
 
   final ApiClient api;
   final AdaptiveSurfaceModeController? surfaceModeController;
+
+  /// Injectable WAV player for the voice preview. Tests pass a fake so the
+  /// fetch/synthesis path is exercised without native media playback; when
+  /// null the page owns a [MediaKitTtsPreviewPlayer] and disposes it.
+  final TtsPreviewPlayer? ttsPreviewPlayer;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -36,8 +43,14 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _selectedLang;
   String? _selectedVoice;
   bool _savingVoice = false;
+  bool _previewingVoice = false;
   String _voiceStatus = '';
   bool _voiceStatusOk = true;
+
+  // Sistema
+  Map<String, dynamic>? _systemHealth;
+  String? _systemError;
+  bool _systemLoading = true;
 
   // Spotify
   Map<String, dynamic>? _spotifySettings;
@@ -49,6 +62,10 @@ class _SettingsPageState extends State<SettingsPage> {
   late AdaptiveSurfaceModeController _surfaceModeController;
   bool _ownsSurfaceModeController = false;
   bool _surfaceModeControllerResolved = false;
+
+  late final TtsPreviewPlayer _ttsPlayer =
+      widget.ttsPreviewPlayer ?? MediaKitTtsPreviewPlayer();
+  bool get _ownsTtsPlayer => widget.ttsPreviewPlayer == null;
 
   @override
   void initState() {
@@ -77,6 +94,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void dispose() {
     _oauthPoll?.cancel();
     if (_ownsSurfaceModeController) _surfaceModeController.dispose();
+    if (_ownsTtsPlayer) _ttsPlayer.dispose();
     super.dispose();
   }
 
@@ -85,8 +103,12 @@ class _SettingsPageState extends State<SettingsPage> {
       setState(() {
         _loading = true;
         _error = null;
+        _systemLoading = true;
+        _systemError = null;
       });
     }
+    // Runs independently: a health failure must never blank the whole page.
+    final system = _loadSystem();
     try {
       final results = await Future.wait([
         widget.api.ttsSettings(),
@@ -119,6 +141,35 @@ class _SettingsPageState extends State<SettingsPage> {
         _loading = false;
       });
     }
+    await system;
+  }
+
+  /// Reads `/api/v1/health` for the compact Sistema card. Never throws: the
+  /// card owns its error state and the rest of the page stays untouched.
+  Future<void> _loadSystem() async {
+    try {
+      final health = await widget.api.health();
+      if (!mounted) return;
+      setState(() {
+        _systemHealth = health;
+        _systemError = null;
+        _systemLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _systemError = e.toString();
+        _systemLoading = false;
+      });
+    }
+  }
+
+  void _retrySystem() {
+    setState(() {
+      _systemLoading = true;
+      _systemError = null;
+    });
+    _loadSystem();
   }
 
   // --- Voz del asistente ---------------------------------------------------
@@ -191,6 +242,52 @@ class _SettingsPageState extends State<SettingsPage> {
         _savingVoice = false;
       });
     }
+  }
+
+  /// Synthesizes and plays the fixed preview line with the selected voice.
+  /// Synthesis errors (400 missing voice / 502 synth failure) surface the
+  /// backend `detail`; playback failures surface their own message.
+  Future<void> _previewVoice() async {
+    if (_previewingVoice) return;
+    final voice = _selectedVoice;
+    if (voice == null || voice.isEmpty) {
+      setState(() {
+        _voiceStatus = 'Elegí una voz para probar.';
+        _voiceStatusOk = false;
+      });
+      return;
+    }
+    setState(() {
+      _previewingVoice = true;
+      _voiceStatus = '';
+    });
+    try {
+      final bytes = await widget.api.ttsPreview(
+        voice,
+        'Hola, soy GAMMA. Así suena mi voz.',
+      );
+      if (!mounted) return;
+      await _ttsPlayer.play(bytes);
+      if (!mounted) return;
+      setState(() => _previewingVoice = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _voiceStatus = 'Error: ${_errorDetail(e)}';
+        _voiceStatusOk = false;
+        _previewingVoice = false;
+      });
+    }
+  }
+
+  String _errorDetail(Object error) {
+    if (error is ApiException) {
+      final body = error.body;
+      final detail = body is Map ? body['detail'] : null;
+      if (detail != null) return detail.toString();
+      return 'Error del servidor (${error.statusCode}).';
+    }
+    return error.toString();
   }
 
   // --- Spotify -------------------------------------------------------------
@@ -387,6 +484,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   _surfaceModeCard(),
                   const SizedBox(height: 14),
                   _modulesCard(),
+                  const SizedBox(height: 14),
+                  _systemCard(),
                 ],
               ),
             ),
@@ -507,16 +606,26 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerRight,
-            child: ToolButton(
-              icon: CupertinoIcons.checkmark,
-              label: _savingVoice ? 'Guardando…' : 'Guardar',
-              filled: true,
-              onTap: () {
-                if (!_savingVoice) _saveVoice();
-              },
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              ToolButton(
+                icon: CupertinoIcons.play_circle,
+                label: _previewingVoice ? 'Probando…' : 'Probar voz',
+                onTap: () {
+                  if (!_previewingVoice) _previewVoice();
+                },
+              ),
+              const SizedBox(width: 10),
+              ToolButton(
+                icon: CupertinoIcons.checkmark,
+                label: _savingVoice ? 'Guardando…' : 'Guardar',
+                filled: true,
+                onTap: () {
+                  if (!_savingVoice) _saveVoice();
+                },
+              ),
+            ],
           ),
           const SizedBox(height: 4),
           if (_voiceStatus.isNotEmpty)
@@ -657,6 +766,120 @@ class _SettingsPageState extends State<SettingsPage> {
       title: 'Módulos',
       child: ModulesSection(api: widget.api),
     );
+  }
+
+  /// Compact runtime status fed by `/api/v1/health`. Independent from the
+  /// page load: a failure here shows an inline retry with no fabricated
+  /// values and never blanks the rest of Settings.
+  Widget _systemCard() {
+    return _settingsCard(
+      icon: CupertinoIcons.info_circle,
+      title: 'Sistema',
+      child: _systemLoading
+          ? const Row(
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'Leyendo estado…',
+                  style: TextStyle(fontSize: 13, color: AppColors.textDim),
+                ),
+              ],
+            )
+          : _systemError != null
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'No se pudo leer el estado del sistema.',
+                  style: TextStyle(fontSize: 13, color: AppColors.red),
+                ),
+                const SizedBox(height: 4),
+                TextButton.icon(
+                  onPressed: _retrySystem,
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('Reintentar'),
+                ),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _systemRow(
+                  'Modo',
+                  _deviceModeLabel(_systemHealth!['device_mode']),
+                ),
+                _systemRow(
+                  'Escritura física',
+                  _writesLabel(_systemHealth!['writes_enabled']),
+                ),
+                if (_systemHealth!['uptime_seconds'] is num)
+                  _systemRow(
+                    'Activo hace',
+                    _uptimeLabel(_systemHealth!['uptime_seconds']),
+                  ),
+                if (_systemHealth!['active_modules'] is List)
+                  _systemRow(
+                    'Módulos activos',
+                    '${(_systemHealth!['active_modules'] as List).length}',
+                  ),
+              ],
+            ),
+    );
+  }
+
+  Widget _systemRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textDim,
+              ),
+            ),
+          ),
+          Expanded(child: Text(value, style: const TextStyle(fontSize: 13))),
+        ],
+      ),
+    );
+  }
+
+  String _deviceModeLabel(Object? raw) {
+    final mode = raw?.toString();
+    return switch (mode) {
+      'simulation' => 'Simulación',
+      'local' => 'Control local',
+      'disabled' => 'Control desactivado',
+      null || '' => 'Desconocido',
+      _ => mode,
+    };
+  }
+
+  String _writesLabel(Object? raw) {
+    if (raw == true) return 'Escritura habilitada';
+    if (raw == false) return 'Escritura deshabilitada';
+    return 'Desconocida';
+  }
+
+  String _uptimeLabel(Object? raw) {
+    if (raw is! num) return 'Desconocido';
+    final total = raw.toInt();
+    if (total < 60) return '$total s';
+    if (total < 3600) return '${total ~/ 60} min';
+    final hours = total ~/ 3600;
+    final minutes = (total % 3600) ~/ 60;
+    return minutes == 0 ? '$hours h' : '$hours h $minutes min';
   }
 
   Widget _spotifyMeta(String text) {

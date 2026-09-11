@@ -10,6 +10,7 @@ import 'package:vad/vad.dart';
 import '../../data/api_client.dart';
 import '../../ui/app_colors.dart';
 import '../voice/mic_source.dart';
+import '../voice/voice_session.dart';
 import '../wall_home/wall_activity_bus.dart';
 
 /// Touch-first name editor for the wall panel: the user never depends on an
@@ -459,7 +460,8 @@ class _WallNameSheetState extends State<_WallNameSheet> {
       _error = null;
     });
     try {
-      final result = await widget.api.audioTurn(wav);
+      final sessionId = await getOrCreateVoiceSessionId();
+      final result = await widget.api.audioTurn(wav, sessionId: sessionId);
       if (!mounted) {
         _setHeld(false);
         return;

@@ -139,6 +139,9 @@ class _WallPanelHomePageState extends State<WallPanelHomePage>
   bool _quickBusy = false;
   String? _quickBusyKey;
 
+  /// Last completed voice turn seen; a change triggers a canonical refresh.
+  int _seenCompletedTurns = 0;
+
   /// Sleep-mode state: set while the inline voice loop is active so talking
   /// never triggers sleep, and while the sleep overlay covers the screen.
   Timer? _idleTimer;
@@ -248,6 +251,9 @@ class _WallPanelHomePageState extends State<WallPanelHomePage>
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(speech)));
+      // The turn may have changed physical state: reload canonical inventory
+      // so device/area cards reflect the action instead of a stale snapshot.
+      await _load();
       final order = await WallQuickActionsUsage.orderedKeys(_quickOrder);
       if (mounted) setState(() => _quickOrder = order);
     } catch (e) {
@@ -281,8 +287,13 @@ class _WallPanelHomePageState extends State<WallPanelHomePage>
   }
 
   /// While the voice loop is active sleep stays off; when it goes idle
-  /// again the countdown restarts from zero.
+  /// again the countdown restarts from zero. A completed assistant turn also
+  /// reloads canonical inventory so spoken actions are reflected.
   void _onVoiceChanged() {
+    if (_voice.completedTurns != _seenCompletedTurns) {
+      _seenCompletedTurns = _voice.completedTurns;
+      unawaited(_load());
+    }
     if (_voiceActive) {
       _idleTimer?.cancel();
     } else if (!_sleeping && mounted) {

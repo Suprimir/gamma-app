@@ -5,6 +5,8 @@ import 'package:gamma_app/data/device_inventory.dart';
 import 'package:gamma_app/features/devices/desktop_device_detail_pane.dart';
 import 'package:gamma_app/ui/app_colors.dart';
 
+import 'fixtures/command_device_fake_repo.dart';
+
 void main() {
   group('DesktopDeviceDetailPane', () {
     testWidgets('shows title Luz techo cocina + edit button', (tester) async {
@@ -294,6 +296,121 @@ void main() {
       expect(find.textContaining('Cambios guardados'), findsNothing);
       expect(controller.hasPendingChanges, isTrue);
     });
+
+    testWidgets(
+      'power command reaches the repository and merges the observation',
+      (tester) async {
+        final repo = CommandDeviceFakeRepo(devices: const [_commandPowerLight]);
+        final controller = AdaptiveFeatureController(repo);
+        await controller.loadDevices();
+        controller.selectDevice('dev_power_01');
+        await pumpDetailWithController(
+          tester,
+          controller: controller,
+          deviceFrom: controller,
+        );
+
+        // No observation: the switch is off but the label carries the truth.
+        expect(find.text('Sin datos'), findsOneWidget);
+        var powerSwitch = tester.widget<Switch>(find.byType(Switch));
+        expect(powerSwitch.value, isFalse);
+
+        await tester.tap(find.byType(Switch));
+        await tester.pump();
+
+        expect(repo.powerCalls, [('dev_power_01', 'light', true)]);
+        expect(find.text('Encendido'), findsOneWidget);
+        powerSwitch = tester.widget<Switch>(find.byType(Switch));
+        expect(powerSwitch.value, isTrue);
+        expect(find.text('Sin datos'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'channel rename failure keeps the old name and shows the error',
+      (tester) async {
+        final repo = _DetailFakeRepo(devices: [_lightOnline])
+          ..renameError = StateError('rechazado por el backend');
+        final controller = AdaptiveFeatureController(repo);
+        await controller.loadDevices();
+        controller.selectDevice('dev_light_01');
+        await pumpDetailWithController(
+          tester,
+          controller: controller,
+          deviceFrom: controller,
+        );
+
+        await tester.tap(find.byTooltip('Cambiar nombre del canal'));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField), 'Nombre nuevo');
+        await tester.tap(find.widgetWithText(FilledButton, 'Guardar'));
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('rechazado por el backend'), findsOneWidget);
+        expect(find.text('Nombre actualizado'), findsNothing);
+        expect(
+          controller.snapshot!.devices
+              .firstWhere((d) => d.id == 'dev_light_01')
+              .endpoints
+              .firstWhere((e) => e.id == 'light')
+              .userName,
+          isNull,
+        );
+      },
+    );
+
+    testWidgets(
+      'device rename failure keeps the old name and shows the error',
+      (tester) async {
+        final repo = _DetailFakeRepo(devices: [_lightOnline])
+          ..renameError = StateError('rechazado por el backend');
+        final controller = AdaptiveFeatureController(repo);
+        await controller.loadDevices();
+        controller.selectDevice('dev_light_01');
+        await pumpDetailWithController(
+          tester,
+          controller: controller,
+          deviceFrom: controller,
+        );
+
+        await tester.tap(find.byTooltip('Cambiar nombre'));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField), 'Nombre nuevo');
+        await tester.tap(find.widgetWithText(FilledButton, 'Guardar'));
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('rechazado por el backend'), findsOneWidget);
+        expect(find.text('Nombre actualizado'), findsNothing);
+        expect(
+          controller.snapshot!.devices
+              .firstWhere((d) => d.id == 'dev_light_01')
+              .userName,
+          isNull,
+        );
+      },
+    );
+
+    testWidgets('test connection reports provider refusal honestly', (
+      tester,
+    ) async {
+      final repo = CommandDeviceFakeRepo(devices: const [_commandPowerLight]);
+      final controller = AdaptiveFeatureController(repo);
+      await controller.loadDevices();
+      controller.selectDevice('dev_power_01');
+      await pumpDetailWithController(
+        tester,
+        controller: controller,
+        deviceFrom: controller,
+      );
+
+      await tester.tap(find.text('Probar conexión'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('El proveedor no soporta identificación'),
+        findsOneWidget,
+      );
+    });
   });
 }
 
@@ -442,6 +559,29 @@ const _lightCanonicalPower = PhysicalDevice(
   ],
 );
 
+const _commandPowerLight = PhysicalDevice(
+  id: 'dev_power_01',
+  name: 'Luz comandable',
+  kind: DeviceKind.light,
+  provider: 'Tuya',
+  providerDeviceId: 'tuya-aa22',
+  model: 'ZB-DL01',
+  manufacturer: 'Moes',
+  gatewayId: 'gw_tuya_01',
+  physicalAreaId: 'sala',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  endpoints: [
+    DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      capabilities: {'POWER'},
+    ),
+  ],
+);
+
 class _DetailFakeRepo implements DeviceInventoryRepository {
   _DetailFakeRepo({
     required List<PhysicalDevice> devices,
@@ -449,6 +589,10 @@ class _DetailFakeRepo implements DeviceInventoryRepository {
   }) : devices = List.of(devices);
   List<PhysicalDevice> devices;
   bool shouldFailAssign;
+
+  /// When set, both rename methods throw it instead of returning a canonical
+  /// device (honest-failure coverage).
+  Object? renameError;
   final assignCalls = <(String, String?)>[];
   final endpointAreaCalls = <(String, String, String?)>[];
   final roleCalls = <(String, String, String?)>[];
@@ -530,6 +674,8 @@ class _DetailFakeRepo implements DeviceInventoryRepository {
 
   @override
   Future<PhysicalDevice> renameDevice(String deviceId, String? userName) async {
+    final error = renameError;
+    if (error != null) throw error;
     final idx = devices.indexWhere((d) => d.id == deviceId);
     final updated = devices[idx].copyWith(userName: userName);
     devices[idx] = updated;
@@ -542,6 +688,8 @@ class _DetailFakeRepo implements DeviceInventoryRepository {
     String endpointId,
     String? userName,
   ) async {
+    final error = renameError;
+    if (error != null) throw error;
     final idx = devices.indexWhere((d) => d.id == deviceId);
     final current = devices[idx];
     final updated = current.copyWith(

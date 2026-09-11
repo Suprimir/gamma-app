@@ -4,7 +4,8 @@ import 'device_inventory.dart';
 /// Repository mapping the DevicePlatform HTTP API into typed domain models.
 /// Raw JSON stops at this boundary: callers only see [DeviceInventorySnapshot]
 /// and [PhysicalDevice].
-class HttpDeviceInventoryRepository implements DeviceInventoryRepository {
+class HttpDeviceInventoryRepository
+    implements DeviceInventoryRepository, DeviceCommandRepository {
   HttpDeviceInventoryRepository(this._api);
 
   final ApiClient _api;
@@ -153,6 +154,97 @@ class HttpDeviceInventoryRepository implements DeviceInventoryRepository {
     String? userName,
   ) async {
     final dto = await _api.renameEndpoint(deviceId, endpointId, userName);
+    return _cacheAndReturn(dto, deviceId);
+  }
+
+  // ---- DeviceCommandRepository: execute/mutate beyond the read surface ----
+
+  @override
+  Future<EndpointPowerResult> setEndpointPower(
+    String deviceId,
+    String endpointId,
+    bool enabled,
+  ) async {
+    final response = await _api.endpointAction(
+      deviceId,
+      endpointId,
+      action: 'set_power',
+      value: enabled,
+    );
+    // The live backend answers 200 with a literal null body until the typed
+    // result DTO ships: the command was accepted but nothing was confirmed.
+    if (response == null) {
+      return const EndpointPowerResult(
+        outcome: 'unconfirmed',
+        responseParsed: false,
+      );
+    }
+    final observedState = response['observed_state'];
+    final observed = observedState is Map
+        ? observedState.cast<String, dynamic>()
+        : const <String, dynamic>{};
+    return EndpointPowerResult(
+      outcome: response['outcome'] is String
+          ? response['outcome'] as String
+          : 'unconfirmed',
+      changed: response['changed'] is bool ? response['changed'] as bool : null,
+      observedPower: observed['power'] is bool
+          ? observed['power'] as bool
+          : null,
+      observedQuality: observed['quality'] is String
+          ? observed['quality'] as String
+          : null,
+      observedAt: observed['observed_at'] is String
+          ? observed['observed_at'] as String
+          : null,
+      errorCode: response['error_code'] is String
+          ? response['error_code'] as String
+          : null,
+      errorDetail: response['error_detail'] is String
+          ? response['error_detail'] as String
+          : null,
+    );
+  }
+
+  @override
+  Future<IdentifyResult> identifyDevice(
+    String deviceId, {
+    String? endpointId,
+  }) async {
+    final dto = await _api.identifyDevice(deviceId);
+    return IdentifyResult(
+      supported: dto['supported'] == true,
+      reason: dto['reason'] is String ? dto['reason'] as String : null,
+    );
+  }
+
+  @override
+  Future<PhysicalDevice> bindEntity(
+    String deviceId, {
+    required String endpointId,
+    required String entityId,
+    required String capability,
+    String? controlledAreaId,
+  }) async {
+    final dto = await _api.bindEntity(
+      deviceId,
+      endpointId: endpointId,
+      entityId: entityId,
+      capability: capability,
+      controlledAreaId: controlledAreaId,
+    );
+    return _cacheAndReturn(dto, deviceId);
+  }
+
+  @override
+  Future<PhysicalDevice> unbindEntity(String deviceId, String bindingId) async {
+    final dto = await _api.unbindEntity(deviceId, bindingId);
+    return _cacheAndReturn(dto, deviceId);
+  }
+
+  @override
+  Future<PhysicalDevice> refreshDevice(String deviceId) async {
+    final dto = await _api.refreshDevice(deviceId);
     return _cacheAndReturn(dto, deviceId);
   }
 
@@ -363,6 +455,14 @@ DeviceEndpoint _parseEndpoint(Object? value) {
         ]
       : const <DeviceBinding>[];
 
+  // Observed state is optional and best-effort: malformed values degrade to
+  // null instead of failing the whole inventory load.
+  final observedState = value['observed_state'];
+  final observed = observedState is Map ? observedState : const {};
+  final observedPower = observed['power'];
+  final observedQuality = observed['quality'];
+  final observedAt = observed['observed_at'];
+
   return DeviceEndpoint(
     id: id,
     name: value['display_name'] is String
@@ -397,5 +497,10 @@ DeviceEndpoint _parseEndpoint(Object? value) {
         ? value['display_name_global'] as String
         : null,
     namingSource: parseNamingSource(value['naming_source']),
+    observedPower: observedPower is bool ? observedPower : null,
+    observedQuality: observedQuality is String && observedQuality.isNotEmpty
+        ? observedQuality
+        : null,
+    observedAt: observedAt is String ? observedAt : null,
   );
 }

@@ -7,6 +7,7 @@ import '../../data/api_client.dart';
 import '../../data/device_inventory.dart';
 import '../../ui/app_colors.dart';
 import '../../ui/device_status.dart';
+import '../routines/related_routines.dart';
 import '../routines/routines_page.dart';
 
 /// Desktop detail pane: header with big kind icon + power switch, section
@@ -152,6 +153,72 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
   OverlayEntry? _toastEntry;
   Timer? _toastTimer;
 
+  /// Related routines from `GET /api/v1/routines`, filtered by canonical
+  /// action `device_id`. Null = pending ('—'); failed = 'Sin datos'. With a
+  /// null [DesktopDeviceDetailPane.api] (test hosts) the legacy '0 rutinas'
+  /// rendering is preserved instead of showing an unknown state.
+  int? _relatedRoutineCount;
+  bool _relatedRoutinesFailed = false;
+  String? _relatedRoutinesDeviceId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRelatedRoutines();
+  }
+
+  @override
+  void didUpdateWidget(covariant DesktopDeviceDetailPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.device.id != widget.device.id ||
+        !identical(oldWidget.api, widget.api)) {
+      _loadRelatedRoutines();
+    }
+  }
+
+  void _loadRelatedRoutines() {
+    final api = widget.api;
+    final deviceId = widget.device.id;
+    if (api == null) {
+      _relatedRoutinesDeviceId = null;
+      _relatedRoutineCount = 0;
+      _relatedRoutinesFailed = false;
+      return;
+    }
+    _relatedRoutinesDeviceId = deviceId;
+    _relatedRoutineCount = null;
+    _relatedRoutinesFailed = false;
+    _fetchRelatedRoutines(api, deviceId);
+  }
+
+  Future<void> _fetchRelatedRoutines(ApiClient api, String deviceId) async {
+    try {
+      final routines = await api.routines().timeout(
+        const Duration(milliseconds: 900),
+      );
+      if (!mounted || _relatedRoutinesDeviceId != deviceId) return;
+      setState(() {
+        _relatedRoutineCount = countRelatedRoutines(routines, deviceId);
+        _relatedRoutinesFailed = false;
+      });
+    } catch (_) {
+      if (!mounted || _relatedRoutinesDeviceId != deviceId) return;
+      setState(() {
+        _relatedRoutineCount = null;
+        _relatedRoutinesFailed = true;
+      });
+    }
+  }
+
+  /// Label for the related-routines card. '—' while unknown, 'Sin datos' when
+  /// the routines fetch failed; a resolved count is always real.
+  String get _relatedRoutinesLabel {
+    if (_relatedRoutinesFailed) return 'Sin datos';
+    final count = _relatedRoutineCount;
+    if (count == null) return '—';
+    return count == 1 ? '1 rutina' : '$count rutinas';
+  }
+
   PhysicalDevice get _canonical {
     final selected = widget.controller.selectedDevice;
     return selected != null && selected.id == widget.device.id
@@ -165,11 +232,25 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
   String _effectiveType(PhysicalDevice device) =>
       widget.controller.pendingType ?? _initialType(device);
 
-  /// Every manipulable value resolves pending-buffers first so ALL edits
-  /// (power, sliders, type, location) arm Guardar cambios instead of
-  /// applying instantly. Discarding reverts by notification, no reset logic.
-  bool _effectivePower(PhysicalDevice device) =>
-      widget.controller.pendingPower ?? device.powerOn ?? device.online;
+  /// Whether the repository exposes the canonical command surface. Plain
+  /// fakes without commands keep the legacy local behavior untouched.
+  bool get _commandsAvailable => widget.controller.supportsEndpointCommands;
+
+  /// Power display for the header switch: a buffered pending value wins; with
+  /// command support the honest device state decides (unknown is never shown
+  /// as a confident off); without command support the legacy
+  /// `pendingPower ?? powerOn ?? online` fallback stays.
+  PowerDisplayState _effectivePowerState(PhysicalDevice device) {
+    final pending = widget.controller.pendingPower;
+    if (!_commandsAvailable) {
+      final legacyOn = pending ?? device.powerOn ?? device.online;
+      return legacyOn ? PowerDisplayState.on : PowerDisplayState.off;
+    }
+    if (pending != null) {
+      return pending ? PowerDisplayState.on : PowerDisplayState.off;
+    }
+    return devicePowerDisplayState(device);
+  }
 
   double _effectiveBrightness(PhysicalDevice device) =>
       (widget.controller.pendingBrightness ?? device.brightness ?? 80)
@@ -192,15 +273,38 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
   /// Power switch applies instantly (it is a direct action, not a form
   /// field): the list row and header dot converge at once. Any buffered
   /// power value is cleared so a later Guardar does not re-apply it.
-  void _setPower(bool value) {
-    widget.controller.applyCanonicalDevice(
-      _canonical.copyWith(
-        powerOn: value,
-        online: value,
-        health: value ? DeviceHealthState.online : DeviceHealthState.sleeping,
-      ),
-    );
+  ///
+  /// With command support the canonical backend is called and success is
+  /// never fabricated; the legacy local `online/health` mutation is the
+  /// fallback for repositories without commands.
+  Future<void> _setPower(bool value) async {
+    if (!_commandsAvailable) {
+      widget.controller.applyCanonicalDevice(
+        _canonical.copyWith(
+          powerOn: value,
+          online: value,
+          health: value ? DeviceHealthState.online : DeviceHealthState.sleeping,
+        ),
+      );
+      widget.controller.markPendingPower(null);
+      return;
+    }
     widget.controller.markPendingPower(null);
+    try {
+      final result = await widget.controller.setDevicePower(
+        _canonical.id,
+        value,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(powerOutcomeMessage(result, requested: value))),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(powerFailureMessage(error))));
+    }
   }
 
   void _setType(String? type) {
@@ -335,6 +439,16 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
     }
   }
 
+  /// Shows [message] when the host provides a Scaffold. Bare hosts without a
+  /// Scaffold (e.g. pane-level test harnesses) skip presentation instead of
+  /// breaking the mutation flow.
+  void _showSnack(String message) {
+    if (Scaffold.maybeOf(context) == null) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   /// Wall parity: per-channel rename with explicit reset (null clears the
   /// custom name back to the provider display name).
   Future<void> _renameEndpoint(DeviceEndpoint endpoint) async {
@@ -359,19 +473,12 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
       );
       widget.controller.applyCanonicalDevice(updated);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Nombre actualizado')));
-    } catch (_) {
+      _showSnack('Nombre actualizado');
+    } catch (e) {
+      // Honest failure: the previous canonical name stays in place and the
+      // backend error is surfaced instead of a fake success.
       if (!mounted) return;
-      widget.controller.applyCanonicalDevice(
-        _canonical.copyWith(
-          endpoints: [
-            for (final e in _canonical.endpoints)
-              if (e.id == endpoint.id) e.copyWith(userName: userName) else e,
-          ],
-        ),
-      );
+      _showSnack(deviceMutationErrorMessage(e));
     } finally {
       if (mounted) setState(() => _savingEndpoint = false);
     }
@@ -393,31 +500,32 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
         newName,
       );
       widget.controller.applyCanonicalDevice(updated);
-    } catch (_) {
-      widget.controller.applyCanonicalDevice(
-        device.copyWith(userName: newName),
-      );
+      if (!mounted) return;
+      _showSnack('Nombre actualizado');
+    } catch (e) {
+      // Honest failure: no local rename is applied and no success is shown.
+      if (!mounted) return;
+      _showSnack(deviceMutationErrorMessage(e));
     }
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Nombre actualizado')));
   }
 
   Future<void> _testConnection() async {
     if (_testingConnection) return;
     setState(() => _testingConnection = true);
     try {
-      await widget.controller.repository.identify(_canonical.id);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Conexión correcta con el dispositivo.')),
+      final result = await identifyDeviceWithFallback(
+        widget.controller.repository,
+        _canonical.id,
       );
+      if (!mounted) return;
+      if (!result.supported) {
+        _showSnack(identifyUnsupportedMessage(result));
+        return;
+      }
+      _showSnack('Conexión correcta con el dispositivo.');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.toString())));
+      _showSnack(deviceMutationErrorMessage(e));
     } finally {
       if (mounted) setState(() => _testingConnection = false);
     }
@@ -529,7 +637,7 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
                 healthLabel: healthLabel,
                 sensorValue: device.sensorValue,
                 isSensor: _isSensorFor(device),
-                powerOn: _effectivePower(device),
+                powerState: _effectivePowerState(device),
                 onPowerChanged: _setPower,
                 onRename: _renameDevice,
               ),
@@ -606,9 +714,9 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
                           _SectionCard(
                             icon: Icons.auto_awesome_outlined,
                             title: 'Rutinas relacionadas',
-                            trailing: const Text(
-                              '0 rutinas',
-                              style: TextStyle(
+                            trailing: Text(
+                              _relatedRoutinesLabel,
+                              style: const TextStyle(
                                 color: AppColors.textDim,
                                 fontSize: 12.5,
                               ),
@@ -845,7 +953,7 @@ class _Header extends StatelessWidget {
     required this.healthLabel,
     required this.sensorValue,
     required this.isSensor,
-    required this.powerOn,
+    required this.powerState,
     required this.onPowerChanged,
     required this.onRename,
   });
@@ -857,7 +965,7 @@ class _Header extends StatelessWidget {
   final String healthLabel;
   final String? sensorValue;
   final bool isSensor;
-  final bool powerOn;
+  final PowerDisplayState powerState;
   final ValueChanged<bool> onPowerChanged;
   final VoidCallback onRename;
 
@@ -944,15 +1052,23 @@ class _Header extends StatelessWidget {
               ),
             ),
           )
-        else
+        else ...[
+          if (powerState == PowerDisplayState.unknown) ...[
+            const Text(
+              'Sin datos',
+              style: TextStyle(color: AppColors.textDim, fontSize: 12.5),
+            ),
+            const SizedBox(width: 8),
+          ],
           Transform.scale(
             scale: 1.2,
             child: Switch(
-              value: powerOn,
+              value: powerState == PowerDisplayState.on,
               activeTrackColor: AppColors.gammaIndigo,
               onChanged: onPowerChanged,
             ),
           ),
+        ],
       ],
     );
   }

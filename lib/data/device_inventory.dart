@@ -191,6 +191,9 @@ class DeviceEndpoint {
     this.displayNameSemantic,
     this.displayNameGlobal,
     this.namingSource = NamingSource.fallback,
+    this.observedPower,
+    this.observedQuality,
+    this.observedAt,
   });
 
   final String id;
@@ -221,6 +224,17 @@ class DeviceEndpoint {
   final String? displayNameGlobal;
   final NamingSource namingSource;
 
+  /// Last observed power state reported by the backend; strictly parsed
+  /// (non-bool values become null). Null means unknown/unreported.
+  final bool? observedPower;
+
+  /// Observation quality (`confirmed|stale|unknown|unavailable`); only a
+  /// non-empty string is kept, anything else becomes null.
+  final String? observedQuality;
+
+  /// ISO-8601 timestamp of the observation, when reported.
+  final String? observedAt;
+
   String get displayName => displayNameSemantic ?? name;
 
   /// True when the user explicitly configured the effective semantic role.
@@ -240,6 +254,9 @@ class DeviceEndpoint {
     String? displayNameSemantic,
     String? displayNameGlobal,
     NamingSource? namingSource,
+    Object? observedPower = _unset,
+    Object? observedQuality = _unset,
+    Object? observedAt = _unset,
   }) {
     return DeviceEndpoint(
       id: id,
@@ -260,6 +277,15 @@ class DeviceEndpoint {
       displayNameSemantic: displayNameSemantic ?? this.displayNameSemantic,
       displayNameGlobal: displayNameGlobal ?? this.displayNameGlobal,
       namingSource: namingSource ?? this.namingSource,
+      observedPower: identical(observedPower, _unset)
+          ? this.observedPower
+          : observedPower as bool?,
+      observedQuality: identical(observedQuality, _unset)
+          ? this.observedQuality
+          : observedQuality as String?,
+      observedAt: identical(observedAt, _unset)
+          ? this.observedAt
+          : observedAt as String?,
     );
   }
 }
@@ -422,6 +448,41 @@ class PhysicalDevice {
   }
 }
 
+/// Whether [endpoint] exposes a power channel. Accepts the canonical `POWER`
+/// capability and the legacy/mock `on_off` spelling.
+bool hasPowerCapability(DeviceEndpoint endpoint) =>
+    endpoint.capabilities.contains('POWER') ||
+    endpoint.capabilities.contains('on_off');
+
+/// Honest power display state for a surface. [unknown] must never be
+/// converted into [off]: no observation means no confident state.
+enum PowerDisplayState { on, off, unknown }
+
+/// Endpoint power display: on/off only for a confirmed observation; anything
+/// else (missing power, stale/unknown quality) is [PowerDisplayState.unknown].
+PowerDisplayState endpointPowerDisplayState(DeviceEndpoint endpoint) {
+  final power = endpoint.observedPower;
+  if (endpoint.observedQuality == 'confirmed' && power != null) {
+    return power ? PowerDisplayState.on : PowerDisplayState.off;
+  }
+  return PowerDisplayState.unknown;
+}
+
+/// Device power display: the first endpoint with a confirmed observation
+/// decides; otherwise the demo-only [PhysicalDevice.powerOn] (mock path) is
+/// the last resort; otherwise unknown.
+PowerDisplayState devicePowerDisplayState(PhysicalDevice device) {
+  for (final endpoint in device.endpoints) {
+    final state = endpointPowerDisplayState(endpoint);
+    if (state != PowerDisplayState.unknown) return state;
+  }
+  final demoPower = device.powerOn;
+  if (demoPower != null) {
+    return demoPower ? PowerDisplayState.on : PowerDisplayState.off;
+  }
+  return PowerDisplayState.unknown;
+}
+
 @immutable
 class GatewayInfo {
   const GatewayInfo({
@@ -525,6 +586,98 @@ abstract interface class DeviceInventoryRepository {
   Future<void> deleteArea(String areaId);
 
   Future<void> identify(String deviceId, {String? endpointId});
+}
+
+/// Typed outcome of one endpoint power command.
+///
+/// Deliberately decoupled from [PhysicalDevice]: whether execution succeeded
+/// and what state is currently observed are independent facts. Immutable.
+@immutable
+class EndpointPowerResult {
+  const EndpointPowerResult({
+    required this.outcome,
+    this.changed,
+    this.observedPower,
+    this.observedQuality,
+    this.observedAt,
+    this.errorCode,
+    this.errorDetail,
+    this.responseParsed = true,
+  });
+
+  /// Canonical outcome (SUCCESS|NO_CHANGE|UNSUPPORTED|UNAVAILABLE|TIMEOUT|
+  /// FAILED|EXECUTION_DISABLED), or `unconfirmed` when the backend returned
+  /// no parsed body (current live behavior).
+  final String outcome;
+
+  /// Whether the command changed the physical state, when reported.
+  final bool? changed;
+
+  /// Observed power after execution; null means unknown/unavailable.
+  final bool? observedPower;
+
+  /// Observation quality (`confirmed|stale|unknown|unavailable`).
+  final String? observedQuality;
+
+  /// ISO-8601 timestamp of the observation, when reported.
+  final String? observedAt;
+
+  /// Machine-readable error code from the backend, when execution failed.
+  final String? errorCode;
+
+  /// Human-readable error detail from the backend, when execution failed.
+  final String? errorDetail;
+
+  /// False when the response body was null and no typed result was parsed.
+  final bool responseParsed;
+}
+
+/// Result of an identify request: whether the provider supports it, plus the
+/// reason when it does not.
+@immutable
+class IdentifyResult {
+  const IdentifyResult({required this.supported, this.reason});
+
+  final bool supported;
+  final String? reason;
+}
+
+/// Segregated command surface for device operations the read-oriented
+/// [DeviceInventoryRepository] intentionally does not expose.
+///
+/// Kept separate so the existing [DeviceInventoryRepository] implementers
+/// (including test fakes) keep compiling; only repositories that opt in
+/// implement this interface.
+abstract interface class DeviceCommandRepository {
+  Future<EndpointPowerResult> setEndpointPower(
+    String deviceId,
+    String endpointId,
+    bool enabled,
+  );
+
+  Future<IdentifyResult> identifyDevice(String deviceId, {String? endpointId});
+
+  Future<PhysicalDevice> bindEntity(
+    String deviceId, {
+    required String endpointId,
+    required String entityId,
+    required String capability,
+    String? controlledAreaId,
+  });
+
+  Future<PhysicalDevice> unbindEntity(String deviceId, String bindingId);
+
+  Future<PhysicalDevice> refreshDevice(String deviceId);
+}
+
+/// Narrows [repo] to [DeviceCommandRepository] when supported, else null.
+DeviceCommandRepository? asDeviceCommandRepository(
+  DeviceInventoryRepository repo,
+) {
+  if (repo is DeviceCommandRepository) {
+    return repo as DeviceCommandRepository;
+  }
+  return null;
 }
 
 class MockDeviceInventoryRepository implements DeviceInventoryRepository {

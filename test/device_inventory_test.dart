@@ -329,4 +329,57 @@ void main() {
       expect(pasillo, ['dev_sensor']);
     });
   });
+
+  group('DeviceEndpoint observed state', () {
+    const endpoint = DeviceEndpoint(
+      id: 'relay_1',
+      name: 'Canal 1',
+      kind: DeviceKind.switchController,
+      capabilities: {'POWER'},
+    );
+
+    test('defaults to null observed fields', () {
+      expect(endpoint.observedPower, isNull);
+      expect(endpoint.observedQuality, isNull);
+      expect(endpoint.observedAt, isNull);
+    });
+
+    test('copyWith sets and clears observed fields', () {
+      final observed = endpoint.copyWith(
+        observedPower: true,
+        observedQuality: 'confirmed',
+        observedAt: '2026-09-11T12:00:00Z',
+      );
+      expect(observed.observedPower, isTrue);
+      expect(observed.observedQuality, 'confirmed');
+      expect(observed.observedAt, '2026-09-11T12:00:00Z');
+
+      final cleared = observed.copyWith(observedPower: null);
+      expect(cleared.observedPower, isNull);
+      expect(cleared.observedQuality, 'confirmed');
+      expect(cleared.id, 'relay_1');
+    });
+  });
+
+  test('command result types carry the parsed facts', () {
+    const power = EndpointPowerResult(
+      outcome: 'SUCCESS',
+      changed: true,
+      observedPower: true,
+    );
+    expect(power.outcome, 'SUCCESS');
+    expect(power.changed, isTrue);
+    expect(power.responseParsed, isTrue);
+
+    const unconfirmed = EndpointPowerResult(
+      outcome: 'unconfirmed',
+      responseParsed: false,
+    );
+    expect(unconfirmed.responseParsed, isFalse);
+    expect(unconfirmed.changed, isNull);
+
+    const identify = IdentifyResult(supported: false, reason: 'nope');
+    expect(identify.supported, isFalse);
+    expect(identify.reason, 'nope');
+  });
 }

@@ -27,6 +27,12 @@ class AdaptiveFeatureController extends ChangeNotifier {
   /// mutaciones por dispositivo (Fase 3-C desktop).
   DeviceInventoryRepository get repository => _repository;
 
+  /// Whether the repository implements the segregated command surface
+  /// ([DeviceCommandRepository]). Plain test fakes without commands keep the
+  /// local fallback behavior on every surface.
+  bool get supportsEndpointCommands =>
+      asDeviceCommandRepository(_repository) != null;
+
   DeviceInventorySnapshot? _snapshot;
   Object? _deviceError;
   bool _devicesLoading = false;
@@ -387,6 +393,99 @@ class AdaptiveFeatureController extends ChangeNotifier {
       lastDiscoveryLabel: snapshot.lastDiscoveryLabel,
     );
     _notify();
+  }
+
+  /// Executes one canonical endpoint power action (`set_power`).
+  ///
+  /// When the backend parses a typed response with a confirmed observation,
+  /// the observation is merged into the cached snapshot device endpoint so
+  /// every surface converges. The typed [EndpointPowerResult] is returned
+  /// as-is: success is never fabricated.
+  Future<EndpointPowerResult> setEndpointPower(
+    String deviceId,
+    String endpointId,
+    bool enabled,
+  ) async {
+    final commands = asDeviceCommandRepository(_repository);
+    if (commands == null) {
+      throw UnsupportedError(
+        'El repositorio no soporta comandos de dispositivo.',
+      );
+    }
+    final result = await commands.setEndpointPower(
+      deviceId,
+      endpointId,
+      enabled,
+    );
+    if (result.responseParsed &&
+        result.observedPower != null &&
+        result.observedQuality != null) {
+      _mergeEndpointObservation(deviceId, endpointId, result);
+    }
+    return result;
+  }
+
+  /// Device-level power: resolves the first endpoint with a power channel.
+  /// Throws [UnsupportedError] when the device exposes none.
+  Future<EndpointPowerResult> setDevicePower(
+    String deviceId,
+    bool enabled,
+  ) async {
+    final snapshot = _snapshot;
+    PhysicalDevice? device;
+    if (snapshot != null) {
+      for (final candidate in snapshot.devices) {
+        if (candidate.id == deviceId) {
+          device = candidate;
+          break;
+        }
+      }
+    }
+    DeviceEndpoint? endpoint;
+    if (device != null) {
+      for (final candidate in device.endpoints) {
+        if (hasPowerCapability(candidate)) {
+          endpoint = candidate;
+          break;
+        }
+      }
+    }
+    if (endpoint == null) {
+      throw UnsupportedError('El dispositivo no expone un canal de encendido.');
+    }
+    return setEndpointPower(deviceId, endpoint.id, enabled);
+  }
+
+  /// Merges a confirmed power observation into the cached snapshot endpoint.
+  /// Unknown ids and unknown endpoints are deterministic no-ops.
+  void _mergeEndpointObservation(
+    String deviceId,
+    String endpointId,
+    EndpointPowerResult result,
+  ) {
+    final snapshot = _snapshot;
+    if (snapshot == null) return;
+    PhysicalDevice? device;
+    for (final candidate in snapshot.devices) {
+      if (candidate.id == deviceId) {
+        device = candidate;
+        break;
+      }
+    }
+    if (device == null) return;
+    if (!device.endpoints.any((endpoint) => endpoint.id == endpointId)) return;
+    final endpoints = device.endpoints
+        .map(
+          (endpoint) => endpoint.id == endpointId
+              ? endpoint.copyWith(
+                  observedPower: result.observedPower,
+                  observedQuality: result.observedQuality,
+                  observedAt: result.observedAt,
+                )
+              : endpoint,
+        )
+        .toList();
+    applyCanonicalDevice(device.copyWith(endpoints: endpoints));
   }
 
   /// Adds a locally-created device to the snapshot and notifies listeners.

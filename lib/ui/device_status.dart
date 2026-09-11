@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../data/api_client.dart';
 import '../data/device_inventory.dart';
 import 'app_colors.dart';
 
@@ -16,6 +17,74 @@ Color healthToColor(DeviceHealthState health) => switch (health) {
   DeviceHealthState.sleeping => AppColors.statusApagado,
   _ => AppColors.statusDesconectado,
 };
+
+/// Household Spanish copy for a canonical endpoint power outcome.
+/// [requested] is the value the user asked for (only used on success).
+String powerOutcomeMessage(
+  EndpointPowerResult result, {
+  required bool requested,
+}) {
+  return switch (result.outcome) {
+    'SUCCESS' => requested ? 'Encendido' : 'Apagado',
+    'NO_CHANGE' => 'Sin cambios',
+    'EXECUTION_DISABLED' => 'Escritura deshabilitada en el modo actual',
+    'UNSUPPORTED' => 'El canal no soporta encendido',
+    'UNAVAILABLE' => 'Dispositivo no disponible',
+    'TIMEOUT' => 'Sin respuesta del dispositivo',
+    'FAILED' => 'No se pudo ejecutar la acción',
+    'unconfirmed' => 'Orden enviada — sin confirmación del dispositivo',
+    _ => 'No se pudo ejecutar la acción',
+  };
+}
+
+/// Short, honest copy for a thrown power-command failure.
+String powerFailureMessage(Object error) {
+  final detail = switch (error) {
+    ApiException(:final statusCode) => 'error del servidor ($statusCode)',
+    UnsupportedError(:final message) => message,
+    _ => error.toString(),
+  };
+  return 'No se pudo ejecutar: $detail';
+}
+
+/// Runs identify through the segregated command layer when the repository
+/// supports it; otherwise keeps the legacy [DeviceInventoryRepository.identify]
+/// fallback for plain fakes and reports a plain success.
+///
+/// The command-layer [IdentifyResult] is returned as-is so call sites can
+/// render the honest provider answer (`supported == false`) instead of
+/// fabricating success. Failures propagate unchanged.
+Future<IdentifyResult> identifyDeviceWithFallback(
+  DeviceInventoryRepository repository,
+  String deviceId, {
+  String? endpointId,
+}) async {
+  final commands = asDeviceCommandRepository(repository);
+  if (commands != null) {
+    return commands.identifyDevice(deviceId, endpointId: endpointId);
+  }
+  await repository.identify(deviceId, endpointId: endpointId);
+  return const IdentifyResult(supported: true);
+}
+
+/// Honest copy for an identify the provider does not support, with the
+/// provider reason appended when present.
+String identifyUnsupportedMessage(IdentifyResult result) {
+  final reason = result.reason?.trim();
+  return reason == null || reason.isEmpty
+      ? 'El proveedor no soporta identificación'
+      : 'El proveedor no soporta identificación: $reason';
+}
+
+/// Human-safe message for a failed device mutation: the backend `detail` when
+/// present, otherwise the server status or the raw error.
+String deviceMutationErrorMessage(Object error) {
+  final body = error is ApiException ? error.body : null;
+  final detail = body is Map ? body['detail'] : null;
+  if (detail != null) return detail.toString();
+  if (error is ApiException) return 'Error del servidor (${error.statusCode}).';
+  return error.toString();
+}
 
 /// Kind → icon badge background color.
 Color kindBadgeColor(DeviceKind kind) => switch (kind) {

@@ -277,6 +277,55 @@ void main() {
     },
   );
 
+  test('voiceEvents() reenvía Last-Event-ID al reconectar', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+    var connections = 0;
+    String? receivedLastEventId;
+
+    server.listen((request) async {
+      connections++;
+      expect(request.uri.path, '/api/v1/voice/events/abc');
+      if (connections == 2) {
+        receivedLastEventId = request.headers.value('Last-Event-ID');
+      }
+      request.response.headers.contentType = ContentType(
+        'text',
+        'event-stream',
+      );
+      if (connections == 1) {
+        // First event carries an explicit `id:` line; the second only carries
+        // the sequence inside the payload. The reconnect must use the newest
+        // of the two.
+        request.response.write(
+          'id: 4\nevent: voice_state\ndata: {"event":"voice_state","data":{"state":"listening","sequence":4}}\n\n',
+        );
+        request.response.write(
+          'event: voice_transcript\ndata: {"event":"voice_transcript","data":{"text":"hola","sequence":5}}\n\n',
+        );
+        await request.response.flush();
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        await request.response.close();
+      } else {
+        request.response.write(
+          'event: voice_finished\ndata: {"event":"voice_finished","data":{"sequence":6}}\n\n',
+        );
+        await request.response.close();
+      }
+    });
+
+    final events = <Map<String, dynamic>>[];
+    await client
+        .voiceEvents('abc', isCancelled: () => false)
+        .forEach(events.add);
+
+    expect(connections, 2);
+    expect(receivedLastEventId, '5');
+    expect(events, hasLength(3));
+    expect(events.last['event'], 'voice_finished');
+    await server.close(force: true);
+  });
+
   test('audioTurn() sube el WAV y devuelve transcript + respuesta', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
@@ -711,5 +760,350 @@ void main() {
         await server.close(force: true);
       },
     );
+  });
+
+  group('device commands', () {
+    test(
+      'endpointAction() devuelve el DTO tipado y envía action/value',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+        String? receivedBody;
+
+        server.listen((request) async {
+          expect(request.method, 'POST');
+          expect(
+            request.uri.path,
+            '/api/v1/devices/dev_1/endpoints/relay_1/actions',
+          );
+          receivedBody = await utf8.decoder.bind(request).join();
+          request.response.write(
+            jsonEncode({
+              'request_id': 'req-1',
+              'device_id': 'dev_1',
+              'endpoint_id': 'relay_1',
+              'action': 'set_power',
+              'requested_value': true,
+              'outcome': 'SUCCESS',
+              'changed': true,
+              'observed_state': {
+                'power': true,
+                'quality': 'confirmed',
+                'observed_at': '2026-09-11T12:00:00Z',
+              },
+              'error_code': null,
+              'error_detail': null,
+              'latency_ms': 42,
+            }),
+          );
+          await request.response.close();
+        });
+
+        final result = await client.endpointAction(
+          'dev_1',
+          'relay_1',
+          action: 'set_power',
+          value: true,
+          requestId: 'req-1',
+        );
+
+        expect(jsonDecode(receivedBody!), {
+          'action': 'set_power',
+          'value': true,
+          'request_id': 'req-1',
+        });
+        expect(result!['outcome'], 'SUCCESS');
+        expect(result['changed'], true);
+        expect((result['observed_state'] as Map)['quality'], 'confirmed');
+        await server.close(force: true);
+      },
+    );
+
+    test('endpointAction() tolera el body null actual (HTTP 200)', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+      String? receivedBody;
+
+      server.listen((request) async {
+        expect(request.method, 'POST');
+        receivedBody = await utf8.decoder.bind(request).join();
+        request.response.write('null');
+        await request.response.close();
+      });
+
+      final result = await client.endpointAction(
+        'dev_1',
+        'relay_1',
+        action: 'set_power',
+        value: false,
+      );
+
+      expect(result, isNull);
+      expect(jsonDecode(receivedBody!), {
+        'action': 'set_power',
+        'value': false,
+      });
+      await server.close(force: true);
+    });
+
+    test('endpointAction() mapea 422 al ApiException con detail', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+
+      server.listen((request) async {
+        request.response.statusCode = 422;
+        request.response.write('{"detail":"unknown_action"}');
+        await request.response.close();
+      });
+
+      try {
+        await client.endpointAction(
+          'dev_1',
+          'relay_1',
+          action: 'bogus',
+          value: true,
+        );
+        fail('se esperaba ApiException 422');
+      } on ApiException catch (e) {
+        expect(e.statusCode, 422);
+        expect((e.body as Map)['detail'], 'unknown_action');
+      }
+      await server.close(force: true);
+    });
+
+    test(
+      'endpointAction() mapea 404 unknown_endpoint con error_code',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+
+        server.listen((request) async {
+          request.response.statusCode = 404;
+          request.response.write(
+            '{"error_code":"unknown_endpoint","detail":"Endpoint not found",'
+            '"request_id":"req-1"}',
+          );
+          await request.response.close();
+        });
+
+        try {
+          await client.endpointAction(
+            'dev_1',
+            'ghost',
+            action: 'set_power',
+            value: true,
+          );
+          fail('se esperaba ApiException 404');
+        } on ApiException catch (e) {
+          expect(e.statusCode, 404);
+          expect((e.body as Map)['error_code'], 'unknown_endpoint');
+          expect((e.body as Map)['request_id'], 'req-1');
+        }
+        await server.close(force: true);
+      },
+    );
+
+    test(
+      'identifyDevice() hace POST sin body y devuelve supported/reason',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+        String? receivedBody;
+
+        server.listen((request) async {
+          expect(request.method, 'POST');
+          expect(request.uri.path, '/api/v1/devices/dev_1/identify');
+          receivedBody = await utf8.decoder.bind(request).join();
+          request.response.write(
+            '{"supported":false,"reason":"identify not supported"}',
+          );
+          await request.response.close();
+        });
+
+        final result = await client.identifyDevice('dev_1');
+
+        expect(receivedBody, isEmpty);
+        expect(result['supported'], false);
+        expect(result['reason'], 'identify not supported');
+        await server.close(force: true);
+      },
+    );
+
+    test('refreshDevice() hace POST y devuelve el DeviceDTO', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+
+      server.listen((request) async {
+        expect(request.method, 'POST');
+        expect(request.uri.path, '/api/v1/devices/dev_1/refresh');
+        request.response.write(
+          '{"device_id":"dev_1","display_name":"Refrescado","endpoints":[]}',
+        );
+        await request.response.close();
+      });
+
+      final dto = await client.refreshDevice('dev_1');
+
+      expect(dto['device_id'], 'dev_1');
+      expect(dto['display_name'], 'Refrescado');
+      await server.close(force: true);
+    });
+
+    test('bindEntity()/unbindEntity() usan path y body canónicos', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+      final calls = <String>[];
+      final bodies = <String>[];
+
+      server.listen((request) async {
+        calls.add('${request.method} ${request.uri.path}');
+        if (request.method == 'POST') {
+          bodies.add(await utf8.decoder.bind(request).join());
+        }
+        request.response.write('{"device_id":"dev_1","endpoints":[]}');
+        await request.response.close();
+      });
+
+      await client.bindEntity(
+        'dev_1',
+        endpointId: 'relay_1',
+        entityId: 'luz_sala',
+        capability: 'POWER',
+        controlledAreaId: 'sala',
+      );
+      await client.bindEntity(
+        'dev_1',
+        endpointId: 'relay_1',
+        entityId: 'luz_sala',
+        capability: 'POWER',
+      );
+      await client.unbindEntity('dev_1', 'binding 1');
+
+      expect(jsonDecode(bodies[0]), {
+        'endpoint_id': 'relay_1',
+        'entity_id': 'luz_sala',
+        'capability': 'POWER',
+        'controlled_area_id': 'sala',
+      });
+      expect(jsonDecode(bodies[1]), {
+        'endpoint_id': 'relay_1',
+        'entity_id': 'luz_sala',
+        'capability': 'POWER',
+      });
+      expect(calls, [
+        'POST /api/v1/devices/dev_1/bindings',
+        'POST /api/v1/devices/dev_1/bindings',
+        'DELETE /api/v1/devices/dev_1/bindings/binding%201',
+      ]);
+      await server.close(force: true);
+    });
+
+    test('ttsPreview() devuelve los bytes WAV y envía voice/text', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+      final wav = Uint8List.fromList([82, 73, 70, 70, 1, 2, 3, 4]);
+      String? receivedBody;
+
+      server.listen((request) async {
+        expect(request.method, 'POST');
+        expect(request.uri.path, '/api/v1/tts/preview');
+        receivedBody = await utf8.decoder.bind(request).join();
+        request.response.headers.contentType = ContentType('audio', 'wav');
+        request.response.add(wav);
+        await request.response.close();
+      });
+
+      final result = await client.ttsPreview('es-MX-JorgeNeural', 'Hola GAMMA');
+
+      expect(result, wav);
+      expect(jsonDecode(receivedBody!), {
+        'voice': 'es-MX-JorgeNeural',
+        'text': 'Hola GAMMA',
+      });
+      await server.close(force: true);
+    });
+
+    test('ttsPreview() mapea un 502 al ApiException con detail', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+
+      server.listen((request) async {
+        request.response.statusCode = 502;
+        request.response.write('{"detail":"Error al sintetizar la voz."}');
+        await request.response.close();
+      });
+
+      try {
+        await client.ttsPreview('voice', 'texto');
+        fail('se esperaba ApiException 502');
+      } on ApiException catch (e) {
+        expect(e.statusCode, 502);
+        expect((e.body as Map)['detail'], 'Error al sintetizar la voz.');
+      }
+      await server.close(force: true);
+    });
+
+    test('turn() envía session_id/client_id solo cuando no son null', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+      final bodies = <String>[];
+
+      server.listen((request) async {
+        expect(request.method, 'POST');
+        expect(request.uri.path, '/api/v1/turns');
+        bodies.add(await utf8.decoder.bind(request).join());
+        request.response.write('{"speech":"ok"}');
+        await request.response.close();
+      });
+
+      final plain = await client.turn('hola');
+      await client.turn(
+        'hola',
+        sessionId: 'ses-1',
+        clientId: 'cli-1',
+        speakerName: 'Luis',
+      );
+
+      expect(plain['speech'], 'ok');
+      expect(jsonDecode(bodies[0]), {'text': 'hola'});
+      expect(jsonDecode(bodies[1]), {
+        'text': 'hola',
+        'session_id': 'ses-1',
+        'client_id': 'cli-1',
+        'speaker_name': 'Luis',
+      });
+      await server.close(force: true);
+    });
+
+    test('cameraStream()/webrtcAnswer() codifican el cameraId', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+      final paths = <String>[];
+
+      server.listen((request) async {
+        paths.add(request.uri.path);
+        if (request.method == 'POST') {
+          request.response.headers.contentType = ContentType(
+            'application',
+            'sdp',
+          );
+          request.response.write('v=0\r\n');
+        } else {
+          request.response.write(
+            '{"camera_id":"cam 1/x","gateway_available":true}',
+          );
+        }
+        await request.response.close();
+      });
+
+      await client.cameraStream('cam 1/x');
+      await client.webrtcAnswer('cam 1/x', 'v=0\r\no=x');
+
+      expect(paths, [
+        '/api/v1/cameras/cam%201%2Fx/stream',
+        '/api/v1/cameras/cam%201%2Fx/webrtc',
+      ]);
+      await server.close(force: true);
+    });
   });
 }
