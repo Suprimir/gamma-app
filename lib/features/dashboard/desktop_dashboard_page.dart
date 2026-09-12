@@ -80,6 +80,15 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   /// previously loaded data.
   bool _spotifyDetailsRefreshInFlight = false;
 
+  /// Pins the launcher (header + playlists) over active playback after the
+  /// user picks "Ver playlists" in the player overflow. A new track resets it
+  /// so the card returns to the player state on its own.
+  bool _showLibrary = false;
+
+  /// Last track uri seen by the shared listener, used to detect track changes
+  /// without rebuilding the card on every position tick.
+  String? _lastTrackUri;
+
   /// Canonical playback state shared by the now-playing block, the transport
   /// and the device picker. Owned here; disposed with the page.
   late final SpotifyPlayerController _spotify = SpotifyPlayerController(
@@ -1255,7 +1264,15 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   /// next reload. A player response is proof of a usable account; the
   /// capabilities read is unchanged.
   void _onSpotifyAvailabilityChanged() {
-    if (!mounted || _spotifyConnected) return;
+    if (!mounted) return;
+    // A new track always brings the player state back: the "Ver playlists"
+    // pin only lasts while the current track keeps playing.
+    final trackUri = _spotify.track?['uri']?.toString();
+    if (_showLibrary && trackUri != null && trackUri != _lastTrackUri) {
+      setState(() => _showLibrary = false);
+    }
+    _lastTrackUri = trackUri;
+    if (_spotifyConnected) return;
     if (_spotify.needsAuth || _spotify.player == null) return;
     setState(() => _spotifyConnected = true);
     unawaited(_refreshSpotifyDetails());
@@ -1294,11 +1311,14 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     }
   }
 
-  /// Spotify card driven by canonical backend data: connection state, real
-  /// now-playing/transport when the service answers, and honest "sin
-  /// reproducción" when the account has nothing loaded. No fabricated state.
+  /// Spotify card with progressive disclosure. Three bodies share the same
+  /// canonical controller:
+  /// - player: hero (art + track + transport), thin progress, single up-next
+  ///   line and the secondary icon row;
+  /// - launcher: compact header, account, playlists and the settings link
+  ///   (also reachable while playing through "Ver playlists");
+  /// - disconnected: unchanged connect CTA.
   Widget _buildSpotifyCard() {
-    final visible = _playlists.take(3).toList();
     return _HomeCard(
       child: ListenableBuilder(
         listenable: _spotify,
@@ -1306,108 +1326,23 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
           // A player 401/503 means the account is not usable even when the
           // settings read said otherwise: keep the connect affordance.
           final connected = _spotifyConnected && !_spotify.needsAuth;
+          final track = _spotify.track;
+          final hasPlayback =
+              (_spotify.player != null &&
+                  _spotify.player!['has_playback'] == true) ||
+              track != null;
           return Column(
             // Fully centered so the card looks intentional when stretched
-            // tall next to the assistant; full-width rows (playlists) are
-            // unaffected and wrapping content barely changes.
+            // tall next to the assistant; every body stays compact.
             mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                // Min size so the centered column actually centers it:
-                // a max-width Row would fill the card and stay left-aligned.
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const _SpotifyLogo(size: 30),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Spotify',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.text,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _Pill(
-                    text: connected ? 'Conectado' : 'Sin conectar',
-                    ok: connected,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (!connected) ...[
-                const Center(
-                  child: Text(
-                    'Conectá tu cuenta para ver tu música acá.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 13, color: AppColors.textDim),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Center(
-                  child: FilledButton.icon(
-                    onPressed: _connectSpotify,
-                    icon: const Icon(Icons.link_rounded, size: 18),
-                    label: const Text('Conectar Spotify'),
-                  ),
-                ),
-              ] else ...[
-                if (_spotifyAccount.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      _spotifyAccount,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textDim,
-                      ),
-                    ),
-                  ),
-                _buildSpotifyNowPlaying(),
-                _buildSpotifyProgress(),
-                const SizedBox(height: 6),
-                _buildSpotifyTransport(),
-                _buildSpotifyVolume(),
-                _buildSpotifyDevicePicker(),
-                _buildSpotifyQueue(),
-                if (_spotify.error != null) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    _spotify.error!,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 12, color: AppColors.red),
-                  ),
-                ],
-                const SizedBox(height: 10),
-                const Text(
-                  'Tu música',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.text,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                if (visible.isEmpty)
-                  const Text(
-                    'No se encontraron playlists en tu cuenta.',
-                    style: TextStyle(fontSize: 13, color: AppColors.textDim),
-                  )
-                else
-                  for (final playlist in visible)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _PlaylistRow(
-                        playlist: playlist,
-                        onTap: () => _playPlaylist(playlist),
-                      ),
-                    ),
-                TextButton(
-                  onPressed: _openSpotifySettings,
-                  child: const Text('Abrir ajustes de Spotify'),
-                ),
-              ],
+              if (!connected)
+                _buildSpotifyDisconnected()
+              else if (hasPlayback && !_showLibrary)
+                _buildSpotifyPlayer(track)
+              else
+                _buildSpotifyLauncher(pinned: hasPlayback),
             ],
           );
         },
@@ -1415,138 +1350,461 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     );
   }
 
-  /// Track + artist + album art from the player response; "Sin reproducción"
-  /// when the backend explicitly reports no playback. Never invents a track.
-  Widget _buildSpotifyNowPlaying() {
-    final track = _spotify.track;
-    if (_spotify.player?['has_playback'] != true || track == null) {
-      return const Text(
-        'Sin reproducción',
-        textAlign: TextAlign.center,
-        style: TextStyle(fontSize: 13, color: AppColors.textDim),
-      );
-    }
-    final name = track['name']?.toString();
-    final artist = track['artist']?.toString();
-    return Row(
+  Widget _buildSpotifyDisconnected() {
+    return Column(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        _SpotifyArtwork(imageUrl: track['image_url']?.toString(), size: 44),
-        const SizedBox(width: 10),
-        Flexible(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                (name == null || name.isEmpty) ? 'Sin título' : name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.text,
-                ),
-              ),
-              if (artist != null && artist.isNotEmpty)
-                Text(
-                  artist,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppColors.textDim,
-                  ),
-                ),
-            ],
+        _buildSpotifyHeader(connected: false),
+        const SizedBox(height: 12),
+        const Center(
+          child: Text(
+            'Conectá tu cuenta para ver tu música acá.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: AppColors.textDim),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Center(
+          child: FilledButton.icon(
+            onPressed: _connectSpotify,
+            icon: const Icon(Icons.link_rounded, size: 18),
+            label: const Text('Conectar Spotify'),
           ),
         ),
       ],
     );
   }
 
-  /// Progress row under the now-playing block. Rendered only when the track
-  /// reports a duration; the position comes from the controller's local
-  /// interpolation, so it advances without extra network traffic and stays
-  /// honest (frozen) while paused.
+  /// Compact logo + name + connection pill used by the launcher and the
+  /// disconnected CTA (the player state is identified by the hero instead).
+  Widget _buildSpotifyHeader({required bool connected}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const _SpotifyLogo(size: 24),
+        const SizedBox(width: 8),
+        const Text(
+          'Spotify',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: AppColors.text,
+          ),
+        ),
+        const SizedBox(width: 8),
+        _Pill(text: connected ? 'Conectado' : 'Sin conectar', ok: connected),
+      ],
+    );
+  }
+
+  /// Launcher body: header, optional account line, the playlist shortcuts and
+  /// the settings link. [pinned] is true when the user opened it from the
+  /// player overflow while playback continues.
+  Widget _buildSpotifyLauncher({required bool pinned}) {
+    final visible = _playlists.take(3).toList();
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Center(child: _buildSpotifyHeader(connected: true)),
+        if (_spotifyAccount.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Conectado como $_spotifyAccount',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 12, color: AppColors.textDim),
+          ),
+        ],
+        if (pinned) ...[
+          const SizedBox(height: 4),
+          Center(
+            child: TextButton.icon(
+              onPressed: () => setState(() => _showLibrary = false),
+              icon: const Icon(Icons.play_circle_outline_rounded, size: 18),
+              label: const Text('Volver al reproductor'),
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+            ),
+          ),
+        ] else ...[
+          const SizedBox(height: 10),
+          const Text(
+            'Sin reproducción',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: AppColors.textDim),
+          ),
+        ],
+        const SizedBox(height: 10),
+        const Text(
+          'Tu música',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: AppColors.text,
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (visible.isEmpty)
+          const Text(
+            'No se encontraron playlists en tu cuenta.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: AppColors.textDim),
+          )
+        else
+          for (final playlist in visible)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _PlaylistRow(
+                playlist: playlist,
+                onTap: () => _playPlaylist(playlist),
+              ),
+            ),
+        TextButton(
+          onPressed: _openSpotifySettings,
+          child: const Text('Abrir ajustes de Spotify'),
+        ),
+        if (_spotify.error != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            _spotify.error!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 12, color: AppColors.red),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Player body: hero, compact progress, single up-next line and the
+  /// secondary icon row. No account, queue list or playlists stack here.
+  Widget _buildSpotifyPlayer(Map<String, dynamic>? track) {
+    final name = track?['name']?.toString();
+    final artist = track?['artist']?.toString();
+    final deviceName = _spotify.activeDevice?['name']?.toString();
+    final subtitle = [
+      if (artist != null && artist.isNotEmpty) artist,
+      if (deviceName != null && deviceName.isNotEmpty) deviceName,
+    ].join(' · ');
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            _SpotifyArtwork(
+              imageUrl: track?['image_url']?.toString(),
+              size: 52,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    (name == null || name.isEmpty) ? 'Sin título' : name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.text,
+                    ),
+                  ),
+                  if (subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textDim,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            _buildSpotifyTransport(),
+          ],
+        ),
+        _buildSpotifyProgress(),
+        _buildSpotifyUpNext(),
+        const SizedBox(height: 8),
+        _buildSpotifyActionIcons(),
+        if (_spotify.error != null) ...[
+          const SizedBox(height: 6),
+          Text(
+            _spotify.error!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 12, color: AppColors.red),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Volume reported by the player, else by the active device, else null.
+  int? _spotifyVolume() {
+    final playerVolume = _spotify.player?['volume_percent'];
+    final deviceVolume = _spotify.activeDevice?['volume_percent'];
+    if (playerVolume is int) return playerVolume;
+    if (deviceVolume is int) return deviceVolume;
+    return null;
+  }
+
+  /// Progress row with the thin bar and a single `mm:ss / mm:ss` label.
+  /// Position comes from the controller's local interpolation (advances
+  /// without extra traffic, stays frozen while paused).
   Widget _buildSpotifyProgress() {
     final duration = _spotify.durationMs;
     if (_spotify.track == null || duration == null || duration <= 0) {
       return const SizedBox.shrink();
     }
     final position = (_spotify.progressMs ?? 0).clamp(0, duration);
-    const timeStyle = TextStyle(fontSize: 11, color: AppColors.textDim);
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: LinearProgressIndicator(
-              value: position / duration,
-              minHeight: 4,
-              backgroundColor: AppColors.border,
-              color: AppColors.accent,
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: position / duration,
+                minHeight: 4,
+                backgroundColor: AppColors.border,
+                color: AppColors.accent,
+              ),
             ),
           ),
-          const SizedBox(height: 3),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(_formatPlaybackTime(position), style: timeStyle),
-              Text(_formatPlaybackTime(duration), style: timeStyle),
-            ],
+          const SizedBox(width: 8),
+          Text(
+            '${_formatPlaybackTime(position)} / ${_formatPlaybackTime(duration)}',
+            style: const TextStyle(fontSize: 11, color: AppColors.textDim),
           ),
         ],
       ),
     );
   }
 
-  /// Upcoming queue preview ("A continuación"), hidden while empty or
-  /// unknown. Never invents rows.
-  Widget _buildSpotifyQueue() {
-    final upcoming = _spotify.upcomingQueue.take(3).toList();
+  /// Single up-next line; hidden while the queue is empty. Tapping opens the
+  /// queue sheet with the full listing.
+  Widget _buildSpotifyUpNext() {
+    final upcoming = _spotify.upcomingQueue;
     if (upcoming.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'A continuación',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: AppColors.text,
-            ),
-          ),
-          const SizedBox(height: 6),
-          for (final item in upcoming)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.queue_music_rounded,
-                    size: 14,
+      padding: const EdgeInsets.only(top: 8),
+      child: InkWell(
+        key: const ValueKey('desktop-spotify-up-next'),
+        borderRadius: BorderRadius.circular(8),
+        onTap: _openSpotifyQueueSheet,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.queue_music_rounded,
+                size: 14,
+                color: AppColors.textDim,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'A continuación · ${_formatUpNextItem(upcoming.first)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
                     color: AppColors.textDim,
                   ),
-                  const SizedBox(width: 6),
-                  Expanded(
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Icon-only secondary actions: volume popover, device menu, queue sheet
+  /// (only with a known queue) and the overflow menu.
+  Widget _buildSpotifyActionIcons() {
+    final volume = _spotifyVolume();
+    final muted = volume != null && volume <= 0;
+    final hasQueue =
+        _spotify.upcomingQueue.isNotEmpty || _spotify.previousQueue.isNotEmpty;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        IconButton(
+          key: const ValueKey('desktop-spotify-volume'),
+          tooltip: 'Volumen',
+          visualDensity: VisualDensity.compact,
+          onPressed: _openSpotifyVolumeSheet,
+          icon: Icon(
+            muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+          ),
+        ),
+        _buildSpotifyDeviceMenu(),
+        if (hasQueue)
+          IconButton(
+            key: const ValueKey('desktop-spotify-queue'),
+            tooltip: 'Ver cola',
+            visualDensity: VisualDensity.compact,
+            onPressed: _openSpotifyQueueSheet,
+            icon: const Icon(Icons.playlist_play_rounded),
+          ),
+        PopupMenuButton<_SpotifyOverflowAction>(
+          key: const ValueKey('desktop-spotify-overflow'),
+          tooltip: 'Más opciones',
+          icon: const Icon(Icons.more_vert_rounded),
+          onSelected: _onSpotifyOverflow,
+          itemBuilder: (context) => const [
+            PopupMenuItem(
+              value: _SpotifyOverflowAction.settings,
+              child: Text('Abrir ajustes de Spotify'),
+            ),
+            PopupMenuItem(
+              value: _SpotifyOverflowAction.library,
+              child: Text('Ver playlists'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  void _onSpotifyOverflow(_SpotifyOverflowAction action) {
+    switch (action) {
+      case _SpotifyOverflowAction.settings:
+        _openSpotifySettings();
+      case _SpotifyOverflowAction.library:
+        setState(() => _showLibrary = true);
+    }
+  }
+
+  /// Bottom sheet with the existing volume slider; the trigger icon already
+  /// reflects muted/normal from the current volume.
+  Future<void> _openSpotifyVolumeSheet() {
+    return showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListenableBuilder(
+          listenable: _spotify,
+          builder: (context, _) => Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Volumen',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.text,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Center(child: _buildSpotifyVolumeSlider()),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSpotifyVolumeSlider() {
+    return _SpotifyVolumeSlider(
+      value: _spotifyVolume(),
+      enabled: _spotify.activeDevice != null,
+      onCommit: _spotify.setVolume,
+    );
+  }
+
+  /// Queue sheet with the existing row style: up to 10 upcoming items plus
+  /// an "Anteriores" section when the backend reports previous tracks.
+  Future<void> _openSpotifyQueueSheet() {
+    return showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListenableBuilder(
+          listenable: _spotify,
+          builder: (context, _) {
+            final upcoming = _spotify.upcomingQueue.take(10).toList();
+            final previous = _spotify.previousQueue.take(10).toList();
+            return SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Center(
                     child: Text(
-                      _formatQueueItem(item),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textDim,
+                      'A continuación',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.text,
                       ),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  if (upcoming.isEmpty)
+                    const Text(
+                      'No hay elementos en la cola.',
+                      style: TextStyle(fontSize: 13, color: AppColors.textDim),
+                    )
+                  else
+                    for (final item in upcoming) _buildSpotifyQueueRow(item),
+                  if (previous.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Anteriores',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.text,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    for (final item in previous) _buildSpotifyQueueRow(item),
+                  ],
                 ],
               ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSpotifyQueueRow(Map<String, dynamic> item) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.queue_music_rounded,
+            size: 14,
+            color: AppColors.textDim,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              _formatQueueItem(item),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12, color: AppColors.textDim),
             ),
+          ),
         ],
       ),
     );
@@ -1588,27 +1846,16 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     );
   }
 
-  Widget _buildSpotifyVolume() {
-    final playerVolume = _spotify.player?['volume_percent'];
-    final deviceVolume = _spotify.activeDevice?['volume_percent'];
-    final volume = playerVolume is int
-        ? playerVolume
-        : (deviceVolume is int ? deviceVolume : null);
-    return _SpotifyVolumeSlider(
-      value: volume,
-      enabled: _spotify.activeDevice != null,
-      onCommit: _spotify.setVolume,
-    );
-  }
-
-  /// Menu with the backend's device list. "Automático" clears the explicit
-  /// pick; any other entry transfers playback there.
-  Widget _buildSpotifyDevicePicker() {
+  /// Icon-triggered device menu with the backend's device list. "Automático"
+  /// clears the explicit pick; any other entry transfers playback there.
+  Widget _buildSpotifyDeviceMenu() {
     final active = _spotify.activeDevice;
     final activeId = active?['id'];
-    final name = active?['name']?.toString();
+    final hasDevice = active != null;
     return PopupMenuButton<String>(
-      tooltip: 'Elegir dispositivo',
+      key: const ValueKey('desktop-spotify-device'),
+      tooltip: hasDevice ? 'Elegir dispositivo' : 'Sin dispositivo activo',
+      icon: Icon(hasDevice ? Icons.speaker_rounded : Icons.speaker_outlined),
       onSelected: (value) {
         if (value.isEmpty) {
           _spotify.selectDevice(null);
@@ -1667,18 +1914,6 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
             ),
           ),
       ],
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.speaker_outlined, size: 18),
-          const SizedBox(width: 8),
-          Text(
-            (name == null || name.isEmpty) ? 'Sin dispositivo activo' : name,
-            style: const TextStyle(fontSize: 12, color: AppColors.textDim),
-          ),
-          const Icon(Icons.arrow_drop_down, size: 18),
-        ],
-      ),
     );
   }
 
@@ -2448,6 +2683,9 @@ class _CameraThumb extends StatelessWidget {
 
 // ----------------------------------------------------------------- spotify
 
+/// Entries of the Spotify card overflow menu.
+enum _SpotifyOverflowAction { settings, library }
+
 /// Official-style Spotify mark drawn in code (green disc + three white
 /// arcs): no extra icon font or binary asset needed.
 class _SpotifyLogo extends StatelessWidget {
@@ -3025,4 +3263,14 @@ String _formatQueueItem(Map<String, dynamic> item) {
   if (artist.isEmpty) return name;
   if (name.isEmpty) return artist;
   return '$name · $artist';
+}
+
+/// `name — artist` for the single up-next line, so the enclosing
+/// "A continuación ·" prefix does not double the separator dot.
+String _formatUpNextItem(Map<String, dynamic> item) {
+  final name = item['name']?.toString() ?? '';
+  final artist = item['artist']?.toString() ?? '';
+  if (artist.isEmpty) return name;
+  if (name.isEmpty) return artist;
+  return '$name — $artist';
 }

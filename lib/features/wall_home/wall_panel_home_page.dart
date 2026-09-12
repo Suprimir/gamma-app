@@ -18,6 +18,7 @@ import '../../data/weather_repository.dart';
 import '../../ui/shared_widgets.dart';
 import '../voice/vad_model.dart';
 import '../spotify/spotify_player_controller.dart';
+import '../settings/settings_page.dart';
 import 'wall_activity_bus.dart';
 import 'wall_voice_controller.dart';
 import '../devices/wall_devices_page.dart';
@@ -1094,14 +1095,8 @@ class _WallMusicCardState extends State<_WallMusicCard> {
   bool _connecting = false;
   bool _waitingAuth = false;
   bool _connected = false;
-  String _account = '';
   String? _error;
   Timer? _oauthPoll;
-
-  /// Guards the one-shot settings refetch that runs once the player answers:
-  /// duplicate in-flight reads are skipped and failures keep the previous
-  /// account name.
-  bool _accountRefetchInFlight = false;
 
   @override
   void initState() {
@@ -1136,7 +1131,6 @@ class _WallMusicCardState extends State<_WallMusicCard> {
         _connected =
             settings['authenticated'] == true &&
             settings['client_id_configured'] == true;
-        _account = settings['account_name']?.toString() ?? '';
       });
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -1205,7 +1199,6 @@ class _WallMusicCardState extends State<_WallMusicCard> {
           timer.cancel();
           setState(() {
             _connected = true;
-            _account = settings['account_name']?.toString() ?? '';
             _connecting = false;
             _waitingAuth = false;
           });
@@ -1251,24 +1244,6 @@ class _WallMusicCardState extends State<_WallMusicCard> {
       _waitingAuth = false;
       _error = null;
     });
-    unawaited(_refreshAccount());
-  }
-
-  /// One-shot refetch of the account name from settings. Never polls: the
-  /// settings endpoint hits Spotify upstream. Failures are swallowed so the
-  /// previous name stays.
-  Future<void> _refreshAccount() async {
-    if (_accountRefetchInFlight) return;
-    _accountRefetchInFlight = true;
-    try {
-      final settings = await widget.api.spotifySettings();
-      if (!mounted) return;
-      setState(() => _account = settings['account_name']?.toString() ?? '');
-    } catch (_) {
-      // Best effort: keep the account name already on screen.
-    } finally {
-      _accountRefetchInFlight = false;
-    }
   }
 
   @override
@@ -1368,22 +1343,36 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                     _waitingAuth ? 'Esperando...' : 'Conectar Spotify',
                   ),
                 ),
-              ] else ...[
-                if (_account.isNotEmpty)
-                  Text(
-                    _account,
-                    style: const TextStyle(fontSize: 13, color: Colors.white70),
-                  ),
-                const SizedBox(height: 10),
+              ] else if (_hasPlayback) ...[
                 _nowPlaying(),
                 _progress(),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
                 _transport(),
+                _upNextLine(),
                 const SizedBox(height: 6),
-                _volume(),
-                const SizedBox(height: 4),
-                _deviceButton(),
-                _queue(),
+                _secondaryActions(),
+                if (_spotify.error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _spotify.error!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.redAccent,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _spotify.refresh,
+                    child: const Text('Reintentar reproducción'),
+                  ),
+                ],
+              ] else ...[
+                const SizedBox(height: 6),
+                const Text(
+                  'Sin reproducción',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 15, color: Colors.white70),
+                ),
                 if (_spotify.error != null) ...[
                   const SizedBox(height: 8),
                   Text(
@@ -1419,11 +1408,16 @@ class _WallMusicCardState extends State<_WallMusicCard> {
     );
   }
 
-  /// Album art + name/artist, or the honest empty state when nothing is (or
-  /// was ever) loaded.
+  /// True when the backend reports loaded playback (or a track map arrived):
+  /// drives the player body versus the launcher hint.
+  bool get _hasPlayback =>
+      (_spotify.player != null && _spotify.player!['has_playback'] == true) ||
+      _spotify.track != null;
+
+  /// Hero row: album art + track + `Artist · device` subtitle.
   Widget _nowPlaying() {
     final track = _spotify.track;
-    if (_spotify.player?['has_playback'] != true || track == null) {
+    if (track == null) {
       return const Text(
         'Sin reproducción',
         textAlign: TextAlign.center,
@@ -1432,23 +1426,28 @@ class _WallMusicCardState extends State<_WallMusicCard> {
     }
     final name = track['name']?.toString();
     final artist = track['artist']?.toString();
+    final deviceName = _spotify.activeDevice?['name']?.toString();
+    final subtitle = [
+      if (artist != null && artist.isNotEmpty) artist,
+      if (deviceName != null && deviceName.isNotEmpty) deviceName,
+    ].join(' · ');
     final imageUrl = track['image_url']?.toString();
     final hasImage = imageUrl != null && imageUrl.isNotEmpty;
     Widget artworkFallback() => Container(
       color: const Color(0xFF262B3D),
       child: const Icon(
         Icons.music_note_rounded,
-        size: 28,
+        size: 40,
         color: Colors.white54,
       ),
     );
     return Row(
       children: [
         ClipRRect(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(18),
           child: SizedBox(
-            width: 64,
-            height: 64,
+            width: 96,
+            height: 96,
             child: hasImage
                 ? Image.network(
                     imageUrl,
@@ -1459,7 +1458,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                 : artworkFallback(),
           ),
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 16),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1470,18 +1469,18 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontSize: 17,
+                  fontSize: 20,
                   fontWeight: FontWeight.w700,
                   color: Colors.white,
                 ),
               ),
-              if (artist != null && artist.isNotEmpty) ...[
-                const SizedBox(height: 2),
+              if (subtitle.isNotEmpty) ...[
+                const SizedBox(height: 4),
                 Text(
-                  artist,
+                  subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13, color: Colors.white70),
+                  style: const TextStyle(fontSize: 14, color: Colors.white70),
                 ),
               ],
             ],
@@ -1491,7 +1490,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
     );
   }
 
-  /// Progress bar + `mm:ss` under the now-playing row. Rendered only when the
+  /// Progress bar + a single `mm:ss / mm:ss` label. Rendered only when the
   /// track reports a duration; the position comes from the controller's local
   /// interpolation (no extra network) and stays honest while paused.
   Widget _progress() {
@@ -1500,75 +1499,64 @@ class _WallMusicCardState extends State<_WallMusicCard> {
       return const SizedBox.shrink();
     }
     final position = (_spotify.progressMs ?? 0).clamp(0, duration);
-    const timeStyle = TextStyle(fontSize: 13, color: Colors.white70);
     return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      padding: const EdgeInsets.only(top: 12),
+      child: Row(
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(5),
-            child: LinearProgressIndicator(
-              value: position / duration,
-              minHeight: 8,
-              backgroundColor: Colors.white24,
-              color: const Color(0xFF4ADE80),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(5),
+              child: LinearProgressIndicator(
+                value: position / duration,
+                minHeight: 8,
+                backgroundColor: Colors.white24,
+                color: const Color(0xFF4ADE80),
+              ),
             ),
           ),
-          const SizedBox(height: 6),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(_formatPlaybackTime(position), style: timeStyle),
-              Text(_formatPlaybackTime(duration), style: timeStyle),
-            ],
+          const SizedBox(width: 10),
+          Text(
+            '${_formatPlaybackTime(position)} / ${_formatPlaybackTime(duration)}',
+            style: const TextStyle(fontSize: 15, color: Colors.white70),
           ),
         ],
       ),
     );
   }
 
-  /// Touch-sized upcoming queue preview ("A continuación"), hidden while
-  /// empty or unknown. Never invents rows.
-  Widget _queue() {
-    final upcoming = _spotify.upcomingQueue.take(3).toList();
+  /// Single up-next line; hidden while the queue is empty. Tapping opens the
+  /// touch-sized queue sheet.
+  Widget _upNextLine() {
+    final upcoming = _spotify.upcomingQueue;
     if (upcoming.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 14),
-        const Text(
-          'A continuación',
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            color: Colors.white,
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: InkWell(
+        key: const ValueKey('wall-spotify-up-next'),
+        borderRadius: BorderRadius.circular(12),
+        onTap: _openQueueSheet,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.queue_music_rounded,
+                size: 20,
+                color: Colors.white54,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'A continuación · ${_formatUpNextItem(upcoming.first)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 15, color: Colors.white70),
+                ),
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 8),
-        for (final item in upcoming)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.queue_music_rounded,
-                  size: 20,
-                  color: Colors.white54,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _formatQueueItem(item),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 15, color: Colors.white70),
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
+      ),
     );
   }
 
@@ -1634,38 +1622,207 @@ class _WallMusicCardState extends State<_WallMusicCard> {
     );
   }
 
-  Widget _volume() {
+  /// Volume reported by the player, else by the active device, else null.
+  int? _spotifyVolume() {
     final playerVolume = _spotify.player?['volume_percent'];
     final deviceVolume = _spotify.activeDevice?['volume_percent'];
-    final volume = playerVolume is int
-        ? playerVolume
-        : (deviceVolume is int ? deviceVolume : null);
+    if (playerVolume is int) return playerVolume;
+    if (deviceVolume is int) return deviceVolume;
+    return null;
+  }
+
+  Widget _volume() {
     return _WallVolumeSlider(
-      value: volume,
+      value: _spotifyVolume(),
       enabled: _spotify.activeDevice != null,
       onCommit: _spotify.setVolume,
+    );
+  }
+
+  /// Icon-only secondary actions: volume sheet, device sheet, queue sheet
+  /// (only with a known queue) and the overflow menu.
+  Widget _secondaryActions() {
+    final volume = _spotifyVolume();
+    final muted = volume != null && volume <= 0;
+    final hasQueue =
+        _spotify.upcomingQueue.isNotEmpty || _spotify.previousQueue.isNotEmpty;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        IconButton(
+          key: const ValueKey('wall-spotify-volume'),
+          tooltip: 'Volumen',
+          onPressed: _openVolumeSheet,
+          iconSize: 28,
+          color: Colors.white,
+          icon: Icon(
+            muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+          ),
+        ),
+        _deviceButton(),
+        if (hasQueue)
+          IconButton(
+            key: const ValueKey('wall-spotify-queue'),
+            tooltip: 'Ver cola',
+            onPressed: _openQueueSheet,
+            iconSize: 28,
+            color: Colors.white,
+            icon: const Icon(Icons.playlist_play_rounded),
+          ),
+        _overflowMenu(),
+      ],
     );
   }
 
   Widget _deviceButton() {
     final name = _spotify.activeDevice?['name']?.toString();
     final empty = name == null || name.isEmpty;
-    return SizedBox(
-      width: double.infinity,
-      child: TextButton.icon(
-        key: const ValueKey('wall-spotify-device'),
-        onPressed: _pickDevice,
-        icon: const Icon(Icons.speaker_rounded, size: 22),
-        label: Text(
-          empty ? 'Sin dispositivo activo' : name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        style: TextButton.styleFrom(
-          foregroundColor: Colors.white,
-          minimumSize: const Size(0, 56),
+    return IconButton(
+      key: const ValueKey('wall-spotify-device'),
+      tooltip: empty ? 'Sin dispositivo activo' : 'Elegir dispositivo',
+      onPressed: _pickDevice,
+      iconSize: 28,
+      color: Colors.white,
+      icon: Icon(empty ? Icons.speaker_outlined : Icons.speaker_rounded),
+    );
+  }
+
+  /// Touch-sized volume sheet with the existing full-width slider.
+  Future<void> _openVolumeSheet() {
+    return showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1B2030),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 36),
+          child: ListenableBuilder(
+            listenable: _spotify,
+            builder: (context, _) => Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Volumen',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _volume(),
+              ],
+            ),
+          ),
         ),
       ),
+    );
+  }
+
+  /// Touch-sized queue sheet: "A continuación" rows (up to 10) plus an
+  /// "Anteriores" section when the backend reports previous tracks.
+  Future<void> _openQueueSheet() {
+    return showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1B2030),
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          child: ListenableBuilder(
+            listenable: _spotify,
+            builder: (context, _) {
+              final upcoming = _spotify.upcomingQueue.take(10).toList();
+              final previous = _spotify.previousQueue.take(10).toList();
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 36),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Center(
+                      child: Text(
+                        'A continuación',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    if (upcoming.isEmpty)
+                      const Text(
+                        'No hay elementos en la cola.',
+                        style: TextStyle(fontSize: 15, color: Colors.white70),
+                      )
+                    else
+                      for (final item in upcoming) _queueRow(item),
+                    if (previous.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Anteriores',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      for (final item in previous) _queueRow(item),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _queueRow(Map<String, dynamic> item) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.queue_music_rounded,
+            size: 20,
+            color: Colors.white54,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _formatQueueItem(item),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 15, color: Colors.white70),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Overflow menu on the wall: full settings page for the Spotify account.
+  Widget _overflowMenu() {
+    return PopupMenuButton<String>(
+      key: const ValueKey('wall-spotify-overflow'),
+      tooltip: 'Más opciones',
+      icon: const Icon(Icons.more_vert_rounded, color: Colors.white, size: 28),
+      onSelected: (value) {
+        if (value == 'settings') _openSpotifySettings();
+      },
+      itemBuilder: (context) => const [
+        PopupMenuItem(
+          value: 'settings',
+          child: Text('Abrir ajustes de Spotify'),
+        ),
+      ],
+    );
+  }
+
+  void _openSpotifySettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => SettingsPage(api: widget.api)),
     );
   }
 
@@ -2874,4 +3031,14 @@ String _formatQueueItem(Map<String, dynamic> item) {
   if (artist.isEmpty) return name;
   if (name.isEmpty) return artist;
   return '$name · $artist';
+}
+
+/// `name — artist` for the single up-next line, so the enclosing
+/// "A continuación ·" prefix does not double the separator dot.
+String _formatUpNextItem(Map<String, dynamic> item) {
+  final name = item['name']?.toString() ?? '';
+  final artist = item['artist']?.toString() ?? '';
+  if (artist.isEmpty) return name;
+  if (name.isEmpty) return artist;
+  return '$name — $artist';
 }

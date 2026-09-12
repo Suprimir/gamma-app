@@ -9,34 +9,74 @@ import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/features/dashboard/desktop_dashboard_page.dart';
 import 'package:gamma_app/features/wall_home/wall_panel_home_page.dart';
 
-/// Widget coverage for the Spotify playback wiring: the wall music card
-/// issues real transport commands and the desktop playlist tap starts
-/// playback instead of showing a hint. Polling stays off in every test
-/// (both pages default to `Duration.zero`).
+/// Widget coverage for the progressively disclosed Spotify cards: the player
+/// state shows hero + progress + one up-next line with the queue/volume/device
+/// behind triggers, and the launcher state owns the playlists. Polling stays
+/// off unless a test opts in, so no timer outlives the widget tree.
 void main() {
   setUp(() {
     MediaKit.ensureInitialized();
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('wall music card shows now-playing and commands pause/resume', (
-    tester,
-  ) async {
-    final api = _SpotifyCardApi();
+  /// Fixed pumps instead of pumpAndSettle: the assistant orb animates forever
+  /// on both home surfaces, so settle would never complete on the card itself.
+  Future<void> settleSurface(WidgetTester tester) async {
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+  }
+
+  Future<void> pumpWall(
+    WidgetTester tester,
+    _SpotifyCardApi api, {
+    Duration pollInterval = Duration.zero,
+  }) async {
     tester.view.physicalSize = const Size(1280, 1000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(body: WallPanelHomePage(api: api, idleTimeout: null)),
+        home: Scaffold(
+          body: WallPanelHomePage(
+            api: api,
+            idleTimeout: null,
+            spotifyPollInterval: pollInterval,
+          ),
+        ),
       ),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
+  }
+
+  Future<void> pumpDesktop(
+    WidgetTester tester,
+    _SpotifyCardApi api, {
+    Duration pollInterval = Duration.zero,
+  }) async {
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DesktopDashboardPage(api: api, spotifyPollInterval: pollInterval),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1400));
+  }
+
+  testWidgets('wall player shows the hero and commands pause/resume', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi();
+    await pumpWall(tester, api);
 
     expect(find.text('Tema'), findsOneWidget);
-    expect(find.text('Artista'), findsOneWidget);
+    // Artist and device share one subtitle line.
+    expect(find.text('Artista · Parlante'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Pausar'));
     await tester.pump();
@@ -50,7 +90,7 @@ void main() {
     expect(api.commands, contains('resume'));
   });
 
-  testWidgets('wall music card renders progress and queue when available', (
+  testWidgets('wall player shows progress and opens the queue sheet', (
     tester,
   ) async {
     final api = _SpotifyCardApi()
@@ -58,22 +98,22 @@ void main() {
         {'uri': 'spotify:track:2', 'name': 'Tema 2', 'artist': 'Artista 2'},
         {'uri': 'spotify:track:3', 'name': 'Tema 3', 'artist': 'Artista 3'},
       ];
-    tester.view.physicalSize = const Size(1280, 1000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(body: WallPanelHomePage(api: api, idleTimeout: null)),
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
+    await pumpWall(tester, api);
 
     // Track progress_ms 1000 / duration_ms 3000 from the fake player.
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
-    expect(find.text('00:01'), findsOneWidget);
-    expect(find.text('00:03'), findsOneWidget);
+    expect(find.text('00:01 / 00:03'), findsOneWidget);
+
+    // One up-next line only; the rows live behind the sheet.
+    expect(
+      find.textContaining('A continuación · Tema 2 — Artista 2'),
+      findsOneWidget,
+    );
+    expect(find.text('Tema 2 · Artista 2'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('wall-spotify-up-next')));
+    await settleSurface(tester);
+
     expect(find.text('A continuación'), findsOneWidget);
     expect(find.text('Tema 2 · Artista 2'), findsOneWidget);
     expect(find.text('Tema 3 · Artista 3'), findsOneWidget);
@@ -84,17 +124,7 @@ void main() {
   ) async {
     // Playing with pause/next executable but skip_prev not advertised.
     final api = _SpotifyCardApi()..actions = ['pause', 'skip_next'];
-    tester.view.physicalSize = const Size(1280, 1000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(body: WallPanelHomePage(api: api, idleTimeout: null)),
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
+    await pumpWall(tester, api);
 
     final previous = tester.widget<IconButton>(
       find.widgetWithIcon(IconButton, Icons.skip_previous_rounded),
@@ -110,71 +140,70 @@ void main() {
     expect(pause.onPressed, isNotNull);
   });
 
-  testWidgets('desktop playlist tap issues playContext with the real uri', (
+  testWidgets('wall volume lives behind its trigger and commits on drag', (
     tester,
   ) async {
     final api = _SpotifyCardApi();
-    tester.view.physicalSize = const Size(1400, 1000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+    await pumpWall(tester, api);
 
-    await tester.pumpWidget(MaterialApp(home: DesktopDashboardPage(api: api)));
+    expect(find.byType(Slider), findsNothing);
+    await tester.tap(find.byTooltip('Volumen'));
+    await settleSurface(tester);
+
+    expect(find.text('Volumen'), findsOneWidget);
+    expect(find.byType(Slider), findsOneWidget);
+
+    await tester.drag(find.byType(Slider), const Offset(-120, 0));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 1400));
-
-    expect(find.text('Mi Playlist'), findsOneWidget);
-    await tester.tap(find.text('Mi Playlist'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-
-    expect(api.lastPlayUri, 'spotify:playlist:42');
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(
+      api.commands.any((command) => command.startsWith('volume:')),
+      isTrue,
+    );
   });
 
-  testWidgets(
-    'desktop Spotify card renders progress and queue when available',
-    (tester) async {
-      final api = _SpotifyCardApi()
-        ..upcomingQueue = [
-          {'uri': 'spotify:track:2', 'name': 'Tema 2', 'artist': 'Artista 2'},
-          {'uri': 'spotify:track:3', 'name': 'Tema 3', 'artist': 'Artista 3'},
-        ];
-      tester.view.physicalSize = const Size(1400, 1000);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
+  testWidgets('wall queue sheet adds the previous section when available', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi()
+      ..upcomingQueue = [
+        {'uri': 'spotify:track:9', 'name': 'Después', 'artist': 'B'},
+      ]
+      ..previousQueue = [
+        {'uri': 'spotify:track:1', 'name': 'Antes', 'artist': 'A'},
+      ];
+    await pumpWall(tester, api);
 
-      await tester.pumpWidget(
-        MaterialApp(home: DesktopDashboardPage(api: api)),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 1400));
+    await tester.tap(find.byTooltip('Ver cola'));
+    await settleSurface(tester);
 
-      // Track progress_ms 1000 / duration_ms 3000 from the fake player.
-      expect(find.byType(LinearProgressIndicator), findsOneWidget);
-      expect(find.text('00:01'), findsOneWidget);
-      expect(find.text('00:03'), findsOneWidget);
-      expect(find.text('A continuación'), findsOneWidget);
-      expect(find.text('Tema 2 · Artista 2'), findsOneWidget);
-      expect(find.text('Tema 3 · Artista 3'), findsOneWidget);
-    },
-  );
+    expect(find.text('Anteriores'), findsOneWidget);
+    expect(find.text('Antes · A'), findsOneWidget);
+    expect(find.text('Después · B'), findsOneWidget);
+  });
 
-  testWidgets('wall music card is honest with no device: transport disabled', (
+  testWidgets('wall device picker opens from the icon with Automático', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi();
+    await pumpWall(tester, api);
+
+    await tester.tap(find.byTooltip('Elegir dispositivo'));
+    await settleSurface(tester);
+
+    expect(find.text('Reproducir en'), findsOneWidget);
+    expect(find.text('Automático'), findsOneWidget);
+    expect(find.text('Parlante'), findsOneWidget);
+  });
+
+  testWidgets('wall player is honest with no device: transport disabled', (
     tester,
   ) async {
     final api = _SpotifyCardApi()..deviceAvailable = false;
-    tester.view.physicalSize = const Size(1280, 1000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+    await pumpWall(tester, api);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(body: WallPanelHomePage(api: api, idleTimeout: null)),
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
-
-    expect(find.text('Sin dispositivo activo'), findsOneWidget);
+    // The icon-only row keeps the honest state on the device trigger.
+    expect(find.byTooltip('Sin dispositivo activo'), findsOneWidget);
     // is_playing is still true in the player, but with no device every
     // transport target must be disabled instead of failing with a 409.
     final playPause = tester.widget<IconButton>(
@@ -187,30 +216,25 @@ void main() {
     expect(next.onPressed, isNull);
   });
 
+  testWidgets('wall launcher shows header + hint only', (tester) async {
+    final api = _SpotifyCardApi()..hasPlayback = false;
+    await pumpWall(tester, api);
+
+    expect(find.text('Conectado'), findsOneWidget);
+    expect(find.text('Sin reproducción'), findsOneWidget);
+    // No account line, playlists or player stack in the wall launcher.
+    expect(find.text('Luis'), findsNothing);
+    expect(find.byTooltip('Volumen'), findsNothing);
+    expect(find.byTooltip('Reproducir'), findsNothing);
+  });
+
   testWidgets('wall music card converges when the player becomes available', (
     tester,
   ) async {
     final api = _SpotifyCardApi()
       ..authenticated = false
-      ..spotifyReady = false
-      ..accountName = '';
-    tester.view.physicalSize = const Size(1280, 1000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: WallPanelHomePage(
-            api: api,
-            idleTimeout: null,
-            spotifyPollInterval: const Duration(seconds: 1),
-          ),
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
+      ..spotifyReady = false;
+    await pumpWall(tester, api, pollInterval: const Duration(seconds: 1));
 
     expect(find.text('Sin conectar'), findsOneWidget);
     expect(find.text('Conectar Spotify'), findsOneWidget);
@@ -220,18 +244,15 @@ void main() {
     api
       ..authenticated = true
       ..spotifyReady = true
-      ..hasPlayback = false
-      ..accountName = 'Luis';
+      ..hasPlayback = false;
 
     await tester.pump(const Duration(seconds: 1));
     await tester.pump();
 
     expect(find.text('Conectado'), findsOneWidget);
     expect(find.text('Sin reproducción'), findsOneWidget);
-    expect(find.byTooltip('Reproducir'), findsOneWidget);
-    expect(find.text('Luis'), findsOneWidget);
-    // Initial status read plus the one-shot refetch triggered by the player.
-    expect(api.settingsCalls, 2);
+    // Header + hint only: the settings read stays one-shot.
+    expect(api.settingsCalls, 1);
 
     // Disconnect direction: a 401/503 player response restores the connect
     // affordance even though the settings flag stays true.
@@ -246,6 +267,161 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('desktop player shows progress and opens the queue sheet', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi()
+      ..upcomingQueue = [
+        {'uri': 'spotify:track:2', 'name': 'Tema 2', 'artist': 'Artista 2'},
+        {'uri': 'spotify:track:3', 'name': 'Tema 3', 'artist': 'Artista 3'},
+      ];
+    await pumpDesktop(tester, api);
+
+    expect(find.text('Tema'), findsOneWidget);
+    expect(find.text('Artista · Parlante'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.text('00:01 / 00:03'), findsOneWidget);
+
+    // One up-next line only; the rows live behind the sheet.
+    expect(
+      find.textContaining('A continuación · Tema 2 — Artista 2'),
+      findsOneWidget,
+    );
+    expect(find.text('Tema 2 · Artista 2'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('desktop-spotify-up-next')));
+    await settleSurface(tester);
+
+    expect(find.text('A continuación'), findsOneWidget);
+    expect(find.text('Tema 2 · Artista 2'), findsOneWidget);
+    expect(find.text('Tema 3 · Artista 3'), findsOneWidget);
+  });
+
+  testWidgets('desktop volume lives behind its trigger', (tester) async {
+    final api = _SpotifyCardApi();
+    await pumpDesktop(tester, api);
+
+    expect(find.byType(Slider), findsNothing);
+    await tester.tap(find.byTooltip('Volumen'));
+    await settleSurface(tester);
+
+    expect(find.text('Volumen'), findsOneWidget);
+    expect(find.byType(Slider), findsOneWidget);
+
+    await tester.drag(find.byType(Slider), const Offset(-40, 0));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(
+      api.commands.any((command) => command.startsWith('volume:')),
+      isTrue,
+    );
+  });
+
+  testWidgets('desktop transport follows the advertised actions list', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi()..actions = ['pause', 'skip_next'];
+    await pumpDesktop(tester, api);
+
+    final previous = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.skip_previous_rounded),
+    );
+    expect(previous.onPressed, isNull);
+    final next = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.skip_next_rounded),
+    );
+    expect(next.onPressed, isNotNull);
+  });
+
+  testWidgets('desktop playlists stay hidden until "Ver playlists" is tapped', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi();
+    await pumpDesktop(tester, api);
+
+    // Player state: hero + progress, no library stack.
+    expect(find.text('Tema'), findsOneWidget);
+    expect(find.text('Mi Playlist'), findsNothing);
+    expect(find.text('Abrir ajustes de Spotify'), findsNothing);
+
+    await tester.tap(find.byTooltip('Más opciones'));
+    await settleSurface(tester);
+    expect(find.text('Abrir ajustes de Spotify'), findsOneWidget);
+
+    await tester.tap(find.text('Ver playlists'));
+    await settleSurface(tester);
+
+    // Launcher pinned over active playback with a way back.
+    expect(find.text('Mi Playlist'), findsOneWidget);
+    expect(find.text('Volver al reproductor'), findsOneWidget);
+
+    await tester.tap(find.text('Volver al reproductor'));
+    await settleSurface(tester);
+    expect(find.text('Mi Playlist'), findsNothing);
+    expect(find.text('Tema'), findsOneWidget);
+  });
+
+  testWidgets('desktop new track returns from the pinned launcher to player', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi();
+    await pumpDesktop(tester, api, pollInterval: const Duration(seconds: 1));
+
+    await tester.tap(find.byTooltip('Más opciones'));
+    await settleSurface(tester);
+    await tester.tap(find.text('Ver playlists'));
+    await settleSurface(tester);
+    expect(find.text('Volver al reproductor'), findsOneWidget);
+
+    // A new track starts: the pin resets without fighting the toggle.
+    api.trackUri = 'spotify:track:99';
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+
+    expect(find.text('Volver al reproductor'), findsNothing);
+    expect(find.text('Tema'), findsOneWidget);
+
+    // Dispose the page so the periodic poll timer is cancelled.
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('desktop player fits a narrow tile with a long title', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi()
+      ..trackName =
+          'Un título extremadamente largo que no debe desbordar la tarjeta';
+    tester.view.physicalSize = const Size(1100, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(MaterialApp(home: DesktopDashboardPage(api: api)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1400));
+
+    // The hero row ellipsizes instead of overflowing (a RenderFlex overflow
+    // would surface as a test exception).
+    expect(
+      find.textContaining('Un título extremadamente largo'),
+      findsOneWidget,
+    );
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+  });
+
+  testWidgets('desktop launcher playlist tap issues playContext with the uri', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi()..hasPlayback = false;
+    await pumpDesktop(tester, api);
+
+    expect(find.text('Mi Playlist'), findsOneWidget);
+    await tester.tap(find.text('Mi Playlist'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(api.lastPlayUri, 'spotify:playlist:42');
+  });
+
   testWidgets('desktop Spotify card converges when the player is available', (
     tester,
   ) async {
@@ -254,20 +430,7 @@ void main() {
       ..spotifyReady = false
       ..accountName = ''
       ..playlists = [];
-    tester.view.physicalSize = const Size(1400, 1000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: DesktopDashboardPage(
-          api: api,
-          spotifyPollInterval: const Duration(seconds: 1),
-        ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 1400));
+    await pumpDesktop(tester, api, pollInterval: const Duration(seconds: 1));
 
     expect(find.text('Sin conectar'), findsOneWidget);
     expect(find.text('Conectar Spotify'), findsOneWidget);
@@ -295,8 +458,7 @@ void main() {
 
     expect(find.text('Conectado'), findsOneWidget);
     expect(find.text('Sin reproducción'), findsOneWidget);
-    expect(find.byTooltip('Reproducir'), findsOneWidget);
-    expect(find.text('Luis'), findsOneWidget);
+    expect(find.text('Conectado como Luis'), findsOneWidget);
     expect(find.text('Mi Playlist'), findsOneWidget);
     // Initial home load plus the one-shot refetch triggered by the player.
     expect(api.settingsCalls, 2);
@@ -330,6 +492,8 @@ class _SpotifyCardApi extends ApiClient {
   bool spotifyReady = true;
   bool hasPlayback = true;
   String accountName = 'Luis';
+  String trackUri = 'spotify:track:1';
+  String trackName = 'Tema';
   List<Map<String, dynamic>> playlists = [
     {
       'type': 'playlist',
@@ -344,6 +508,7 @@ class _SpotifyCardApi extends ApiClient {
 
   /// Queue listing returned by [spotifyPlaybackQueue].
   List<Map<String, dynamic>> upcomingQueue = [];
+  List<Map<String, dynamic>> previousQueue = [];
 
   /// When non-null, the player advertises this executable actions list.
   List<String>? actions;
@@ -357,7 +522,7 @@ class _SpotifyCardApi extends ApiClient {
 
   @override
   Future<Map<String, dynamic>> spotifyPlaybackQueue({int limit = 20}) async => {
-    'previous': [],
+    'previous': previousQueue,
     'upcoming': upcomingQueue,
     'limited': false,
   };
@@ -419,7 +584,8 @@ class _SpotifyCardApi extends ApiClient {
       'is_playing': hasPlayback && _playing,
       'track': hasPlayback
           ? {
-              'name': 'Tema',
+              'uri': trackUri,
+              'name': trackName,
               'artist': 'Artista',
               'album': null,
               'image_url': null,
@@ -477,6 +643,15 @@ class _SpotifyCardApi extends ApiClient {
   Future<Map<String, dynamic>> spotifyPrevious({String? deviceId}) async {
     commands.add('previous');
     return {'ok': true, 'action': 'previous', 'device_id': deviceId};
+  }
+
+  @override
+  Future<Map<String, dynamic>> spotifySetVolume(
+    int volumePercent, {
+    String? deviceId,
+  }) async {
+    commands.add('volume:$volumePercent');
+    return {'ok': true, 'action': 'volume', 'device_id': deviceId};
   }
 
   @override
