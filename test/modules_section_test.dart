@@ -151,4 +151,52 @@ void main() {
     expect(switchWidget.value, isFalse);
     expect(find.textContaining('sin conexión'), findsOneWidget);
   });
+
+  testWidgets('gear appears only for configured modules and calls back', (
+    tester,
+  ) async {
+    _setPhoneSize(tester);
+    final api = _FakeApiClient();
+    final configured = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ModulesSection(
+              api: api,
+              onConfigure: configured.add,
+              configuredModules: const {'spotify'},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(
+      find.byKey(const ValueKey('module-configure-spotify')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('module-configure-news')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('module-configure-domotics')),
+      findsNothing,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('module-configure-spotify')));
+    await tester.pump();
+    expect(configured, ['spotify']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('sin callback no se renderiza ningún engranaje', (tester) async {
+    _setPhoneSize(tester);
+    await tester.pumpWidget(_host(_FakeApiClient()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byTooltip('Configurar'), findsNothing);
+    expect(find.byIcon(Icons.settings_outlined), findsNothing);
+  });
 }

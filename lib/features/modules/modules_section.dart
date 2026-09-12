@@ -8,9 +8,23 @@ import '../../ui/shared_widgets.dart';
 
 /// Lista compacta de módulos para integrarla dentro de Ajustes.
 class ModulesSection extends StatefulWidget {
-  const ModulesSection({super.key, required this.api});
+  const ModulesSection({
+    super.key,
+    required this.api,
+    this.onConfigure,
+    this.configuredModules = const {},
+  });
 
   final ApiClient api;
+
+  /// Called with the module name when its gear is tapped. A gear is rendered
+  /// only for names listed in [configuredModules]: modules without a
+  /// configuration screen (e.g. `domotics`) never show one.
+  final void Function(String module)? onConfigure;
+
+  /// Module names that expose a configuration screen. Only meaningful
+  /// together with [onConfigure].
+  final Set<String> configuredModules;
 
   @override
   State<ModulesSection> createState() => _ModulesSectionState();
@@ -161,6 +175,13 @@ class _ModulesSectionState extends State<ModulesSection> {
             actionError: _actionErrors[_modules[i]['name']?.toString()],
             onToggle: (enabled) =>
                 _toggle(_modules[i]['name'].toString(), enabled),
+            onConfigure:
+                widget.onConfigure != null &&
+                    widget.configuredModules.contains(
+                      _modules[i]['name']?.toString(),
+                    )
+                ? () => widget.onConfigure!(_modules[i]['name'].toString())
+                : null,
           ),
           if (i < _modules.length - 1)
             const Divider(height: 1, color: AppColors.border),
@@ -176,12 +197,16 @@ class _ModuleRow extends StatelessWidget {
     required this.pending,
     required this.actionError,
     required this.onToggle,
+    this.onConfigure,
   });
 
   final Map<String, dynamic> module;
   final bool pending;
   final String? actionError;
   final ValueChanged<bool> onToggle;
+
+  /// Gear action; null hides the gear (module without a config screen).
+  final VoidCallback? onConfigure;
 
   @override
   Widget build(BuildContext context) {
@@ -269,6 +294,16 @@ class _ModuleRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
+          if (onConfigure != null) ...[
+            IconButton(
+              key: ValueKey('module-configure-$name'),
+              tooltip: 'Configurar',
+              visualDensity: VisualDensity.compact,
+              onPressed: pending ? null : onConfigure,
+              icon: const Icon(Icons.settings_outlined, size: 20),
+            ),
+            const SizedBox(width: 2),
+          ],
           Stack(
             alignment: Alignment.center,
             children: [

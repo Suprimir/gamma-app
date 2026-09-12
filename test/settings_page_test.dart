@@ -5,7 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/features/modules/modules_section.dart';
+import 'package:gamma_app/features/settings/cameras_module_screen.dart';
+import 'package:gamma_app/features/settings/llm_module_screen.dart';
+import 'package:gamma_app/features/settings/news_module_screen.dart';
 import 'package:gamma_app/features/settings/settings_page.dart';
+import 'package:gamma_app/features/settings/spotify_module_screen.dart';
 import 'package:gamma_app/features/settings/tts_preview_player.dart';
 
 class _FakeSettingsApi extends ApiClient {
@@ -68,107 +72,19 @@ class _FakeSettingsApi extends ApiClient {
     'client_id_configured': true,
   };
 
-  // --- Configuración del núcleo -------------------------------------------
-
-  Object? configError;
-  Map<String, dynamic> configData = {
+  /// Minimal redacted view so the pushed module screens render their fields.
+  @override
+  Future<Map<String, dynamic>> configOverview() async => {
     'spotify': {
       'client_id': {'value': 'client-env', 'source': 'env'},
       'client_secret': {'configured': true, 'source': 'store', 'last4': '3784'},
       'device_name': {'value': 'GAMMA', 'source': 'store'},
       'market': {'value': 'MX', 'source': 'store'},
     },
-    'news': {
-      'api_key': {'configured': true, 'source': 'store', 'last4': '0e2f'},
-    },
     'llm': {
       'gemini_api_key': {'configured': false, 'source': 'unset', 'last4': null},
     },
-    'cameras': {
-      'nvr_host': {'value': '', 'source': 'unset'},
-      'nvr_port': {'value': '80', 'source': 'store'},
-      'nvr_isapi_path': {'value': '/ISAPI', 'source': 'store'},
-      'nvr_user': {'value': '', 'source': 'unset'},
-      'nvr_pass': {'configured': false, 'source': 'unset', 'last4': null},
-    },
   };
-
-  @override
-  Future<Map<String, dynamic>> configOverview() async {
-    final error = configError;
-    if (error != null) throw error;
-    return configData;
-  }
-
-  final spotifyConfigCalls = <Map<String, Object?>>[];
-  Map<String, dynamic> spotifyConfigResponse = const {};
-  Object? spotifyConfigError;
-
-  @override
-  Future<Map<String, dynamic>> updateSpotifyConfig({
-    String? clientId,
-    String? clientSecret,
-    String? deviceName,
-    String? market,
-  }) async {
-    spotifyConfigCalls.add({
-      'client_id': ?clientId,
-      'client_secret': ?clientSecret,
-      'device_name': ?deviceName,
-      'market': ?market,
-    });
-    final error = spotifyConfigError;
-    if (error != null) throw error;
-    return spotifyConfigResponse;
-  }
-
-  final newsConfigCalls = <String>[];
-  Map<String, dynamic> newsConfigResponse = const {};
-  Object? newsConfigError;
-
-  @override
-  Future<Map<String, dynamic>> updateNewsConfig(String apiKey) async {
-    newsConfigCalls.add(apiKey);
-    final error = newsConfigError;
-    if (error != null) throw error;
-    return newsConfigResponse;
-  }
-
-  final llmConfigCalls = <String>[];
-  Map<String, dynamic> llmConfigResponse = const {};
-  Object? llmConfigError;
-
-  @override
-  Future<Map<String, dynamic>> updateLlmConfig(String apiKey) async {
-    llmConfigCalls.add(apiKey);
-    final error = llmConfigError;
-    if (error != null) throw error;
-    return llmConfigResponse;
-  }
-
-  final camerasConfigCalls = <Map<String, Object?>>[];
-  Map<String, dynamic> camerasConfigResponse = const {};
-  Object? camerasConfigError;
-
-  @override
-  Future<Map<String, dynamic>> updateCamerasConfig({
-    String? nvrHost,
-    int? nvrPort,
-    String? nvrIsapiPath,
-    String? nvrUser,
-    String? nvrPass,
-  }) async {
-    camerasConfigCalls.add({
-      'nvr_host': ?nvrHost,
-      'nvr_port': ?nvrPort,
-      'nvr_isapi_path': ?nvrIsapiPath,
-      'nvr_user': ?nvrUser,
-      'nvr_pass': ?nvrPass,
-    });
-    final error = camerasConfigError;
-    if (error != null) throw error;
-    return camerasConfigResponse;
-  }
 
   @override
   Future<List<Map<String, dynamic>>> modules() async => [
@@ -178,6 +94,27 @@ class _FakeSettingsApi extends ApiClient {
       'description': 'Control multimedia.',
       'enabled': true,
       'required': false,
+    },
+    {
+      'name': 'news',
+      'display_name': 'Noticias module',
+      'description': 'Titulares del día.',
+      'enabled': true,
+      'required': false,
+    },
+    {
+      'name': 'cameras',
+      'display_name': 'Cámaras module',
+      'description': 'Snapshots del NVR.',
+      'enabled': true,
+      'required': false,
+    },
+    {
+      'name': 'domotics',
+      'display_name': 'Domótica module',
+      'description': 'Control de dispositivos.',
+      'enabled': true,
+      'required': true,
     },
   ];
 
@@ -300,210 +237,68 @@ void main() {
     expect(player.played, isNull);
   });
 
-  testWidgets('Configuración muestra valores y nunca renderiza secretos', (
+  testWidgets('la página principal es solo de sistema, sin config de módulos', (
+    tester,
+  ) async {
+    await _pumpSettings(tester, _FakeSettingsApi());
+
+    expect(find.text('Voz del asistente'), findsOneWidget);
+    expect(find.text('Modo de interfaz'), findsOneWidget);
+    expect(find.text('Módulos'), findsOneWidget);
+    expect(find.text('Sistema'), findsOneWidget);
+
+    // Module-scoped configuration moved to its own screens.
+    expect(find.text('Configuración de Spotify'), findsNothing);
+    expect(find.text('Credenciales de la app'), findsNothing);
+    expect(find.text('Gemini API key'), findsNothing);
+    expect(find.text('Host del NVR'), findsNothing);
+  });
+
+  testWidgets('el engranaje abre la pantalla del módulo y domótica no tiene', (
+    tester,
+  ) async {
+    await _pumpSettings(tester, _FakeSettingsApi());
+
+    // Domotics has no configuration screen: never a gear.
+    expect(
+      find.byKey(const ValueKey('module-configure-domotics')),
+      findsNothing,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('module-configure-spotify')));
+    await tester.pumpAndSettle();
+    expect(find.byType(SpotifyModuleScreen), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('module-configure-news')));
+    await tester.pumpAndSettle();
+    expect(find.byType(NewsModuleScreen), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('module-configure-cameras')));
+    await tester.pumpAndSettle();
+    expect(find.byType(CamerasModuleScreen), findsOneWidget);
+  });
+
+  testWidgets('la tarjeta de IA abre la pantalla de la clave de Gemini', (
     tester,
   ) async {
     await _pumpSettings(
       tester,
       _FakeSettingsApi(),
-      size: const Size(700, 3600),
+      size: const Size(600, 1800),
     );
 
-    expect(find.text('Configuración de Spotify'), findsOneWidget);
-    expect(find.text('Noticias'), findsOneWidget);
     expect(find.text('Inteligencia artificial'), findsOneWidget);
-    expect(find.text('Cámaras'), findsOneWidget);
+    expect(find.text('Clave de Gemini y ajustes del modelo'), findsOneWidget);
 
-    expect(_fieldText(tester, 'config-spotify-client-id'), 'client-env');
-    expect(find.text('definido en .env'), findsOneWidget);
-    expect(_fieldText(tester, 'config-spotify-client-secret'), isEmpty);
-    expect(find.text('Configurado · últimos 4: 3784'), findsOneWidget);
-    expect(_fieldText(tester, 'config-news-api-key'), isEmpty);
-    expect(find.text('Configurado · últimos 4: 0e2f'), findsOneWidget);
-    expect(_fieldText(tester, 'config-llm-api-key'), isEmpty);
-    expect(find.text('Sin configurar'), findsWidgets);
-    expect(_fieldText(tester, 'config-cameras-port'), '80');
-    expect(_fieldText(tester, 'config-cameras-isapi-path'), '/ISAPI');
-  });
+    await tester.tap(find.byKey(const ValueKey('open-ai-config')));
+    await tester.pumpAndSettle();
 
-  testWidgets('Spotify guarda solo lo modificado y avisa la reconexión', (
-    tester,
-  ) async {
-    final api = _FakeSettingsApi()
-      ..spotifyConfigResponse = {
-        'applies': 'hot',
-        'reconnect_required': true,
-        'message': 'Credenciales actualizadas',
-      };
-    await _pumpSettings(tester, api, size: const Size(700, 3600));
-
-    await tester.enterText(
-      find.byKey(const ValueKey('config-spotify-device-name')),
-      'GAMMA-2',
-    );
-    await tester.tap(find.byKey(const ValueKey('config-spotify-save')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-
-    expect(api.spotifyConfigCalls, [
-      {'device_name': 'GAMMA-2'},
-    ]);
-    expect(find.text('Credenciales actualizadas'), findsOneWidget);
-    expect(
-      find.text('Reconectá tu cuenta para usar las credenciales nuevas'),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('spotify-reconnect')), findsOneWidget);
-  });
-
-  testWidgets('Spotify muestra el mensaje 422 del backend', (tester) async {
-    final api = _FakeSettingsApi()
-      ..spotifyConfigError = ApiException(422, {
-        'detail': 'El client_secret no puede estar vacío.',
-      });
-    await _pumpSettings(tester, api, size: const Size(700, 3600));
-
-    await tester.enterText(
-      find.byKey(const ValueKey('config-spotify-client-secret')),
-      'secreto',
-    );
-    await tester.tap(find.byKey(const ValueKey('config-spotify-save')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-
-    expect(api.spotifyConfigCalls, [
-      {'client_secret': 'secreto'},
-    ]);
-    expect(find.text('El client_secret no puede estar vacío.'), findsOneWidget);
-  });
-
-  testWidgets('Noticias guarda la API key, la limpia y muestra el mensaje', (
-    tester,
-  ) async {
-    final api = _FakeSettingsApi()
-      ..newsConfigResponse = {
-        'applies': 'hot',
-        'message': 'API key actualizada',
-      };
-    await _pumpSettings(tester, api, size: const Size(700, 3600));
-
-    await tester.enterText(
-      find.byKey(const ValueKey('config-news-api-key')),
-      'clave-123',
-    );
-    await tester.tap(find.byKey(const ValueKey('config-news-save')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-
-    expect(api.newsConfigCalls, ['clave-123']);
-    expect(find.text('API key actualizada'), findsOneWidget);
-    expect(_fieldText(tester, 'config-news-api-key'), isEmpty);
-  });
-
-  testWidgets('Noticias muestra el 422 de validación', (tester) async {
-    final api = _FakeSettingsApi()
-      ..newsConfigError = ApiException(422, {'detail': 'API key inválida.'});
-    await _pumpSettings(tester, api, size: const Size(700, 3600));
-
-    await tester.enterText(
-      find.byKey(const ValueKey('config-news-api-key')),
-      'mala',
-    );
-    await tester.tap(find.byKey(const ValueKey('config-news-save')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-
-    expect(find.text('API key inválida.'), findsOneWidget);
-    expect(_fieldText(tester, 'config-news-api-key'), 'mala');
-  });
-
-  testWidgets('IA guarda la clave y anuncia el reinicio del núcleo', (
-    tester,
-  ) async {
-    final api = _FakeSettingsApi()
-      ..llmConfigResponse = {
-        'applies': 'restart_required',
-        'message': 'Se aplicará al reiniciar el núcleo',
-      };
-    await _pumpSettings(tester, api, size: const Size(700, 3600));
-
-    await tester.enterText(
-      find.byKey(const ValueKey('config-llm-api-key')),
-      'gemini-key',
-    );
-    await tester.tap(find.byKey(const ValueKey('config-llm-save')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-
-    expect(api.llmConfigCalls, ['gemini-key']);
-    expect(find.text('Se aplicará al reiniciar el núcleo'), findsOneWidget);
-    expect(_fieldText(tester, 'config-llm-api-key'), isEmpty);
-  });
-
-  testWidgets('Cámaras envía solo los campos modificados', (tester) async {
-    final api = _FakeSettingsApi()
-      ..camerasConfigResponse = {
-        'applies': 'restart_required',
-        'message': 'Configuración de cámaras actualizada',
-      };
-    await _pumpSettings(tester, api, size: const Size(700, 3600));
-
-    await tester.enterText(
-      find.byKey(const ValueKey('config-cameras-host')),
-      '192.168.1.50',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('config-cameras-port')),
-      '8080',
-    );
-    await tester.tap(find.byKey(const ValueKey('config-cameras-save')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-
-    expect(api.camerasConfigCalls, [
-      {'nvr_host': '192.168.1.50', 'nvr_port': 8080},
-    ]);
-    expect(find.text('Configuración de cámaras actualizada'), findsOneWidget);
-  });
-
-  testWidgets('Cámaras rechaza un puerto no numérico', (tester) async {
-    final api = _FakeSettingsApi();
-    await _pumpSettings(tester, api, size: const Size(700, 3600));
-
-    await tester.enterText(
-      find.byKey(const ValueKey('config-cameras-port')),
-      'ochenta',
-    );
-    await tester.tap(find.byKey(const ValueKey('config-cameras-save')));
-    await tester.pump();
-
-    expect(find.text('El puerto debe ser un número.'), findsOneWidget);
-    expect(api.camerasConfigCalls, isEmpty);
-  });
-
-  testWidgets('Configuración falla sin blanquear la página y reintenta', (
-    tester,
-  ) async {
-    final api = _FakeSettingsApi()..configError = StateError('sin conexión');
-    await _pumpSettings(tester, api, size: const Size(700, 3600));
-
-    expect(
-      find.text('No se pudo leer la configuración del núcleo.'),
-      findsWidgets,
-    );
-    expect(find.text('Voz del asistente'), findsOneWidget);
-    expect(find.text('Módulos'), findsOneWidget);
-    expect(find.text('Sistema'), findsOneWidget);
-
-    api.configError = null;
-    await tester.tap(find.text('Reintentar').first);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-
-    expect(find.text('Configuración de Spotify'), findsOneWidget);
-    expect(_fieldText(tester, 'config-spotify-client-id'), 'client-env');
+    expect(find.byType(LlmModuleScreen), findsOneWidget);
+    expect(find.byKey(const ValueKey('config-llm-api-key')), findsOneWidget);
+    expect(find.byKey(const ValueKey('config-llm-save')), findsOneWidget);
   });
 }
-
-String _fieldText(WidgetTester tester, String key) =>
-    tester.widget<TextField>(find.byKey(ValueKey(key))).controller!.text;
