@@ -86,6 +86,44 @@ String deviceMutationErrorMessage(Object error) {
   return error.toString();
 }
 
+/// Legacy static climate modes used before capability descriptors existed.
+const legacyClimateModeOptions = <String>['cold', 'heat', 'auto', 'fan'];
+
+/// Options for the climate-mode control. Preference order:
+/// 1. the MODE endpoint's descriptor `enumValues` (canonical domain),
+/// 2. the backend default domain (`auto|manual`) when commands are available,
+/// 3. the legacy static list (mock/fake repositories).
+///
+/// [selected] is always present in the result: an out-of-domain state is
+/// rendered as its own selected chip instead of being silently dropped.
+List<String> capabilityModeOptions({
+  required DeviceEndpoint? endpoint,
+  required bool commandsAvailable,
+  required String selected,
+}) {
+  final enumValues = endpoint?.capabilityDetails['MODE']?.enumValues;
+  final options = <String>[
+    if (enumValues != null && enumValues.isNotEmpty)
+      ...enumValues
+    else if (commandsAvailable) ...const ['auto', 'manual'] else
+      ...legacyClimateModeOptions,
+  ];
+  if (!options.contains(selected)) options.add(selected);
+  return options;
+}
+
+/// Spanish household label for a climate-mode value; raw fallback so an
+/// unknown backend mode is never hidden.
+String capabilityModeLabel(String mode) => switch (mode) {
+  'auto' => 'Auto',
+  'manual' => 'Manual',
+  'cold' || 'cool' => 'Frío',
+  'heat' => 'Calor',
+  'fan' => 'Ventilación',
+  'dry' => 'Seco',
+  _ => mode,
+};
+
 /// Kind → icon badge background color.
 Color kindBadgeColor(DeviceKind kind) => switch (kind) {
   DeviceKind.light => AppColors.kindLight,

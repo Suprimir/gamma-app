@@ -159,22 +159,64 @@ class HttpDeviceInventoryRepository
 
   // ---- DeviceCommandRepository: execute/mutate beyond the read surface ----
 
+  /// Canonical action → capability used to extract the per-capability
+  /// observation from `observed_state.capabilities`.
+  static const _actionCapabilities = <String, String>{
+    'set_power': 'POWER',
+    'set_brightness': 'BRIGHTNESS',
+    'set_position': 'POSITION',
+    'set_color': 'COLOR',
+    'set_color_temperature': 'COLOR_TEMPERATURE',
+    'set_speed': 'SPEED',
+    'set_mode': 'MODE',
+  };
+
   @override
   Future<EndpointPowerResult> setEndpointPower(
     String deviceId,
     String endpointId,
     bool enabled,
   ) async {
-    final response = await _api.endpointAction(
+    final result = await executeAction(
       deviceId,
       endpointId,
       action: 'set_power',
       value: enabled,
     );
+    return EndpointPowerResult(
+      outcome: result.outcome,
+      changed: result.changed,
+      observedPower: result.observedValue is bool
+          ? result.observedValue as bool
+          : null,
+      observedQuality: result.observedQuality,
+      observedAt: result.observedAt,
+      errorCode: result.errorCode,
+      errorDetail: result.errorDetail,
+      responseParsed: result.responseParsed,
+    );
+  }
+
+  @override
+  Future<CapabilityActionResult> executeAction(
+    String deviceId,
+    String endpointId, {
+    required String action,
+    required Object value,
+  }) async {
+    final response = await _api.endpointAction(
+      deviceId,
+      endpointId,
+      action: action,
+      value: value,
+    );
+    final capability = _actionCapabilities[action];
     // The live backend answers 200 with a literal null body until the typed
     // result DTO ships: the command was accepted but nothing was confirmed.
     if (response == null) {
-      return const EndpointPowerResult(
+      return CapabilityActionResult(
+        action: action,
+        capability: capability,
         outcome: 'unconfirmed',
         responseParsed: false,
       );
@@ -183,20 +225,51 @@ class HttpDeviceInventoryRepository
     final observed = observedState is Map
         ? observedState.cast<String, dynamic>()
         : const <String, dynamic>{};
-    return EndpointPowerResult(
+
+    Object? observedValue;
+    String? observedQuality;
+    String? observedAt;
+    if (capability != null) {
+      final capabilities = observed['capabilities'];
+      final entry = capabilities is Map ? capabilities[capability] : null;
+      if (entry is Map) {
+        final typed = entry.cast<String, dynamic>();
+        observedValue = typed['value'];
+        final quality = typed['quality'];
+        observedQuality = quality is String && quality.isNotEmpty
+            ? quality
+            : null;
+        observedAt = typed['observed_at'] is String
+            ? typed['observed_at'] as String
+            : null;
+      }
+    }
+    // Legacy compatibility for set_power: early DTOs report the power
+    // observation at the top level of observed_state instead of the
+    // per-capability map.
+    if (observedValue == null &&
+        action == 'set_power' &&
+        observed['power'] is bool) {
+      observedValue = observed['power'];
+      final quality = observed['quality'];
+      observedQuality = quality is String && quality.isNotEmpty
+          ? quality
+          : null;
+      observedAt = observed['observed_at'] is String
+          ? observed['observed_at'] as String
+          : null;
+    }
+
+    return CapabilityActionResult(
+      action: action,
+      capability: capability,
       outcome: response['outcome'] is String
           ? response['outcome'] as String
           : 'unconfirmed',
       changed: response['changed'] is bool ? response['changed'] as bool : null,
-      observedPower: observed['power'] is bool
-          ? observed['power'] as bool
-          : null,
-      observedQuality: observed['quality'] is String
-          ? observed['quality'] as String
-          : null,
-      observedAt: observed['observed_at'] is String
-          ? observed['observed_at'] as String
-          : null,
+      observedValue: observedValue,
+      observedQuality: observedQuality,
+      observedAt: observedAt,
       errorCode: response['error_code'] is String
           ? response['error_code'] as String
           : null,
@@ -439,12 +512,14 @@ DeviceEndpoint _parseEndpoint(Object? value) {
   }
 
   final capabilities = <String>{};
+  final capabilityDetails = <String, DeviceCapability>{};
   final rawCapabilities = value['capabilities'];
   if (rawCapabilities is List) {
     for (final capability in rawCapabilities) {
-      if (capability is Map && capability['capability'] is String) {
-        capabilities.add(capability['capability'] as String);
-      }
+      final detail = parseDeviceCapability(capability);
+      if (detail == null) continue;
+      capabilities.add(detail.name);
+      capabilityDetails[detail.name] = detail;
     }
   }
 
@@ -470,6 +545,7 @@ DeviceEndpoint _parseEndpoint(Object? value) {
         : id,
     kind: DeviceKind.unknown,
     capabilities: Set.unmodifiable(capabilities),
+    capabilityDetails: Map.unmodifiable(capabilityDetails),
     controlledAreaId: value['controlled_area_id'] is String
         ? value['controlled_area_id'] as String
         : null,
@@ -502,5 +578,6 @@ DeviceEndpoint _parseEndpoint(Object? value) {
         ? observedQuality
         : null,
     observedAt: observedAt is String ? observedAt : null,
+    observedCapabilities: parseObservedCapabilities(observed['capabilities']),
   );
 }

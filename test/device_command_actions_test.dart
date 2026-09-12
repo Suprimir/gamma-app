@@ -42,6 +42,15 @@ class _CommandFakeRepo
   Object? bindError;
   final bindCalls = <(String, String, String, String)>[];
 
+  /// Configurable result for [executeAction]; defaults to a parsed SUCCESS.
+  CapabilityActionResult? actionResult;
+
+  /// When set, [executeAction] throws it instead of returning a result.
+  Object? actionError;
+
+  /// Recorded `executeAction` calls as (deviceId, endpointId, action, value).
+  final actionCalls = <(String, String, String, Object)>[];
+
   @override
   bool get supportsIdentify => false;
 
@@ -95,6 +104,24 @@ class _CommandFakeRepo
     );
     devices[index] = updated;
     return updated;
+  }
+
+  @override
+  Future<CapabilityActionResult> executeAction(
+    String deviceId,
+    String endpointId, {
+    required String action,
+    required Object value,
+  }) async {
+    actionCalls.add((deviceId, endpointId, action, value));
+    final error = actionError;
+    if (error != null) throw error;
+    return actionResult ??
+        CapabilityActionResult(
+          action: action,
+          outcome: 'SUCCESS',
+          changed: true,
+        );
   }
 
   @override

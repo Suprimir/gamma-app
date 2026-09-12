@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../data/device_capability_commit.dart';
 import '../data/device_inventory.dart';
 
 /// Estado compartido de la feature Devices/Areas para las superficies
@@ -173,6 +174,8 @@ class AdaptiveFeatureController extends ChangeNotifier {
   int? _pendingFanSpeed;
   double? _pendingTargetTemperature;
   String? _pendingClimateMode;
+  int? _pendingPosition;
+  int? _pendingColorTemperature;
 
   /// Device-level detail type chosen in the desktop detail pane (light /
   /// switch / fan / ...), not yet saved. [_pendingRole] is the matching
@@ -181,6 +184,9 @@ class AdaptiveFeatureController extends ChangeNotifier {
   String? _pendingType;
   String? _pendingRole;
 
+  /// One-shot truthful notice for the last commit (see [consumeCommitNotice]).
+  String? _commitNotice;
+
   String? get pendingLocationId => _pendingLocationId;
   String? get pendingLocation => _pendingLocationId;
   bool? get pendingPower => _pendingPower;
@@ -188,6 +194,8 @@ class AdaptiveFeatureController extends ChangeNotifier {
   int? get pendingFanSpeed => _pendingFanSpeed;
   double? get pendingTargetTemperature => _pendingTargetTemperature;
   String? get pendingClimateMode => _pendingClimateMode;
+  int? get pendingPosition => _pendingPosition;
+  int? get pendingColorTemperature => _pendingColorTemperature;
   String? get pendingType => _pendingType;
   bool get hasPendingChanges =>
       _pendingLocationId != null ||
@@ -196,6 +204,8 @@ class AdaptiveFeatureController extends ChangeNotifier {
       _pendingFanSpeed != null ||
       _pendingTargetTemperature != null ||
       _pendingClimateMode != null ||
+      _pendingPosition != null ||
+      _pendingColorTemperature != null ||
       _pendingType != null;
 
   void markPendingLocation(String? locationId) {
@@ -237,6 +247,16 @@ class AdaptiveFeatureController extends ChangeNotifier {
     _notify();
   }
 
+  void markPendingPosition(int? position) {
+    _pendingPosition = position;
+    _notify();
+  }
+
+  void markPendingColorTemperature(int? colorTemperature) {
+    _pendingColorTemperature = colorTemperature;
+    _notify();
+  }
+
   void markDirty({String? locationId, bool? power, int? brightness}) {
     var changed = false;
     if (locationId != null) {
@@ -262,6 +282,8 @@ class AdaptiveFeatureController extends ChangeNotifier {
     _pendingFanSpeed = null;
     _pendingTargetTemperature = null;
     _pendingClimateMode = null;
+    _pendingPosition = null;
+    _pendingColorTemperature = null;
     _pendingType = null;
     _pendingRole = null;
     _notify();
@@ -269,6 +291,10 @@ class AdaptiveFeatureController extends ChangeNotifier {
 
   /// Sequentially commits pending changes via repository, applying each
   /// canonical response via [applyCanonicalDevice]. Keeps dirty on failure.
+  ///
+  /// With a command-capable repository the capability-backed fields execute
+  /// canonical actions (`set_brightness`, `set_speed`, `set_mode`,
+  /// `set_power`); without one they keep the legacy local-only convergence.
   Future<PhysicalDevice> commitPendingChanges(String deviceId) async {
     if (!hasPendingChanges) {
       final current = snapshot?.devices.firstWhere(
@@ -278,9 +304,9 @@ class AdaptiveFeatureController extends ChangeNotifier {
       if (current != null) return current;
       throw StateError('No snapshot');
     }
+    _commitNotice = null;
     PhysicalDevice? last;
-    // Location is the only repository-backed field currently; power/brightness
-    // are buffered locally until contract extends (disabled+Tooltip in UI).
+    // Location is repository-backed on every repository implementation.
     if (_pendingLocationId != null) {
       final location = _pendingLocationId;
       final updated = await _repository.assignPhysicalArea(deviceId, location);
@@ -314,37 +340,52 @@ class AdaptiveFeatureController extends ChangeNotifier {
       _pendingType = null;
       _pendingRole = null;
     }
-    // Power and demo display values converge locally (mock-only fields with
-    // no repository setter): they buffer until Guardar cambios instead of
-    // applying instantly.
-    if (_pendingPower != null ||
-        _pendingBrightness != null ||
-        _pendingFanSpeed != null ||
-        _pendingTargetTemperature != null ||
-        _pendingClimateMode != null) {
-      var current = snapshot?.devices.firstWhere((d) => d.id == deviceId);
-      if (current != null) {
-        final power = _pendingPower;
-        current = current.copyWith(
-          powerOn: power ?? current.powerOn,
-          online: power ?? current.online,
-          health: power == null
-              ? current.health
-              : (power ? DeviceHealthState.online : DeviceHealthState.sleeping),
-          brightness: _pendingBrightness ?? current.brightness,
-          fanSpeed: _pendingFanSpeed ?? current.fanSpeed,
-          targetTemperature:
-              _pendingTargetTemperature ?? current.targetTemperature,
-          climateMode: _pendingClimateMode ?? current.climateMode,
-        );
-        applyCanonicalDevice(current);
-        last = current;
+    final commands = asDeviceCommandRepository(_repository);
+    if (commands == null) {
+      // Legacy local convergence: power and demo display values are
+      // mock-only fields with no repository setter, so they apply locally
+      // instead of being sent to a backend.
+      if (_pendingPower != null ||
+          _pendingBrightness != null ||
+          _pendingFanSpeed != null ||
+          _pendingTargetTemperature != null ||
+          _pendingClimateMode != null ||
+          _pendingPosition != null ||
+          _pendingColorTemperature != null) {
+        var current = snapshot?.devices.firstWhere((d) => d.id == deviceId);
+        if (current != null) {
+          final power = _pendingPower;
+          current = current.copyWith(
+            powerOn: power ?? current.powerOn,
+            online: power ?? current.online,
+            health: power == null
+                ? current.health
+                : (power
+                      ? DeviceHealthState.online
+                      : DeviceHealthState.sleeping),
+            brightness: _pendingBrightness ?? current.brightness,
+            fanSpeed: _pendingFanSpeed ?? current.fanSpeed,
+            targetTemperature:
+                _pendingTargetTemperature ?? current.targetTemperature,
+            climateMode: _pendingClimateMode ?? current.climateMode,
+            position: _pendingPosition ?? current.position,
+            colorTemperature:
+                _pendingColorTemperature ?? current.colorTemperature,
+          );
+          applyCanonicalDevice(current);
+          last = current;
+        }
+        _pendingPower = null;
+        _pendingBrightness = null;
+        _pendingFanSpeed = null;
+        _pendingTargetTemperature = null;
+        _pendingClimateMode = null;
+        _pendingPosition = null;
+        _pendingColorTemperature = null;
       }
-      _pendingPower = null;
-      _pendingBrightness = null;
-      _pendingFanSpeed = null;
-      _pendingTargetTemperature = null;
-      _pendingClimateMode = null;
+    } else {
+      final committed = await _commitPendingCapabilities(deviceId);
+      if (committed != null) last = committed;
     }
     _notify();
     if (last != null) return last;
@@ -352,6 +393,143 @@ class AdaptiveFeatureController extends ChangeNotifier {
     final fallback = snapshot?.devices.firstWhere((d) => d.id == deviceId);
     if (fallback != null) return fallback;
     throw StateError('Device not found after commit: $deviceId');
+  }
+
+  /// Commands path of [commitPendingChanges]: every capability-backed field
+  /// runs on the first writable endpoint of its capability through the shared
+  /// [commitCapabilityFields] helper, sequentially and in the canonical order
+  /// (brightness, speed, mode, position, color temperature). Each field is
+  /// cleared only after its batch returned, so an [ApiException] mid-way keeps
+  /// the fields that were not executed yet buffered and the already-executed
+  /// ones merged. Power and target temperature stay controller-local: power
+  /// uses the canonical `set_power` path and temperature has no backend action
+  /// (documented contract gap) so it converges locally.
+  ///
+  /// Returns the last canonical device applied, if any.
+  Future<PhysicalDevice?> _commitPendingCapabilities(String deviceId) async {
+    final snapshot = _snapshot;
+    if (snapshot == null) {
+      throw StateError('No snapshot');
+    }
+    var current = snapshot.devices.firstWhere(
+      (d) => d.id == deviceId,
+      orElse: () => throw StateError('Device not found: $deviceId'),
+    );
+    final commands = asDeviceCommandRepository(_repository);
+    if (commands == null) {
+      throw UnsupportedError(
+        'El repositorio no soporta comandos de dispositivo.',
+      );
+    }
+    PhysicalDevice? last;
+    final executed = <String>[];
+
+    Future<void> runBatch({
+      int? brightness,
+      int? fanSpeed,
+      String? climateMode,
+      int? position,
+      int? colorTemperature,
+    }) async {
+      final result = await commitCapabilityFields(
+        commands: commands,
+        device: current,
+        brightness: brightness,
+        fanSpeed: fanSpeed,
+        climateMode: climateMode,
+        position: position,
+        colorTemperature: colorTemperature,
+        onOutcome: executed.add,
+      );
+      current = result.device;
+      // Converge immediately so an ApiException on a later field keeps the
+      // already-executed observations in the snapshot.
+      applyCanonicalDevice(current);
+      last = current;
+    }
+
+    final brightness = _pendingBrightness;
+    if (brightness != null) {
+      await runBatch(brightness: brightness);
+      _pendingBrightness = null;
+    }
+
+    final fanSpeed = _pendingFanSpeed;
+    if (fanSpeed != null) {
+      await runBatch(fanSpeed: fanSpeed);
+      _pendingFanSpeed = null;
+    }
+
+    final climateMode = _pendingClimateMode;
+    if (climateMode != null) {
+      await runBatch(climateMode: climateMode);
+      _pendingClimateMode = null;
+    }
+
+    final position = _pendingPosition;
+    if (position != null) {
+      await runBatch(position: position);
+      _pendingPosition = null;
+    }
+
+    final colorTemperature = _pendingColorTemperature;
+    if (colorTemperature != null) {
+      await runBatch(colorTemperature: colorTemperature);
+      _pendingColorTemperature = null;
+    }
+
+    final power = _pendingPower;
+    if (power != null) {
+      final endpoint = _firstPowerEndpoint(current);
+      if (endpoint != null) {
+        final result = await setEndpointPower(deviceId, endpoint.id, power);
+        executed.add(result.outcome);
+        current = _deviceById(deviceId) ?? current;
+        last = current;
+      }
+      _pendingPower = null;
+    }
+
+    // No canonical backend action exists for target temperature: it keeps
+    // converging locally exactly as before (documented contract gap).
+    final targetTemperature = _pendingTargetTemperature;
+    if (targetTemperature != null) {
+      final updated = current.copyWith(targetTemperature: targetTemperature);
+      applyCanonicalDevice(updated);
+      current = updated;
+      last = updated;
+    }
+    _pendingTargetTemperature = null;
+
+    _commitNotice = capabilityCommitNotice(executed);
+    return last;
+  }
+
+  /// Truthful one-shot notice for the last commit. Returns
+  /// 'Escritura deshabilitada en el modo actual' when every executed action
+  /// answered `EXECUTION_DISABLED`, or 'Orden enviada — sin confirmación del
+  /// dispositivo' when every executed action was `unconfirmed`; null
+  /// otherwise (including mixed results). Cleared on read.
+  String? consumeCommitNotice() {
+    final notice = _commitNotice;
+    _commitNotice = null;
+    return notice;
+  }
+
+  PhysicalDevice? _deviceById(String deviceId) {
+    final snapshot = _snapshot;
+    if (snapshot == null) return null;
+    for (final device in snapshot.devices) {
+      if (device.id == deviceId) return device;
+    }
+    return null;
+  }
+
+  DeviceEndpoint? _firstPowerEndpoint(PhysicalDevice device) {
+    for (final endpoint in device.endpoints) {
+      if (hasPowerCapability(endpoint)) return endpoint;
+    }
+    return null;
   }
 
   void selectDevice(String? id) {
@@ -364,6 +542,8 @@ class AdaptiveFeatureController extends ChangeNotifier {
       _pendingFanSpeed = null;
       _pendingTargetTemperature = null;
       _pendingClimateMode = null;
+      _pendingPosition = null;
+      _pendingColorTemperature = null;
       _pendingType = null;
       _pendingRole = null;
     }
@@ -443,17 +623,116 @@ class AdaptiveFeatureController extends ChangeNotifier {
     }
     DeviceEndpoint? endpoint;
     if (device != null) {
-      for (final candidate in device.endpoints) {
-        if (hasPowerCapability(candidate)) {
-          endpoint = candidate;
-          break;
-        }
-      }
+      endpoint = _firstPowerEndpoint(device);
     }
     if (endpoint == null) {
       throw UnsupportedError('El dispositivo no expone un canal de encendido.');
     }
     return setEndpointPower(deviceId, endpoint.id, enabled);
+  }
+
+  /// Executes `set_brightness` on [endpointId] with an int percent (0-100).
+  Future<CapabilityActionResult> setBrightness(
+    String deviceId,
+    String endpointId,
+    int percent,
+  ) => _executeCapability(
+    deviceId,
+    endpointId,
+    action: 'set_brightness',
+    value: percent,
+  );
+
+  /// Executes `set_speed` on [endpointId] with an int percent (0-100). The
+  /// UI's 3-level fan control converts through [speedLevelToPercent].
+  Future<CapabilityActionResult> setSpeed(
+    String deviceId,
+    String endpointId,
+    int percent,
+  ) => _executeCapability(
+    deviceId,
+    endpointId,
+    action: 'set_speed',
+    value: percent,
+  );
+
+  /// Executes `set_mode` on [endpointId] with an enum string.
+  Future<CapabilityActionResult> setMode(
+    String deviceId,
+    String endpointId,
+    String mode,
+  ) =>
+      _executeCapability(deviceId, endpointId, action: 'set_mode', value: mode);
+
+  /// Shared capability command path: requires the segregated command surface,
+  /// executes one canonical action and merges the confirmed observation into
+  /// the snapshot endpoint. The typed result is returned as-is.
+  Future<CapabilityActionResult> _executeCapability(
+    String deviceId,
+    String endpointId, {
+    required String action,
+    required Object value,
+  }) async {
+    final commands = asDeviceCommandRepository(_repository);
+    if (commands == null) {
+      throw UnsupportedError(
+        'El repositorio no soporta comandos de dispositivo.',
+      );
+    }
+    final result = await commands.executeAction(
+      deviceId,
+      endpointId,
+      action: action,
+      value: value,
+    );
+    final capability = result.capability;
+    final observedValue = result.observedValue;
+    if (result.responseParsed &&
+        capability != null &&
+        observedValue != null &&
+        result.observedQuality != null) {
+      _mergeCapabilityObservation(
+        deviceId,
+        endpointId,
+        capability,
+        observedValue,
+        result.observedQuality,
+        result.observedAt,
+      );
+    }
+    return result;
+  }
+
+  /// Merges one observed capability value into the cached snapshot endpoint.
+  /// Unknown ids and endpoints are deterministic no-ops.
+  void _mergeCapabilityObservation(
+    String deviceId,
+    String endpointId,
+    String capability,
+    Object value,
+    String? quality,
+    String? observedAt,
+  ) {
+    final device = _deviceById(deviceId);
+    if (device == null) return;
+    if (!device.endpoints.any((endpoint) => endpoint.id == endpointId)) return;
+    final endpoints = device.endpoints
+        .map(
+          (endpoint) => endpoint.id == endpointId
+              ? endpoint.copyWith(
+                  observedCapabilities: Map.unmodifiable({
+                    ...endpoint.observedCapabilities,
+                    capability: EndpointCapabilityObservation(
+                      value: value,
+                      quality: quality,
+                      observedAt: observedAt,
+                    ),
+                  }),
+                )
+              : endpoint,
+        )
+        .toList();
+    applyCanonicalDevice(device.copyWith(endpoints: endpoints));
   }
 
   /// Merges a confirmed power observation into the cached snapshot endpoint.

@@ -16,10 +16,12 @@ import '../routines/routines_page.dart';
 ///
 /// The "Tipo" selector inside Controles is device-level and reactive: type
 /// specific controls below it rebuild instantly when the user picks another
-/// type (e.g. a switch misdetected as generic that is really a fan). Demo
-/// display values (brightness, fan speed, target temperature, climate mode)
-/// live in [PhysicalDevice] as optional mock-only fields; nothing here assumes
-/// a real backend integration beyond rename/areas/identify/delete-local.
+/// type (e.g. a switch misdetected as generic that is really a fan).
+/// Brightness, fan speed, climate mode, position and color temperature read
+/// the canonical confirmed observations when present and buffer the user's
+/// value until Guardar cambios, which executes the canonical capability
+/// actions through the shared commit helper. Demo-only values remain the last
+/// resort for mock/fake repositories without observations.
 class DesktopDeviceDetailPane extends StatefulWidget {
   const DesktopDeviceDetailPane({
     super.key,
@@ -50,6 +52,7 @@ class DesktopDeviceDetailPane extends StatefulWidget {
 const _typeLight = 'light';
 const _typeOutlet = 'outlet';
 const _typeSwitch = 'switch';
+const _typeBlinds = 'blinds';
 const _typeFan = 'fan';
 const _typeClimate = 'climate';
 const _typeSensor = 'sensor';
@@ -58,6 +61,7 @@ const _detailTypes = <String>[
   _typeLight,
   _typeOutlet,
   _typeSwitch,
+  _typeBlinds,
   _typeFan,
   _typeClimate,
   _typeSensor,
@@ -79,6 +83,11 @@ _DetailTypeMeta _metaFor(String type) => switch (type) {
   _typeOutlet => const _DetailTypeMeta(
     'Enchufe',
     Icons.power_outlined,
+    AppColors.kindBlinds,
+  ),
+  _typeBlinds => const _DetailTypeMeta(
+    'Persiana',
+    Icons.blinds_closed,
     AppColors.kindBlinds,
   ),
   _typeFan => const _DetailTypeMeta('Ventilador', Icons.air, AppColors.kindFan),
@@ -114,6 +123,7 @@ String _initialType(PhysicalDevice device) {
     'sensor' => _typeSensor,
     'outlet' => _typeOutlet,
     'climate' => _typeClimate,
+    'cover' || 'blind' || 'blinds' || 'shutter' || 'curtain' => _typeBlinds,
     _ => null,
   };
   if (fromRole != null) return fromRole;
@@ -124,9 +134,19 @@ String _initialType(PhysicalDevice device) {
     'fan' => _typeFan,
     'climate' || 'ac' || 'thermostat' => _typeClimate,
     'sensor' => _typeSensor,
+    'cover' || 'blind' || 'blinds' || 'shutter' || 'curtain' => _typeBlinds,
     _ => null,
   };
   if (fromClass != null && fromClass != 'unknown') return fromClass;
+  // Position capability without role/class metadata: a generically detected
+  // blind must still resolve to its real control.
+  if (device.endpoints.any(
+    (endpoint) =>
+        endpoint.capabilities.contains('POSITION') ||
+        endpoint.capabilityDetails.containsKey('POSITION'),
+  )) {
+    return _typeBlinds;
+  }
   return switch (device.kind) {
     DeviceKind.light => _typeLight,
     DeviceKind.outlet => _typeOutlet,
@@ -135,8 +155,9 @@ String _initialType(PhysicalDevice device) {
   };
 }
 
-/// Backend semantic role matching a detail type, when one exists. Outlet and
-/// climate have no role in the current contract, so they stay local-only.
+/// Backend semantic role matching a detail type, when one exists. Outlet,
+/// blinds and climate have no role in the current contract, so they stay
+/// local-only.
 String? _roleForType(String type) => switch (type) {
   _typeLight => 'light',
   _typeSwitch => 'switch',
@@ -252,20 +273,71 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
     return devicePowerDisplayState(device);
   }
 
-  double _effectiveBrightness(PhysicalDevice device) =>
-      (widget.controller.pendingBrightness ?? device.brightness ?? 80)
-          .toDouble();
+  /// Confirmed numeric observation for [capability] on the first writable
+  /// endpoint; null when unknown (never a fabricated value).
+  num? _confirmedCapabilityNumber(PhysicalDevice device, String capability) {
+    final endpoint = firstEndpointWithCapability(device, capability);
+    if (endpoint == null) return null;
+    final value = confirmedCapabilityValue(endpoint, capability);
+    return value is num ? value : null;
+  }
 
-  int _effectiveFanSpeed(PhysicalDevice device) =>
-      widget.controller.pendingFanSpeed ?? device.fanSpeed ?? 2;
+  double _effectiveBrightness(PhysicalDevice device) {
+    final pending = widget.controller.pendingBrightness;
+    if (pending != null) return pending.toDouble().clamp(0, 100);
+    final observed = _confirmedCapabilityNumber(device, 'BRIGHTNESS');
+    if (observed != null) return observed.toDouble().clamp(0, 100);
+    return (device.brightness ?? 80).toDouble();
+  }
+
+  int _effectiveFanSpeed(PhysicalDevice device) {
+    final pending = widget.controller.pendingFanSpeed;
+    if (pending != null) return pending;
+    final percent = _confirmedCapabilityNumber(device, 'SPEED');
+    if (percent != null) return percentToSpeedLevel(percent);
+    return device.fanSpeed ?? 2;
+  }
 
   double _effectiveTargetTemperature(PhysicalDevice device) =>
       widget.controller.pendingTargetTemperature ??
       device.targetTemperature ??
       22;
 
-  String _effectiveClimateMode(PhysicalDevice device) =>
-      widget.controller.pendingClimateMode ?? device.climateMode ?? 'cold';
+  String _effectiveClimateMode(PhysicalDevice device) {
+    final pending = widget.controller.pendingClimateMode;
+    if (pending != null) return pending;
+    final endpoint = firstEndpointWithCapability(device, 'MODE');
+    final observed = endpoint == null
+        ? null
+        : confirmedCapabilityValue(endpoint, 'MODE');
+    if (observed is String && observed.isNotEmpty) return observed;
+    return device.climateMode ?? 'cold';
+  }
+
+  int _effectivePosition(PhysicalDevice device) {
+    final pending = widget.controller.pendingPosition;
+    if (pending != null) return pending.clamp(0, 100);
+    final observed = _confirmedCapabilityNumber(device, 'POSITION');
+    if (observed != null) return observed.round().clamp(0, 100);
+    return (device.position ?? 0).clamp(0, 100);
+  }
+
+  int _effectiveColorTemperature(PhysicalDevice device) {
+    final pending = widget.controller.pendingColorTemperature;
+    if (pending != null) return pending.clamp(0, 100);
+    final observed = _confirmedCapabilityNumber(device, 'COLOR_TEMPERATURE');
+    if (observed != null) return observed.round().clamp(0, 100);
+    return (device.colorTemperature ?? 50).clamp(0, 100);
+  }
+
+  /// Whether the resolved COLOR_TEMPERATURE endpoint carries descriptor
+  /// metadata: the color-temperature slider only renders for
+  /// descriptor-backed lights (never for type-driven mocks).
+  bool _showColorTemperature(PhysicalDevice device) {
+    final endpoint = firstEndpointWithCapability(device, 'COLOR_TEMPERATURE');
+    return endpoint?.capabilityDetails.containsKey('COLOR_TEMPERATURE') ??
+        false;
+  }
 
   bool _isSensorFor(PhysicalDevice device) =>
       _effectiveType(device) == _typeSensor || device.isGateway;
@@ -319,7 +391,16 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
     setState(() => _saving = true);
     try {
       await widget.controller.commitPendingChanges(_canonical.id);
+      final notice = widget.controller.consumeCommitNotice();
       if (!mounted) return;
+      if (notice != null) {
+        // Truthful notice instead of the success toast: the command was not
+        // confirmed (writes disabled / unparsed response).
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(notice)));
+        return;
+      }
       _showSavedToast();
     } catch (e) {
       if (!mounted) return;
@@ -696,6 +777,14 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
                                   targetTemperature:
                                       _effectiveTargetTemperature(device),
                                   climateMode: _effectiveClimateMode(device),
+                                  position: _effectivePosition(device),
+                                  colorTemperature: _effectiveColorTemperature(
+                                    device,
+                                  ),
+                                  showColorTemperature: _showColorTemperature(
+                                    device,
+                                  ),
+                                  commandsAvailable: _commandsAvailable,
                                   onTypeChanged: _setType,
                                   onBrightnessChanged: (v) => widget.controller
                                       .markPendingBrightness(v.round()),
@@ -706,6 +795,11 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
                                       .markPendingTargetTemperature,
                                   onClimateModeChanged:
                                       widget.controller.markPendingClimateMode,
+                                  onPositionChanged: (v) => widget.controller
+                                      .markPendingPosition(v.round()),
+                                  onColorTemperatureChanged: (v) => widget
+                                      .controller
+                                      .markPendingColorTemperature(v.round()),
                                 ),
                               ],
                             ),
@@ -1489,11 +1583,17 @@ class _ControlsBody extends StatelessWidget {
     required this.fanSpeed,
     required this.targetTemperature,
     required this.climateMode,
+    required this.position,
+    required this.colorTemperature,
+    required this.showColorTemperature,
+    required this.commandsAvailable,
     required this.onTypeChanged,
     required this.onBrightnessChanged,
     required this.onFanSpeedChanged,
     required this.onTemperatureChanged,
     required this.onClimateModeChanged,
+    required this.onPositionChanged,
+    required this.onColorTemperatureChanged,
   });
 
   final PhysicalDevice device;
@@ -1503,11 +1603,20 @@ class _ControlsBody extends StatelessWidget {
   final int fanSpeed;
   final double targetTemperature;
   final String climateMode;
+  final int position;
+  final int colorTemperature;
+  final bool showColorTemperature;
+
+  /// Whether the repository exposes the canonical command surface; drives the
+  /// fallback mode domain when the descriptor publishes no enum values.
+  final bool commandsAvailable;
   final ValueChanged<String?> onTypeChanged;
   final ValueChanged<double> onBrightnessChanged;
   final ValueChanged<int> onFanSpeedChanged;
   final ValueChanged<double> onTemperatureChanged;
   final ValueChanged<String> onClimateModeChanged;
+  final ValueChanged<double> onPositionChanged;
+  final ValueChanged<double> onColorTemperatureChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1552,10 +1661,16 @@ class _ControlsBody extends StatelessWidget {
           fanSpeed: fanSpeed,
           targetTemperature: targetTemperature,
           climateMode: climateMode,
+          position: position,
+          colorTemperature: colorTemperature,
+          showColorTemperature: showColorTemperature,
+          commandsAvailable: commandsAvailable,
           onBrightnessChanged: onBrightnessChanged,
           onFanSpeedChanged: onFanSpeedChanged,
           onTemperatureChanged: onTemperatureChanged,
           onClimateModeChanged: onClimateModeChanged,
+          onPositionChanged: onPositionChanged,
+          onColorTemperatureChanged: onColorTemperatureChanged,
         ),
       ],
     );
@@ -1583,10 +1698,16 @@ class _TypeControls extends StatelessWidget {
     required this.fanSpeed,
     required this.targetTemperature,
     required this.climateMode,
+    required this.position,
+    required this.colorTemperature,
+    required this.showColorTemperature,
+    required this.commandsAvailable,
     required this.onBrightnessChanged,
     required this.onFanSpeedChanged,
     required this.onTemperatureChanged,
     required this.onClimateModeChanged,
+    required this.onPositionChanged,
+    required this.onColorTemperatureChanged,
   });
 
   final PhysicalDevice device;
@@ -1595,10 +1716,16 @@ class _TypeControls extends StatelessWidget {
   final int fanSpeed;
   final double targetTemperature;
   final String climateMode;
+  final int position;
+  final int colorTemperature;
+  final bool showColorTemperature;
+  final bool commandsAvailable;
   final ValueChanged<double> onBrightnessChanged;
   final ValueChanged<int> onFanSpeedChanged;
   final ValueChanged<double> onTemperatureChanged;
   final ValueChanged<String> onClimateModeChanged;
+  final ValueChanged<double> onPositionChanged;
+  final ValueChanged<double> onColorTemperatureChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1609,7 +1736,16 @@ class _TypeControls extends StatelessWidget {
         style: TextStyle(color: AppColors.textDim, fontSize: 12.5),
       );
     }
+    final modeOptions = capabilityModeOptions(
+      endpoint: firstEndpointWithCapability(device, 'MODE'),
+      commandsAvailable: commandsAvailable,
+      selected: climateMode,
+    );
     return switch (type) {
+      _typeBlinds => _PositionControl(
+        position: position.toDouble(),
+        onChanged: onPositionChanged,
+      ),
       _typeFan => _FanControls(
         fanSpeed: fanSpeed,
         onChanged: onFanSpeedChanged,
@@ -1622,7 +1758,11 @@ class _TypeControls extends StatelessWidget {
             onChanged: onTemperatureChanged,
           ),
           const SizedBox(height: 12),
-          _ClimateModeChips(mode: climateMode, onChanged: onClimateModeChanged),
+          _ClimateModeChips(
+            mode: climateMode,
+            options: modeOptions,
+            onChanged: onClimateModeChanged,
+          ),
           const SizedBox(height: 12),
           _FanControls(
             fanSpeed: fanSpeed,
@@ -1631,9 +1771,21 @@ class _TypeControls extends StatelessWidget {
           ),
         ],
       ),
-      _typeLight => _BrightnessControl(
-        brightness: brightness,
-        onChanged: onBrightnessChanged,
+      _typeLight => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _BrightnessControl(
+            brightness: brightness,
+            onChanged: onBrightnessChanged,
+          ),
+          if (showColorTemperature) ...[
+            const SizedBox(height: 12),
+            _ColorTemperatureControl(
+              colorTemperature: colorTemperature.toDouble(),
+              onChanged: onColorTemperatureChanged,
+            ),
+          ],
+        ],
       ),
       _typeSensor => _SensorReading(value: device.sensorValue),
       _ => const Text(
@@ -1788,17 +1940,15 @@ class _TemperatureControl extends StatelessWidget {
 }
 
 class _ClimateModeChips extends StatelessWidget {
-  const _ClimateModeChips({required this.mode, required this.onChanged});
+  const _ClimateModeChips({
+    required this.mode,
+    required this.options,
+    required this.onChanged,
+  });
 
   final String mode;
+  final List<String> options;
   final ValueChanged<String> onChanged;
-
-  static const _modes = <String, String>{
-    'cold': 'Frío',
-    'heat': 'Calor',
-    'auto': 'Auto',
-    'fan': 'Ventilación',
-  };
 
   @override
   Widget build(BuildContext context) {
@@ -1814,13 +1964,57 @@ class _ClimateModeChips extends StatelessWidget {
           spacing: 8,
           runSpacing: 8,
           children: [
-            for (final entry in _modes.entries)
+            for (final option in options)
               ChoiceChip(
-                label: Text(entry.value),
-                selected: mode == entry.key,
-                onSelected: (_) => onChanged(entry.key),
+                label: Text(capabilityModeLabel(option)),
+                selected: mode == option,
+                onSelected: (_) => onChanged(option),
               ),
           ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Shared percent slider used by the capability-backed controls (brightness,
+/// position, color temperature). 0-100 with 20 divisions.
+class _PercentControl extends StatelessWidget {
+  const _PercentControl({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              label,
+              style: const TextStyle(color: AppColors.textDim, fontSize: 12),
+            ),
+            const Spacer(),
+            Text(
+              '${value.round()} %',
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
+        Slider(
+          value: value.clamp(0, 100),
+          min: 0,
+          max: 100,
+          divisions: 20,
+          label: '${value.round()} %',
+          onChanged: onChanged,
         ),
       ],
     );
@@ -1835,31 +2029,45 @@ class _BrightnessControl extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Text(
-              'Brillo',
-              style: TextStyle(color: AppColors.textDim, fontSize: 12),
-            ),
-            const Spacer(),
-            Text(
-              '${brightness.round()} %',
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-            ),
-          ],
-        ),
-        Slider(
-          value: brightness.clamp(0, 100),
-          min: 0,
-          max: 100,
-          divisions: 20,
-          label: '${brightness.round()} %',
-          onChanged: onChanged,
-        ),
-      ],
+    return _PercentControl(
+      label: 'Brillo',
+      value: brightness,
+      onChanged: onChanged,
+    );
+  }
+}
+
+class _PositionControl extends StatelessWidget {
+  const _PositionControl({required this.position, required this.onChanged});
+
+  final double position;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PercentControl(
+      label: 'Posición',
+      value: position,
+      onChanged: onChanged,
+    );
+  }
+}
+
+class _ColorTemperatureControl extends StatelessWidget {
+  const _ColorTemperatureControl({
+    required this.colorTemperature,
+    required this.onChanged,
+  });
+
+  final double colorTemperature;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PercentControl(
+      label: 'Temperatura de color',
+      value: colorTemperature,
+      onChanged: onChanged,
     );
   }
 }

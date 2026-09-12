@@ -15,6 +15,9 @@ class CommandDeviceFakeRepo
     this.powerResult,
     this.powerError,
     this.powerDelay,
+    this.actionResult,
+    this.actionError,
+    this.actionDelay,
   }) : devices = List.of(devices ?? const []),
        areas = areas ?? const [HomeArea(id: 'sala', name: 'Sala')];
 
@@ -33,6 +36,34 @@ class CommandDeviceFakeRepo
 
   /// Recorded `set_power` calls as (deviceId, endpointId, enabled).
   final powerCalls = <(String, String, bool)>[];
+
+  /// Result returned by [executeAction]. When null, a confirmed echo of the
+  /// requested value is returned.
+  CapabilityActionResult? actionResult;
+
+  /// When set, [executeAction] throws it instead of returning a result.
+  Object? actionError;
+
+  /// Per-call error queue for [executeAction]: entries are consumed in order;
+  /// a null entry means "this call succeeds". Takes precedence over
+  /// [actionError] while non-empty.
+  final actionErrorQueue = <Object?>[];
+
+  /// Optional delay before answering an action.
+  Duration? actionDelay;
+
+  /// Recorded `executeAction` calls as (deviceId, endpointId, action, value).
+  final actionCalls = <(String, String, String, Object)>[];
+
+  static const _actionCapabilities = <String, String>{
+    'set_power': 'POWER',
+    'set_brightness': 'BRIGHTNESS',
+    'set_position': 'POSITION',
+    'set_color': 'COLOR',
+    'set_color_temperature': 'COLOR_TEMPERATURE',
+    'set_speed': 'SPEED',
+    'set_mode': 'MODE',
+  };
 
   @override
   bool get supportsIdentify => false;
@@ -87,6 +118,67 @@ class CommandDeviceFakeRepo
                   observedPower: result.observedPower,
                   observedQuality: result.observedQuality,
                   observedAt: result.observedAt,
+                )
+              else
+                endpoint,
+          ],
+        );
+      }
+    }
+    return result;
+  }
+
+  @override
+  Future<CapabilityActionResult> executeAction(
+    String deviceId,
+    String endpointId, {
+    required String action,
+    required Object value,
+  }) async {
+    actionCalls.add((deviceId, endpointId, action, value));
+    final delay = actionDelay;
+    if (delay != null) await Future<void>.delayed(delay);
+    Object? error;
+    if (actionErrorQueue.isNotEmpty) {
+      error = actionErrorQueue.removeAt(0);
+    } else {
+      error = actionError;
+    }
+    if (error != null) throw error;
+    final result =
+        actionResult ??
+        CapabilityActionResult(
+          action: action,
+          capability: _actionCapabilities[action],
+          outcome: 'SUCCESS',
+          changed: true,
+          observedValue: value,
+          observedQuality: 'confirmed',
+          observedAt: '2026-09-11T00:00:00Z',
+        );
+    // Reflect a confirmed observation in the canonical list, so a reload
+    // after the command keeps the honest state on every surface.
+    final capability = result.capability;
+    if (result.responseParsed &&
+        capability != null &&
+        result.observedValue != null &&
+        result.observedQuality != null) {
+      final index = devices.indexWhere((device) => device.id == deviceId);
+      if (index >= 0) {
+        final device = devices[index];
+        devices[index] = device.copyWith(
+          endpoints: [
+            for (final endpoint in device.endpoints)
+              if (endpoint.id == endpointId)
+                endpoint.copyWith(
+                  observedCapabilities: Map.unmodifiable({
+                    ...endpoint.observedCapabilities,
+                    capability: EndpointCapabilityObservation(
+                      value: result.observedValue,
+                      quality: result.observedQuality,
+                      observedAt: result.observedAt,
+                    ),
+                  }),
                 )
               else
                 endpoint,

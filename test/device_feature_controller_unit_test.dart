@@ -208,6 +208,295 @@ void main() {
       },
     );
   });
+
+  group('endpoint capability commands', () {
+    test('capability setters require a command repository', () async {
+      final repo = _UnitFakeRepo(devices: const [_unitA]);
+      final controller = AdaptiveFeatureController(repo);
+      await controller.loadDevices();
+
+      await expectLater(
+        controller.setBrightness('dev_a_01', 'light', 50),
+        throwsA(isA<UnsupportedError>()),
+      );
+      await expectLater(
+        controller.setSpeed('dev_a_01', 'fan', 67),
+        throwsA(isA<UnsupportedError>()),
+      );
+      await expectLater(
+        controller.setMode('dev_a_01', 'mode', 'manual'),
+        throwsA(isA<UnsupportedError>()),
+      );
+    });
+
+    test(
+      'setBrightness forwards the percent and merges the observation',
+      () async {
+        final repo = CommandDeviceFakeRepo(
+          devices: const [_commandCapabilities],
+        );
+        final controller = AdaptiveFeatureController(repo);
+        await controller.loadDevices();
+
+        final result = await controller.setBrightness(
+          'dev_cmd_01',
+          'light',
+          70,
+        );
+
+        expect(repo.actionCalls, [
+          ('dev_cmd_01', 'light', 'set_brightness', 70),
+        ]);
+        expect(result.outcome, 'SUCCESS');
+        expect(result.capability, 'BRIGHTNESS');
+        final endpoint = controller.snapshot!.devices.first.endpoints
+            .firstWhere((endpoint) => endpoint.id == 'light');
+        expect(endpoint.observedCapabilities['BRIGHTNESS']!.value, 70);
+        expect(
+          endpoint.observedCapabilities['BRIGHTNESS']!.quality,
+          'confirmed',
+        );
+        expect(
+          endpoint.observedCapabilities['BRIGHTNESS']!.observedAt,
+          '2026-09-11T00:00:00Z',
+        );
+        expect(confirmedCapabilityValue(endpoint, 'BRIGHTNESS'), 70);
+      },
+    );
+
+    test(
+      'setSpeed and setMode forward their values and merge observations',
+      () async {
+        final repo = CommandDeviceFakeRepo(
+          devices: const [_commandCapabilities],
+        );
+        final controller = AdaptiveFeatureController(repo);
+        await controller.loadDevices();
+
+        await controller.setSpeed('dev_cmd_01', 'fan', 67);
+        await controller.setMode('dev_cmd_01', 'mode', 'manual');
+
+        expect(repo.actionCalls, [
+          ('dev_cmd_01', 'fan', 'set_speed', 67),
+          ('dev_cmd_01', 'mode', 'set_mode', 'manual'),
+        ]);
+        final endpoints = controller.snapshot!.devices.first.endpoints;
+        final fan = endpoints.firstWhere((endpoint) => endpoint.id == 'fan');
+        final mode = endpoints.firstWhere((endpoint) => endpoint.id == 'mode');
+        expect(confirmedCapabilityValue(fan, 'SPEED'), 67);
+        expect(confirmedCapabilityValue(mode, 'MODE'), 'manual');
+      },
+    );
+
+    test('commit executes canonical actions with mapped values and keeps '
+        'temperature local', () async {
+      final repo = CommandDeviceFakeRepo(devices: const [_commandCapabilities]);
+      final controller = AdaptiveFeatureController(repo);
+      await controller.loadDevices();
+      controller.selectDevice('dev_cmd_01');
+      controller.markPendingBrightness(70);
+      controller.markPendingFanSpeed(2);
+      controller.markPendingClimateMode('manual');
+      controller.markPendingPower(true);
+      controller.markPendingTargetTemperature(24.5);
+
+      await controller.commitPendingChanges('dev_cmd_01');
+
+      // Brightness, fan speed (2 -> 67%) and mode run in order; power goes
+      // through the existing set_power path.
+      expect(repo.actionCalls, [
+        ('dev_cmd_01', 'light', 'set_brightness', 70),
+        ('dev_cmd_01', 'fan', 'set_speed', 67),
+        ('dev_cmd_01', 'mode', 'set_mode', 'manual'),
+      ]);
+      expect(repo.powerCalls, [('dev_cmd_01', 'light', true)]);
+
+      expect(controller.hasPendingChanges, isFalse);
+      expect(controller.pendingBrightness, isNull);
+      expect(controller.pendingFanSpeed, isNull);
+      expect(controller.pendingClimateMode, isNull);
+      expect(controller.pendingPower, isNull);
+      expect(controller.pendingTargetTemperature, isNull);
+
+      final device = controller.snapshot!.devices.single;
+      // Target temperature has no backend action: it converges locally.
+      expect(device.targetTemperature, 24.5);
+      final light = device.endpoints.firstWhere((e) => e.id == 'light');
+      final fan = device.endpoints.firstWhere((e) => e.id == 'fan');
+      final mode = device.endpoints.firstWhere((e) => e.id == 'mode');
+      expect(confirmedCapabilityValue(light, 'BRIGHTNESS'), 70);
+      expect(light.observedPower, isTrue);
+      expect(confirmedCapabilityValue(fan, 'SPEED'), 67);
+      expect(confirmedCapabilityValue(mode, 'MODE'), 'manual');
+      expect(controller.consumeCommitNotice(), isNull);
+    });
+
+    test(
+      'commit notice reports disabled writes when every action was disabled',
+      () async {
+        final repo = CommandDeviceFakeRepo(
+          devices: const [_commandCapabilities],
+          actionResult: const CapabilityActionResult(
+            action: 'set_brightness',
+            capability: 'BRIGHTNESS',
+            outcome: 'EXECUTION_DISABLED',
+            changed: false,
+          ),
+        );
+        final controller = AdaptiveFeatureController(repo);
+        await controller.loadDevices();
+        controller.markPendingBrightness(70);
+
+        await controller.commitPendingChanges('dev_cmd_01');
+
+        expect(
+          controller.consumeCommitNotice(),
+          'Escritura deshabilitada en el modo actual',
+        );
+        expect(controller.consumeCommitNotice(), isNull);
+      },
+    );
+
+    test(
+      'commit notice reports unconfirmed when every action was unparsed',
+      () async {
+        final repo = CommandDeviceFakeRepo(
+          devices: const [_commandCapabilities],
+          actionResult: const CapabilityActionResult(
+            action: 'set_speed',
+            capability: 'SPEED',
+            outcome: 'unconfirmed',
+            responseParsed: false,
+          ),
+        );
+        final controller = AdaptiveFeatureController(repo);
+        await controller.loadDevices();
+        controller.markPendingFanSpeed(3);
+
+        await controller.commitPendingChanges('dev_cmd_01');
+
+        expect(
+          controller.consumeCommitNotice(),
+          'Orden enviada — sin confirmación del dispositivo',
+        );
+        // The unparsed result never fabricates an observation.
+        final fan = controller.snapshot!.devices.single.endpoints.firstWhere(
+          (e) => e.id == 'fan',
+        );
+        expect(fan.observedCapabilities['SPEED'], isNull);
+      },
+    );
+
+    test('mixed outcomes produce no commit notice', () async {
+      final repo = CommandDeviceFakeRepo(
+        devices: const [_commandCapabilities],
+        powerResult: const EndpointPowerResult(
+          outcome: 'EXECUTION_DISABLED',
+          changed: false,
+        ),
+      );
+      final controller = AdaptiveFeatureController(repo);
+      await controller.loadDevices();
+      controller.markPendingBrightness(70);
+      controller.markPendingPower(true);
+
+      await controller.commitPendingChanges('dev_cmd_01');
+
+      expect(controller.consumeCommitNotice(), isNull);
+    });
+
+    test('commit failure keeps unexecuted pending fields buffered', () async {
+      final repo = CommandDeviceFakeRepo(devices: const [_commandCapabilities])
+        ..actionErrorQueue.addAll([
+          null,
+          ApiException(503, {'detail': 'backend down'}),
+        ]);
+      final controller = AdaptiveFeatureController(repo);
+      await controller.loadDevices();
+      controller.markPendingBrightness(70);
+      controller.markPendingFanSpeed(2);
+
+      await expectLater(
+        controller.commitPendingChanges('dev_cmd_01'),
+        throwsA(isA<ApiException>()),
+      );
+
+      // Brightness already executed and merged; fan speed stays buffered.
+      expect(controller.pendingBrightness, isNull);
+      expect(controller.pendingFanSpeed, 2);
+      expect(controller.hasPendingChanges, isTrue);
+      final light = controller.snapshot!.devices.single.endpoints.firstWhere(
+        (e) => e.id == 'light',
+      );
+      expect(confirmedCapabilityValue(light, 'BRIGHTNESS'), 70);
+    });
+
+    test(
+      'markPendingPosition and markPendingColorTemperature set dirty',
+      () async {
+        final repo = _UnitFakeRepo(devices: const [_unitA]);
+        final controller = AdaptiveFeatureController(repo);
+        await controller.loadDevices();
+
+        controller.markPendingPosition(40);
+        expect(controller.pendingPosition, 40);
+        expect(controller.hasPendingChanges, isTrue);
+
+        controller.markPendingColorTemperature(30);
+        expect(controller.pendingColorTemperature, 30);
+
+        controller.discardPendingChanges();
+        expect(controller.pendingPosition, isNull);
+        expect(controller.pendingColorTemperature, isNull);
+        expect(controller.hasPendingChanges, isFalse);
+      },
+    );
+
+    test(
+      'commit sends position and color temperature through the shared helper',
+      () async {
+        final repo = CommandDeviceFakeRepo(
+          devices: const [_commandCapabilities],
+        );
+        final controller = AdaptiveFeatureController(repo);
+        await controller.loadDevices();
+        controller.markPendingPosition(40);
+        controller.markPendingColorTemperature(30);
+
+        await controller.commitPendingChanges('dev_cmd_01');
+
+        expect(repo.actionCalls, [
+          ('dev_cmd_01', 'blind', 'set_position', 40),
+          ('dev_cmd_01', 'light', 'set_color_temperature', 30),
+        ]);
+        expect(controller.hasPendingChanges, isFalse);
+        final device = controller.snapshot!.devices.single;
+        final blind = device.endpoints.firstWhere((e) => e.id == 'blind');
+        final light = device.endpoints.firstWhere((e) => e.id == 'light');
+        expect(confirmedCapabilityValue(blind, 'POSITION'), 40);
+        expect(confirmedCapabilityValue(light, 'COLOR_TEMPERATURE'), 30);
+        expect(controller.consumeCommitNotice(), isNull);
+      },
+    );
+
+    test(
+      'plain repository keeps local convergence for position and color temperature',
+      () async {
+        final repo = _UnitFakeRepo(devices: const [_unitA]);
+        final controller = AdaptiveFeatureController(repo);
+        await controller.loadDevices();
+        controller.markPendingPosition(40);
+        controller.markPendingColorTemperature(30);
+
+        await controller.commitPendingChanges('dev_a_01');
+
+        final device = controller.snapshot!.devices.single;
+        expect(device.position, 40);
+        expect(device.colorTemperature, 30);
+        expect(controller.hasPendingChanges, isFalse);
+      },
+    );
+  });
 }
 
 const _unitA = PhysicalDevice(
@@ -271,6 +560,47 @@ const _commandLight = PhysicalDevice(
       name: 'Luz',
       kind: DeviceKind.light,
       capabilities: {'POWER'},
+    ),
+  ],
+);
+
+/// One device with the three capability-backed channels the commit path
+/// commands independently (BRIGHTNESS, SPEED, MODE) plus a power channel.
+const _commandCapabilities = PhysicalDevice(
+  id: 'dev_cmd_01',
+  name: 'Luz comandable',
+  kind: DeviceKind.light,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'ZB-DL01',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'sala',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      capabilities: {'POWER', 'BRIGHTNESS', 'COLOR_TEMPERATURE'},
+    ),
+    DeviceEndpoint(
+      id: 'fan',
+      name: 'Ventilador',
+      kind: DeviceKind.unknown,
+      capabilities: {'SPEED'},
+    ),
+    DeviceEndpoint(
+      id: 'mode',
+      name: 'Modo',
+      kind: DeviceKind.unknown,
+      capabilities: {'MODE'},
+    ),
+    DeviceEndpoint(
+      id: 'blind',
+      name: 'Persiana',
+      kind: DeviceKind.unknown,
+      capabilities: {'POSITION'},
     ),
   ],
 );

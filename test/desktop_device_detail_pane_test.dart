@@ -411,6 +411,257 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets('confirmed observations drive brightness and color temp', (
+      tester,
+    ) async {
+      final device = _commandCapsLight.copyWith(
+        endpoints: [
+          _commandCapsLight.endpoints.first.copyWith(
+            observedCapabilities: const {
+              'BRIGHTNESS': EndpointCapabilityObservation(
+                value: 42,
+                quality: 'confirmed',
+              ),
+              'COLOR_TEMPERATURE': EndpointCapabilityObservation(
+                value: 30,
+                quality: 'confirmed',
+              ),
+            },
+          ),
+          ..._commandCapsLight.endpoints.skip(1),
+        ],
+      );
+      final repo = CommandDeviceFakeRepo(devices: [device]);
+      final controller = AdaptiveFeatureController(repo);
+      await controller.loadDevices();
+      controller.selectDevice('dev_caps_01');
+      await pumpDetailWithController(
+        tester,
+        controller: controller,
+        deviceFrom: controller,
+      );
+
+      expect(find.text('Brillo'), findsOneWidget);
+      expect(find.text('42 %'), findsOneWidget);
+      expect(find.text('Temperatura de color'), findsOneWidget);
+      expect(find.text('30 %'), findsOneWidget);
+    });
+
+    testWidgets('confirmed SPEED percent selects the matching fan level', (
+      tester,
+    ) async {
+      final device = _commandFanCaps.copyWith(
+        endpoints: [
+          _commandFanCaps.endpoints.first.copyWith(
+            observedCapabilities: const {
+              'SPEED': EndpointCapabilityObservation(
+                value: 67,
+                quality: 'confirmed',
+              ),
+            },
+          ),
+        ],
+      );
+      final repo = CommandDeviceFakeRepo(devices: [device]);
+      final controller = AdaptiveFeatureController(repo);
+      await controller.loadDevices();
+      controller.selectDevice('dev_fan_caps_01');
+      await pumpDetailWithController(
+        tester,
+        controller: controller,
+        deviceFrom: controller,
+      );
+
+      final fanColumn = find
+          .ancestor(of: find.text('Velocidad'), matching: find.byType(Column))
+          .first;
+      final speedTwo = find.descendant(of: fanColumn, matching: find.text('2'));
+      final material = tester.widget<Material>(
+        find.ancestor(of: speedTwo, matching: find.byType(Material)).first,
+      );
+      expect(material.color, AppColors.gammaIndigoLight);
+    });
+
+    testWidgets('blinds expose the position control with the observation', (
+      tester,
+    ) async {
+      final device = _commandBlindCaps.copyWith(
+        endpoints: [
+          _commandBlindCaps.endpoints.first.copyWith(
+            observedCapabilities: const {
+              'POSITION': EndpointCapabilityObservation(
+                value: 35,
+                quality: 'confirmed',
+              ),
+            },
+          ),
+        ],
+      );
+      final repo = CommandDeviceFakeRepo(devices: [device]);
+      final controller = AdaptiveFeatureController(repo);
+      await controller.loadDevices();
+      controller.selectDevice('dev_blind_caps_01');
+      await pumpDetailWithController(
+        tester,
+        controller: controller,
+        deviceFrom: controller,
+      );
+
+      expect(find.text('Posición'), findsOneWidget);
+      expect(find.text('35 %'), findsOneWidget);
+    });
+
+    testWidgets('mode chips come from the descriptor enum values', (
+      tester,
+    ) async {
+      final repo = CommandDeviceFakeRepo(devices: const [_commandClimateCaps]);
+      final controller = AdaptiveFeatureController(repo);
+      await controller.loadDevices();
+      controller.selectDevice('dev_climate_caps_01');
+      await pumpDetailWithController(
+        tester,
+        controller: controller,
+        deviceFrom: controller,
+      );
+
+      expect(find.text('eco'), findsOneWidget);
+      expect(find.text('turbo'), findsOneWidget);
+      final turbo = tester.widget<ChoiceChip>(
+        find.widgetWithText(ChoiceChip, 'turbo'),
+      );
+      expect(turbo.selected, isTrue);
+    });
+
+    testWidgets('an out-of-domain mode is still rendered as selected', (
+      tester,
+    ) async {
+      final device = _commandClimateCaps.copyWith(
+        endpoints: [
+          _commandClimateCaps.endpoints.first.copyWith(
+            observedCapabilities: const {
+              'MODE': EndpointCapabilityObservation(
+                value: 'guard',
+                quality: 'confirmed',
+              ),
+            },
+          ),
+        ],
+      );
+      final repo = CommandDeviceFakeRepo(devices: [device]);
+      final controller = AdaptiveFeatureController(repo);
+      await controller.loadDevices();
+      controller.selectDevice('dev_climate_caps_01');
+      await pumpDetailWithController(
+        tester,
+        controller: controller,
+        deviceFrom: controller,
+      );
+
+      final guard = tester.widget<ChoiceChip>(
+        find.widgetWithText(ChoiceChip, 'guard'),
+      );
+      expect(guard.selected, isTrue);
+    });
+
+    testWidgets('save issues canonical actions with mapped values', (
+      tester,
+    ) async {
+      final repo = CommandDeviceFakeRepo(devices: const [_commandCapsLight]);
+      final controller = AdaptiveFeatureController(repo);
+      await controller.loadDevices();
+      controller.selectDevice('dev_caps_01');
+      await pumpDetailWithController(
+        tester,
+        controller: controller,
+        deviceFrom: controller,
+      );
+
+      controller.markPendingBrightness(70);
+      controller.markPendingFanSpeed(2);
+      controller.markPendingClimateMode('manual');
+      controller.markPendingPosition(40);
+      controller.markPendingColorTemperature(30);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Guardar cambios'));
+      await tester.pumpAndSettle();
+
+      expect(repo.actionCalls, [
+        ('dev_caps_01', 'light', 'set_brightness', 70),
+        ('dev_caps_01', 'fan', 'set_speed', 67),
+        ('dev_caps_01', 'mode', 'set_mode', 'manual'),
+        ('dev_caps_01', 'blind', 'set_position', 40),
+        ('dev_caps_01', 'light', 'set_color_temperature', 30),
+      ]);
+      expect(find.textContaining('Cambios guardados'), findsOneWidget);
+      expect(controller.hasPendingChanges, isFalse);
+    });
+
+    testWidgets('save surfaces the writes-disabled notice instead of success', (
+      tester,
+    ) async {
+      final repo = CommandDeviceFakeRepo(
+        devices: const [_commandCapsLight],
+        actionResult: const CapabilityActionResult(
+          action: 'set_brightness',
+          capability: 'BRIGHTNESS',
+          outcome: 'EXECUTION_DISABLED',
+          changed: false,
+        ),
+      );
+      final controller = AdaptiveFeatureController(repo);
+      await controller.loadDevices();
+      controller.selectDevice('dev_caps_01');
+      await pumpDetailWithController(
+        tester,
+        controller: controller,
+        deviceFrom: controller,
+      );
+
+      controller.markPendingBrightness(70);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Guardar cambios'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Escritura deshabilitada en el modo actual'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Cambios guardados'), findsNothing);
+    });
+
+    testWidgets('save surfaces the unconfirmed notice instead of success', (
+      tester,
+    ) async {
+      final repo = CommandDeviceFakeRepo(
+        devices: const [_commandCapsLight],
+        actionResult: const CapabilityActionResult(
+          action: 'set_brightness',
+          capability: 'BRIGHTNESS',
+          outcome: 'unconfirmed',
+          responseParsed: false,
+        ),
+      );
+      final controller = AdaptiveFeatureController(repo);
+      await controller.loadDevices();
+      controller.selectDevice('dev_caps_01');
+      await pumpDetailWithController(
+        tester,
+        controller: controller,
+        deviceFrom: controller,
+      );
+
+      controller.markPendingColorTemperature(30);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Guardar cambios'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Orden enviada — sin confirmación del dispositivo'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Cambios guardados'), findsNothing);
+    });
   });
 }
 
@@ -578,6 +829,148 @@ const _commandPowerLight = PhysicalDevice(
       name: 'Luz',
       kind: DeviceKind.light,
       capabilities: {'POWER'},
+    ),
+  ],
+);
+
+const _commandCapsLight = PhysicalDevice(
+  id: 'dev_caps_01',
+  name: 'Luz comandable',
+  kind: DeviceKind.light,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'ZB-DL01',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'sala',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      semanticRole: 'light',
+      capabilities: {'POWER', 'BRIGHTNESS', 'COLOR_TEMPERATURE'},
+      capabilityDetails: {
+        'BRIGHTNESS': DeviceCapability(
+          name: 'BRIGHTNESS',
+          readable: true,
+          writable: true,
+          range: [0, 100],
+        ),
+        'COLOR_TEMPERATURE': DeviceCapability(
+          name: 'COLOR_TEMPERATURE',
+          readable: true,
+          writable: true,
+          range: [0, 100],
+        ),
+      },
+    ),
+    DeviceEndpoint(
+      id: 'fan',
+      name: 'Ventilador',
+      kind: DeviceKind.unknown,
+      capabilities: {'SPEED'},
+    ),
+    DeviceEndpoint(
+      id: 'mode',
+      name: 'Modo',
+      kind: DeviceKind.unknown,
+      capabilities: {'MODE'},
+    ),
+    DeviceEndpoint(
+      id: 'blind',
+      name: 'Persiana',
+      kind: DeviceKind.unknown,
+      capabilities: {'POSITION'},
+    ),
+  ],
+);
+
+const _commandFanCaps = PhysicalDevice(
+  id: 'dev_fan_caps_01',
+  name: 'Ventilador comandable',
+  kind: DeviceKind.unknown,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'FAN-1',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'sala',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'fan',
+      name: 'Ventilador',
+      kind: DeviceKind.unknown,
+      semanticRole: 'fan',
+      capabilities: {'SPEED'},
+    ),
+  ],
+);
+
+const _commandBlindCaps = PhysicalDevice(
+  id: 'dev_blind_caps_01',
+  name: 'Persiana comandable',
+  kind: DeviceKind.unknown,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'BL-1',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'sala',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'cover',
+      name: 'Persiana',
+      kind: DeviceKind.unknown,
+      semanticRole: 'cover',
+      capabilities: {'POSITION'},
+      capabilityDetails: {
+        'POSITION': DeviceCapability(
+          name: 'POSITION',
+          readable: true,
+          writable: true,
+          range: [0, 100],
+        ),
+      },
+    ),
+  ],
+);
+
+const _commandClimateCaps = PhysicalDevice(
+  id: 'dev_climate_caps_01',
+  name: 'Clima comandable',
+  kind: DeviceKind.unknown,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'AC-1',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'sala',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'mode',
+      name: 'Modo',
+      kind: DeviceKind.unknown,
+      semanticRole: 'climate',
+      capabilities: {'MODE'},
+      capabilityDetails: {
+        'MODE': DeviceCapability(
+          name: 'MODE',
+          readable: true,
+          writable: true,
+          enumValues: ['eco', 'turbo'],
+        ),
+      },
+      observedCapabilities: {
+        'MODE': EndpointCapabilityObservation(
+          value: 'turbo',
+          quality: 'confirmed',
+        ),
+      },
     ),
   ],
 );

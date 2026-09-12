@@ -381,5 +381,231 @@ void main() {
     const identify = IdentifyResult(supported: false, reason: 'nope');
     expect(identify.supported, isFalse);
     expect(identify.reason, 'nope');
+
+    const capability = CapabilityActionResult(
+      action: 'set_brightness',
+      capability: 'BRIGHTNESS',
+      outcome: 'SUCCESS',
+      changed: true,
+      observedValue: 70,
+      observedQuality: 'confirmed',
+    );
+    expect(capability.action, 'set_brightness');
+    expect(capability.capability, 'BRIGHTNESS');
+    expect(capability.observedValue, 70);
+    expect(capability.responseParsed, isTrue);
+  });
+
+  group('DeviceCapability parsing', () {
+    test('parses a complete descriptor', () {
+      final capability = parseDeviceCapability(const {
+        'capability': 'BRIGHTNESS',
+        'readable': true,
+        'writable': true,
+        'range': [0, 100],
+        'confidence': 0.9,
+        'evidence': 'provider',
+      });
+
+      expect(capability, isNotNull);
+      expect(capability!.name, 'BRIGHTNESS');
+      expect(capability.readable, isTrue);
+      expect(capability.writable, isTrue);
+      expect(capability.range, [0.0, 100.0]);
+      expect(capability.enumValues, isNull);
+      expect(capability.confidence, 0.9);
+    });
+
+    test('parses enum values and degrades malformed metadata', () {
+      final mode = parseDeviceCapability(const {
+        'capability': 'MODE',
+        'readable': true,
+        'writable': true,
+        'enum_values': ['auto', 'manual', 3],
+        'range': [1],
+        'confidence': 'high',
+      });
+
+      expect(mode!.enumValues, ['auto', 'manual']);
+      expect(mode.range, isNull);
+      expect(mode.confidence, isNull);
+    });
+
+    test('malformed entries return null instead of throwing', () {
+      expect(parseDeviceCapability(null), isNull);
+      expect(parseDeviceCapability('BRIGHTNESS'), isNull);
+      expect(parseDeviceCapability(const {}), isNull);
+      expect(parseDeviceCapability(const {'capability': '  '}), isNull);
+      expect(parseDeviceCapability(const {'capability': 42}), isNull);
+    });
+  });
+
+  group('EndpointCapabilityObservation parsing', () {
+    test('parses values/quality/at and skips malformed entries', () {
+      final parsed = parseObservedCapabilities(const {
+        'BRIGHTNESS': {
+          'value': 80,
+          'quality': 'confirmed',
+          'observed_at': '2026-09-11T12:00:00Z',
+        },
+        'MODE': {'value': 'manual', 'quality': 'stale'},
+        'COLOR': {'value': '#FFAA00'},
+        'POWER': {'value': true, 'quality': ''},
+        'BROKEN': 'nope',
+        '': {'value': 1},
+      });
+
+      expect(parsed, hasLength(4));
+      expect(parsed['BRIGHTNESS']!.value, 80);
+      expect(parsed['BRIGHTNESS']!.quality, 'confirmed');
+      expect(parsed['BRIGHTNESS']!.observedAt, '2026-09-11T12:00:00Z');
+      expect(parsed['MODE']!.value, 'manual');
+      expect(parsed['MODE']!.quality, 'stale');
+      expect(parsed['COLOR']!.value, '#FFAA00');
+      expect(parsed['COLOR']!.quality, isNull);
+      expect(parsed['POWER']!.value, isTrue);
+      expect(parsed['POWER']!.quality, isNull);
+      expect(parsed.containsKey('BROKEN'), isFalse);
+      expect(parsed.containsKey(''), isFalse);
+    });
+
+    test('non-map input degrades to an empty map', () {
+      expect(parseObservedCapabilities(null), isEmpty);
+      expect(parseObservedCapabilities('nope'), isEmpty);
+      expect(parseObservedCapabilities(const []), isEmpty);
+    });
+  });
+
+  group('capability helpers', () {
+    const endpoint = DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      capabilities: {'POWER', 'BRIGHTNESS', 'MODE'},
+      capabilityDetails: {
+        'BRIGHTNESS': DeviceCapability(
+          name: 'BRIGHTNESS',
+          readable: true,
+          writable: true,
+          range: [0, 100],
+          confidence: 0.8,
+        ),
+        'MODE': DeviceCapability(
+          name: 'MODE',
+          readable: true,
+          writable: false,
+          enumValues: ['auto', 'manual'],
+        ),
+      },
+      observedCapabilities: {
+        'BRIGHTNESS': EndpointCapabilityObservation(
+          value: 80,
+          quality: 'confirmed',
+          observedAt: 't1',
+        ),
+        'MODE': EndpointCapabilityObservation(value: 'auto', quality: 'stale'),
+      },
+    );
+
+    test('confirmedCapabilityValue only returns confirmed values', () {
+      expect(confirmedCapabilityValue(endpoint, 'BRIGHTNESS'), 80);
+      expect(confirmedCapabilityValue(endpoint, 'MODE'), isNull);
+      expect(confirmedCapabilityValue(endpoint, 'POWER'), isNull);
+    });
+
+    test('capabilityWritable prefers the descriptor over the legacy set', () {
+      expect(capabilityWritable(endpoint, 'BRIGHTNESS'), isTrue);
+      expect(capabilityWritable(endpoint, 'MODE'), isFalse);
+      expect(capabilityWritable(endpoint, 'POWER'), isTrue);
+      expect(capabilityWritable(endpoint, 'SPEED'), isFalse);
+    });
+
+    test('firstEndpointWithCapability resolves presence and writability', () {
+      const device = PhysicalDevice(
+        id: 'dev_1',
+        name: 'Equipo',
+        kind: DeviceKind.light,
+        provider: 'Tuya',
+        providerDeviceId: '',
+        model: 'M1',
+        provisioningState: DeviceProvisioningState.configured,
+        online: true,
+        health: DeviceHealthState.online,
+        endpoints: [
+          DeviceEndpoint(
+            id: 'mode_blocked',
+            name: 'Modo',
+            kind: DeviceKind.unknown,
+            capabilities: {'MODE'},
+            capabilityDetails: {
+              'MODE': DeviceCapability(
+                name: 'MODE',
+                readable: true,
+                writable: false,
+              ),
+            },
+          ),
+          DeviceEndpoint(
+            id: 'mode_writable',
+            name: 'Modo 2',
+            kind: DeviceKind.unknown,
+            capabilities: {'MODE'},
+            capabilityDetails: {
+              'MODE': DeviceCapability(
+                name: 'MODE',
+                readable: true,
+                writable: true,
+              ),
+            },
+          ),
+          DeviceEndpoint(
+            id: 'legacy_power',
+            name: 'Canal',
+            kind: DeviceKind.switchController,
+            capabilities: {'POWER'},
+          ),
+        ],
+      );
+
+      expect(firstEndpointWithCapability(device, 'MODE')!.id, 'mode_writable');
+      expect(firstEndpointWithCapability(device, 'POWER')!.id, 'legacy_power');
+      expect(firstEndpointWithCapability(device, 'SPEED'), isNull);
+    });
+
+    test('speed level and percent mapping round-trip', () {
+      expect(speedLevelToPercent(1), 33);
+      expect(speedLevelToPercent(2), 67);
+      expect(speedLevelToPercent(3), 100);
+
+      expect(percentToSpeedLevel(33), 1);
+      expect(percentToSpeedLevel(67), 2);
+      expect(percentToSpeedLevel(80), 2);
+      expect(percentToSpeedLevel(100), 3);
+      expect(percentToSpeedLevel(0), 1);
+      expect(percentToSpeedLevel(150), 3);
+
+      for (final level in [1, 2, 3]) {
+        expect(percentToSpeedLevel(speedLevelToPercent(level)), level);
+      }
+    });
+
+    test('copyWith preserves and replaces capability maps', () {
+      final untouched = endpoint.copyWith();
+      expect(untouched.capabilityDetails.keys, endpoint.capabilityDetails.keys);
+      expect(untouched.observedCapabilities['BRIGHTNESS']!.value, 80);
+
+      final replaced = endpoint.copyWith(
+        capabilityDetails: const {},
+        observedCapabilities: const {
+          'MODE': EndpointCapabilityObservation(
+            value: 'manual',
+            quality: 'confirmed',
+          ),
+        },
+      );
+      expect(replaced.capabilityDetails, isEmpty);
+      expect(replaced.observedCapabilities, hasLength(1));
+      expect(confirmedCapabilityValue(replaced, 'MODE'), 'manual');
+    });
   });
 }

@@ -5,6 +5,14 @@ contrato actual permite. Este documento lista, priorizado, lo que falta
 programar en el core (`0.0.0.0:8420`) para cerrar el resto, con evidencia
 exacta y la forma sugerida de cada endpoint.
 
+**Estado (2026-09-12):** los puntos 1, 2 y 3 ya fueron implementados en el
+core y verificados en vivo (fix del response de acciones, las 7 acciones
+canónicas y la población de `observed_state` con observaciones por
+capability). Sigue vigente el resto: Spotify playback, STT puro, rutinas
+(`enabled` + ejecución), catálogo de entidades, ciclo de vida de devices y
+clima. Del lado app quedan pendientes el picker de color hex (no existe UI)
+y `set_temperature` (no existe acción en el core).
+
 ## Camino rápido (qué programar primero)
 
 1. **Fix del resultado de acciones** — `POST /api/v1/devices/{device_id}/endpoints/{endpoint_id}/actions` devuelve `null` en éxito.
@@ -39,10 +47,13 @@ exacta y la forma sugerida de cada endpoint.
   podrá mostrar `SUCCESS` / `NO_CHANGE` / `EXECUTION_DISABLED` / etc. y el
   `observed_state` post-ejecución.
 
-## 2. Acciones de endpoint faltantes
+## 2. Acciones de endpoint — ✅ implementado y verificado (2026-09-12)
 
-Extender `EndpointActionName` (`src/core/devices/endpoint_actions.py:31-38`)
-con las escrituras que las capabilities ya declaran como `writable`:
+Implementadas las 7 acciones vía `ACTION_SPECS`
+(`src/core/devices/endpoint_actions.py`), con routing por capability
+(acción sobre capability ausente → `UNSUPPORTED` tipado, sin escritura al
+provider) y validación estricta (`422 invalid_value`, sin coerción). La
+tabla queda como registro de lo pedido:
 
 | Acción sugerida | Capability | Evidencia en vivo | UI del cliente que la espera |
 |---|---|---|---|
@@ -57,16 +68,16 @@ Mantener la misma disciplina que `set_power`: parser estricto sin coerción,
 `error_code` estables (`unknown_action`, `invalid_value`), y `observed_state`
 en el resultado.
 
-## 3. Estado observado (`observed_state`)
+## 3. Estado observado (`observed_state`) — ✅ implementado y verificado (2026-09-12)
 
-- El contrato ya lo expone: cada endpoint del DTO trae
-  `observed_state` (`power`, `quality`, `observed_at`) —
-  `src/api/device_provisioning_routes.py:95-99, 116-118`.
-- Hoy viene `null` en los 7 dispositivos del server vivo, así que la UI
-  muestra "Sin datos" (honesto) pero no puede mostrar estado real.
-- Pedido: poblarlo tras ejecuciones confirmadas y sync del provider, con
-  `quality: confirmed|stale` y `observed_at`. Idealmente, que el resultado
-  de las acciones incluya la observación post-ejecución.
+- Poblado en el DTO por endpoint (`power`, `quality`, `observed_at`) y con
+  **observaciones por capability** (`observed_state.capabilities`:
+  `BRIGHTNESS`, `COLOR`, `COLOR_TEMPERATURE`, `SPEED`, `MODE`, `POSITION`
+  con `value`, `quality`, `observed_at`).
+- Store compartido entre HTTP, lane de voz y DTO (commit `0cdd5d7`);
+  `refresh_observations` en boot/refresh del dispositivo.
+- Las respuestas de las acciones incluyen el `observed_state` actual.
+- El DTO suma `bindings` por capability (aditivo).
 - **Nota de identidad**: no existe señal canónica de reachability/last_seen.
   El legacy `GET /api/v1/status` (402 entradas, ids `luz_1@comedor_1`)
   **no mapea** a los ids canónicos `dev_*`; si la UI debe mostrar "en
@@ -141,6 +152,11 @@ quiere server-side: endpoint de clima por ubicación configurable.
 
 - **Power canónico** (`set_power`) en wall/mobile/desktop, con estados
   honestos ("Sin datos"), outcomes tipados y manejo de `null`.
+- **Controles de detalle (desktop + wall) comandando el backend**:
+  brillo, velocidad del ventilador (niveles ↔ percent), modo (opciones del
+  descriptor), posición (persianas) y temperatura de color; los valores
+  mostrados salen de `observed_state` confirmado y el guardado avisa
+  honestamente cuando las escrituras están deshabilitadas.
 - **`observed_state`** parseado y listo para mostrar on/off confirmado.
 - **Dashboards**: sin fallback a mock, cámaras por `/cameras/status`,
   playlists con metadata real, tarjeta de estado sin inventar.
@@ -152,17 +168,17 @@ quiere server-side: endpoint de clima por ubicación configurable.
 ## Estado de verificación del cliente
 
 - `flutter analyze`: 0 errores (9 infos preexistentes del baseline).
-- `flutter test`: 463 pasan / 118 fallan — los 118 son fallos
+- `flutter test`: 508 pasan / 118 fallan — los 118 son fallos
   **preexistentes** del rediseño (expectativas de tests viejas), sin
   regresiones nuevas; 5 de ellos quedaron arreglados durante este trabajo.
 
 ## Checklist de verificación (para el core)
 
-- [ ] `POST .../actions` con `set_power` devuelve el DTO tipado
+- [x] `POST .../actions` con `set_power` devuelve el DTO tipado
       (`outcome`, `observed_state`).
-- [ ] `EXECUTION_DISABLED` se devuelve tipado con `writes_enabled=false`.
-- [ ] `observed_state` poblado tras una ejecución confirmada.
-- [ ] Las acciones nuevas rechazan valores inválidos sin coerción (mismos
+- [x] `EXECUTION_DISABLED` se devuelve tipado con `writes_enabled=false`.
+- [x] `observed_state` poblado tras una ejecución confirmada.
+- [x] Las acciones nuevas rechazan valores inválidos sin coerción (mismos
       `error_code`).
 - [ ] `PUT /routines/{id}` persiste `enabled` (o endpoint dedicado).
 - [ ] Existe ejecución manual de rutinas.

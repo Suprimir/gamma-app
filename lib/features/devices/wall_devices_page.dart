@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../adaptive/adaptive_feature_controller.dart';
 import '../../data/api_client.dart';
 import '../../ui/app_colors.dart';
+import '../../data/device_capability_commit.dart';
 import '../../data/device_inventory.dart';
 import 'devices_page.dart';
 import 'wall_touch_name_editor.dart';
@@ -1362,21 +1363,64 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
   int? _pendingFanSpeed;
   double? _pendingTargetTemperature;
   String? _pendingClimateMode;
+  int? _pendingPosition;
+  int? _pendingColorTemperature;
   bool _saving = false;
 
   bool get _hasPendingChanges =>
       _pendingBrightness != null ||
       _pendingFanSpeed != null ||
       _pendingTargetTemperature != null ||
-      _pendingClimateMode != null;
+      _pendingClimateMode != null ||
+      _pendingPosition != null ||
+      _pendingColorTemperature != null;
 
-  /// Device with the buffered values applied, for the Ajustes card.
-  PhysicalDevice get _effectiveDevice => _device.copyWith(
-    brightness: _pendingBrightness ?? _device.brightness,
-    fanSpeed: _pendingFanSpeed ?? _device.fanSpeed,
-    targetTemperature: _pendingTargetTemperature ?? _device.targetTemperature,
-    climateMode: _pendingClimateMode ?? _device.climateMode,
-  );
+  num? _confirmedCapabilityNumber(String capability) {
+    final endpoint = firstEndpointWithCapability(_device, capability);
+    if (endpoint == null) return null;
+    final value = confirmedCapabilityValue(endpoint, capability);
+    return value is num ? value : null;
+  }
+
+  String? _confirmedCapabilityString(String capability) {
+    final endpoint = firstEndpointWithCapability(_device, capability);
+    final value = endpoint == null
+        ? null
+        : confirmedCapabilityValue(endpoint, capability);
+    return value is String && value.isNotEmpty ? value : null;
+  }
+
+  /// Device with the buffered values applied, for the Ajustes card. Display
+  /// preference: pending edit → confirmed canonical observation → demo field.
+  PhysicalDevice get _effectiveDevice {
+    final observedBrightness = _confirmedCapabilityNumber('BRIGHTNESS');
+    final observedSpeed = _confirmedCapabilityNumber('SPEED');
+    final observedMode = _confirmedCapabilityString('MODE');
+    final observedPosition = _confirmedCapabilityNumber('POSITION');
+    final observedColorTemperature = _confirmedCapabilityNumber(
+      'COLOR_TEMPERATURE',
+    );
+    return _device.copyWith(
+      brightness:
+          _pendingBrightness ??
+          observedBrightness?.round() ??
+          _device.brightness,
+      fanSpeed:
+          _pendingFanSpeed ??
+          (observedSpeed == null ? null : percentToSpeedLevel(observedSpeed)) ??
+          _device.fanSpeed,
+      targetTemperature: _pendingTargetTemperature ?? _device.targetTemperature,
+      climateMode: _pendingClimateMode ?? observedMode ?? _device.climateMode,
+      position:
+          _pendingPosition ??
+          observedPosition?.round().clamp(0, 100).toInt() ??
+          _device.position,
+      colorTemperature:
+          _pendingColorTemperature ??
+          observedColorTemperature?.round().clamp(0, 100).toInt() ??
+          _device.colorTemperature,
+    );
+  }
 
   void _converge(PhysicalDevice updated) {
     setState(() => _device = updated);
@@ -1512,24 +1556,59 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
     setState(() => _pendingClimateMode = mode);
   }
 
-  /// Desktop parity: converges the buffered display values into the shared
-  /// state (list + detail) at once, instead of applying slider by slider.
+  void _setPosition(double value) {
+    setState(() => _pendingPosition = value.round());
+  }
+
+  void _setColorTemperature(double value) {
+    setState(() => _pendingColorTemperature = value.round());
+  }
+
+  /// Desktop parity: saves the buffered values at once. With a command-capable
+  /// repository the capability-backed fields execute canonical actions through
+  /// the shared commit helper and confirmed observations converge back; without
+  /// one the legacy local convergence stays as fallback. Target temperature has
+  /// no backend action and always converges locally (documented contract gap).
   Future<void> _saveAll() async {
     if (_saving || !_hasPendingChanges) return;
     setState(() => _saving = true);
+    final commands = asDeviceCommandRepository(widget.repository);
     try {
-      _converge(_effectiveDevice);
-      setState(() {
-        _pendingBrightness = null;
-        _pendingFanSpeed = null;
-        _pendingTargetTemperature = null;
-        _pendingClimateMode = null;
-      });
+      if (commands == null) {
+        _converge(_effectiveDevice);
+        _clearPending();
+        if (!mounted) return;
+        unawaited(
+          showWallSuccessSplash(
+            context,
+            message: 'Cambios realizados correctamente',
+          ),
+        );
+        return;
+      }
+      final result = await commitCapabilityFields(
+        commands: commands,
+        device: _device,
+        brightness: _pendingBrightness,
+        fanSpeed: _pendingFanSpeed,
+        climateMode: _pendingClimateMode,
+        position: _pendingPosition,
+        colorTemperature: _pendingColorTemperature,
+      );
       if (!mounted) return;
+      var updated = result.device;
+      if (_pendingTargetTemperature != null) {
+        updated = updated.copyWith(
+          targetTemperature: _pendingTargetTemperature,
+        );
+      }
+      _converge(updated);
+      _clearPending();
+      final notice = result.notice;
       unawaited(
         showWallSuccessSplash(
           context,
-          message: 'Cambios realizados correctamente',
+          message: notice ?? 'Cambios realizados correctamente',
         ),
       );
     } catch (error) {
@@ -1537,6 +1616,17 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  void _clearPending() {
+    setState(() {
+      _pendingBrightness = null;
+      _pendingFanSpeed = null;
+      _pendingTargetTemperature = null;
+      _pendingClimateMode = null;
+      _pendingPosition = null;
+      _pendingColorTemperature = null;
+    });
   }
 
   Future<void> _renameDevice() async {
@@ -1808,6 +1898,8 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
       _pendingFanSpeed = null;
       _pendingTargetTemperature = null;
       _pendingClimateMode = null;
+      _pendingPosition = null;
+      _pendingColorTemperature = null;
     });
   }
 
@@ -1981,10 +2073,13 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
                     const SizedBox(height: 14),
                     _WallAdjustCard(
                       device: _effectiveDevice,
+                      commandsAvailable: _commandsAvailable,
                       onBrightnessChanged: _setBrightness,
                       onFanSpeedChanged: _setFanSpeed,
                       onTemperatureChanged: _setTargetTemperature,
                       onClimateModeChanged: _setClimateMode,
+                      onPositionChanged: _setPosition,
+                      onColorTemperatureChanged: _setColorTemperature,
                     ),
                     const SizedBox(height: 14),
                     _WallCard(
@@ -2143,6 +2238,7 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
 const _wallTypeLight = 'light';
 const _wallTypeOutlet = 'outlet';
 const _wallTypeSwitch = 'switch';
+const _wallTypeBlinds = 'blinds';
 const _wallTypeFan = 'fan';
 const _wallTypeClimate = 'climate';
 const _wallTypeSensor = 'sensor';
@@ -2167,6 +2263,12 @@ String _wallEffectiveType(PhysicalDevice device) {
         return _wallTypeOutlet;
       case 'climate':
         return _wallTypeClimate;
+      case 'cover':
+      case 'blind':
+      case 'blinds':
+      case 'shutter':
+      case 'curtain':
+        return _wallTypeBlinds;
     }
   }
   switch (device.deviceClass.toLowerCase()) {
@@ -2185,6 +2287,21 @@ String _wallEffectiveType(PhysicalDevice device) {
       return _wallTypeClimate;
     case 'sensor':
       return _wallTypeSensor;
+    case 'cover':
+    case 'blind':
+    case 'blinds':
+    case 'shutter':
+    case 'curtain':
+      return _wallTypeBlinds;
+  }
+  // Position capability without role/class metadata: a generically detected
+  // blind must still resolve to its real control.
+  if (device.endpoints.any(
+    (endpoint) =>
+        endpoint.capabilities.contains('POSITION') ||
+        endpoint.capabilityDetails.containsKey('POSITION'),
+  )) {
+    return _wallTypeBlinds;
   }
   return switch (device.kind) {
     DeviceKind.light => _wallTypeLight,
@@ -2563,21 +2680,28 @@ String _wallRoleSourceLabel(DeviceEndpoint endpoint) {
 }
 
 /// Touch-first 'Ajustes' card (desktop 'Controles' parity): type-specific
-/// demo controls with finger-sized targets. Gateways skip this card.
+/// controls bound to the canonical capability actions. Gateways and sensors
+/// skip this card.
 class _WallAdjustCard extends StatelessWidget {
   const _WallAdjustCard({
     required this.device,
+    required this.commandsAvailable,
     required this.onBrightnessChanged,
     required this.onFanSpeedChanged,
     required this.onTemperatureChanged,
     required this.onClimateModeChanged,
+    required this.onPositionChanged,
+    required this.onColorTemperatureChanged,
   });
 
   final PhysicalDevice device;
+  final bool commandsAvailable;
   final ValueChanged<double> onBrightnessChanged;
   final ValueChanged<int> onFanSpeedChanged;
   final ValueChanged<double> onTemperatureChanged;
   final ValueChanged<String> onClimateModeChanged;
+  final ValueChanged<double> onPositionChanged;
+  final ValueChanged<double> onColorTemperatureChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -2588,6 +2712,17 @@ class _WallAdjustCard extends StatelessWidget {
     if (type == _wallTypeSensor) {
       return const SizedBox.shrink();
     }
+    final modeOptions = capabilityModeOptions(
+      endpoint: firstEndpointWithCapability(device, 'MODE'),
+      commandsAvailable: commandsAvailable,
+      selected: device.climateMode ?? 'cold',
+    );
+    final showColorTemperature =
+        firstEndpointWithCapability(
+          device,
+          'COLOR_TEMPERATURE',
+        )?.capabilityDetails.containsKey('COLOR_TEMPERATURE') ??
+        false;
     return _WallCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2598,9 +2733,26 @@ class _WallAdjustCard extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           switch (type) {
-            _wallTypeLight => _WallBrightnessControl(
-              brightness: ((device.brightness ?? 80).toDouble()),
-              onChanged: onBrightnessChanged,
+            _wallTypeBlinds => _WallPositionControl(
+              position: ((device.position ?? 0).toDouble()),
+              onChanged: onPositionChanged,
+            ),
+            _wallTypeLight => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _WallBrightnessControl(
+                  brightness: ((device.brightness ?? 80).toDouble()),
+                  onChanged: onBrightnessChanged,
+                ),
+                if (showColorTemperature) ...[
+                  const SizedBox(height: 16),
+                  _WallColorTemperatureControl(
+                    colorTemperature: ((device.colorTemperature ?? 50)
+                        .toDouble()),
+                    onChanged: onColorTemperatureChanged,
+                  ),
+                ],
+              ],
             ),
             _wallTypeFan => _WallFanControls(
               fanSpeed: device.fanSpeed ?? 2,
@@ -2616,6 +2768,7 @@ class _WallAdjustCard extends StatelessWidget {
                 const SizedBox(height: 16),
                 _WallClimateModeChips(
                   mode: device.climateMode ?? 'cold',
+                  options: modeOptions,
                   onChanged: onClimateModeChanged,
                 ),
                 const SizedBox(height: 16),
@@ -2637,13 +2790,17 @@ class _WallAdjustCard extends StatelessWidget {
   }
 }
 
-class _WallBrightnessControl extends StatelessWidget {
-  const _WallBrightnessControl({
-    required this.brightness,
+/// Shared wall percent slider used by the capability-backed controls
+/// (brightness, position, color temperature). 0-100 with 20 divisions.
+class _WallPercentControl extends StatelessWidget {
+  const _WallPercentControl({
+    required this.label,
+    required this.value,
     required this.onChanged,
   });
 
-  final double brightness;
+  final String label;
+  final double value;
   final ValueChanged<double> onChanged;
 
   @override
@@ -2653,13 +2810,13 @@ class _WallBrightnessControl extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Text(
-              'Brillo',
-              style: TextStyle(color: AppColors.textDim, fontSize: 15),
+            Text(
+              label,
+              style: const TextStyle(color: AppColors.textDim, fontSize: 15),
             ),
             const Spacer(),
             Text(
-              '${brightness.round()} %',
+              '${value.round()} %',
               style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
             ),
           ],
@@ -2672,15 +2829,69 @@ class _WallBrightnessControl extends StatelessWidget {
             overlayShape: const RoundSliderOverlayShape(overlayRadius: 32),
           ),
           child: Slider(
-            value: brightness.clamp(0, 100),
+            value: value.clamp(0, 100),
             min: 0,
             max: 100,
             divisions: 20,
-            label: '${brightness.round()} %',
+            label: '${value.round()} %',
             onChanged: onChanged,
           ),
         ),
       ],
+    );
+  }
+}
+
+class _WallBrightnessControl extends StatelessWidget {
+  const _WallBrightnessControl({
+    required this.brightness,
+    required this.onChanged,
+  });
+
+  final double brightness;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return _WallPercentControl(
+      label: 'Brillo',
+      value: brightness,
+      onChanged: onChanged,
+    );
+  }
+}
+
+class _WallPositionControl extends StatelessWidget {
+  const _WallPositionControl({required this.position, required this.onChanged});
+
+  final double position;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return _WallPercentControl(
+      label: 'Posición',
+      value: position,
+      onChanged: onChanged,
+    );
+  }
+}
+
+class _WallColorTemperatureControl extends StatelessWidget {
+  const _WallColorTemperatureControl({
+    required this.colorTemperature,
+    required this.onChanged,
+  });
+
+  final double colorTemperature;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return _WallPercentControl(
+      label: 'Temperatura de color',
+      value: colorTemperature,
+      onChanged: onChanged,
     );
   }
 }
@@ -2839,17 +3050,15 @@ class _WallTemperatureControl extends StatelessWidget {
 }
 
 class _WallClimateModeChips extends StatelessWidget {
-  const _WallClimateModeChips({required this.mode, required this.onChanged});
+  const _WallClimateModeChips({
+    required this.mode,
+    required this.options,
+    required this.onChanged,
+  });
 
   final String mode;
+  final List<String> options;
   final ValueChanged<String> onChanged;
-
-  static const _modes = <String, String>{
-    'cold': 'Frío',
-    'heat': 'Calor',
-    'auto': 'Auto',
-    'fan': 'Ventilación',
-  };
 
   @override
   Widget build(BuildContext context) {
@@ -2865,11 +3074,11 @@ class _WallClimateModeChips extends StatelessWidget {
           spacing: 10,
           runSpacing: 10,
           children: [
-            for (final entry in _modes.entries)
+            for (final option in options)
               ChoiceChip(
-                label: Text(entry.value),
-                selected: mode == entry.key,
-                onSelected: (_) => onChanged(entry.key),
+                label: Text(capabilityModeLabel(option)),
+                selected: mode == option,
+                onSelected: (_) => onChanged(option),
                 labelStyle: const TextStyle(fontSize: 15),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 14,

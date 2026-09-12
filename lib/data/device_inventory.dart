@@ -174,6 +174,104 @@ class DeviceBinding {
   final String relation;
 }
 
+/// Canonical capability descriptor from an endpoint's `capabilities[]` list.
+///
+/// Purely descriptive: [range] is `[min, max]` for numeric capabilities,
+/// [enumValues] the allowed values for enum-like ones. Absent optional
+/// metadata stays null instead of being invented.
+@immutable
+class DeviceCapability {
+  const DeviceCapability({
+    required this.name,
+    required this.readable,
+    required this.writable,
+    this.range,
+    this.enumValues,
+    this.confidence,
+  });
+
+  final String name;
+  final bool readable;
+  final bool writable;
+  final List<double>? range;
+  final List<String>? enumValues;
+  final double? confidence;
+}
+
+/// Defensive parser for one `capabilities[]` entry. Returns null when the
+/// entry is not a map or has no usable `capability` name; every other field
+/// degrades to its absent value instead of failing the inventory load.
+DeviceCapability? parseDeviceCapability(Object? value) {
+  if (value is! Map) return null;
+  final name = value['capability'];
+  if (name is! String || name.trim().isEmpty) return null;
+
+  List<double>? range;
+  final rawRange = value['range'];
+  if (rawRange is List && rawRange.length >= 2) {
+    final min = rawRange[0];
+    final max = rawRange[1];
+    if (min is num && max is num) {
+      range = List.unmodifiable([min.toDouble(), max.toDouble()]);
+    }
+  }
+
+  List<String>? enumValues;
+  final rawEnum = value['enum_values'];
+  if (rawEnum is List) {
+    final values = rawEnum.whereType<String>().toList();
+    if (values.isNotEmpty) enumValues = List.unmodifiable(values);
+  }
+
+  final rawConfidence = value['confidence'];
+
+  return DeviceCapability(
+    name: name,
+    readable: value['readable'] == true,
+    writable: value['writable'] == true,
+    range: range,
+    enumValues: enumValues,
+    confidence: rawConfidence is num ? rawConfidence.toDouble() : null,
+  );
+}
+
+/// One observed capability value reported under
+/// `observed_state.capabilities[name]`. [value] stays untyped on purpose: the
+/// contract can carry int, num, string or bool values.
+@immutable
+class EndpointCapabilityObservation {
+  const EndpointCapabilityObservation({
+    this.value,
+    this.quality,
+    this.observedAt,
+  });
+
+  final Object? value;
+  final String? quality;
+  final String? observedAt;
+}
+
+/// Defensive parser for the `observed_state.capabilities` map. Malformed
+/// entries (non-map values, empty keys) are skipped instead of failing the
+/// load; valid entries keep whatever fields they carry.
+Map<String, EndpointCapabilityObservation> parseObservedCapabilities(
+  Object? raw,
+) {
+  if (raw is! Map) return const {};
+  final result = <String, EndpointCapabilityObservation>{};
+  raw.forEach((key, value) {
+    if (key is! String || key.trim().isEmpty || value is! Map) return;
+    final quality = value['quality'];
+    final observedAt = value['observed_at'];
+    result[key] = EndpointCapabilityObservation(
+      value: value['value'],
+      quality: quality is String && quality.isNotEmpty ? quality : null,
+      observedAt: observedAt is String ? observedAt : null,
+    );
+  });
+  return Map.unmodifiable(result);
+}
+
 @immutable
 class DeviceEndpoint {
   const DeviceEndpoint({
@@ -181,6 +279,7 @@ class DeviceEndpoint {
     required this.name,
     required this.kind,
     required this.capabilities,
+    this.capabilityDetails = const {},
     this.controlledAreaId,
     this.bindings = const [],
     this.userName,
@@ -194,12 +293,17 @@ class DeviceEndpoint {
     this.observedPower,
     this.observedQuality,
     this.observedAt,
+    this.observedCapabilities = const {},
   });
 
   final String id;
   final String name;
   final DeviceKind kind;
   final Set<String> capabilities;
+
+  /// Descriptor metadata per capability name (readable/writable/range/enum).
+  /// Empty when the backend omits `capabilities[]` metadata.
+  final Map<String, DeviceCapability> capabilityDetails;
   final String? controlledAreaId;
   final List<DeviceBinding> bindings;
 
@@ -235,6 +339,11 @@ class DeviceEndpoint {
   /// ISO-8601 timestamp of the observation, when reported.
   final String? observedAt;
 
+  /// Per-capability observations from `observed_state.capabilities`
+  /// (keyed by canonical capability name, e.g. `BRIGHTNESS`). Empty when the
+  /// backend reports none.
+  final Map<String, EndpointCapabilityObservation> observedCapabilities;
+
   String get displayName => displayNameSemantic ?? name;
 
   /// True when the user explicitly configured the effective semantic role.
@@ -244,6 +353,7 @@ class DeviceEndpoint {
     String? name,
     DeviceKind? kind,
     Set<String>? capabilities,
+    Map<String, DeviceCapability>? capabilityDetails,
     Object? controlledAreaId = _unset,
     List<DeviceBinding>? bindings,
     Object? userName = _unset,
@@ -257,12 +367,14 @@ class DeviceEndpoint {
     Object? observedPower = _unset,
     Object? observedQuality = _unset,
     Object? observedAt = _unset,
+    Map<String, EndpointCapabilityObservation>? observedCapabilities,
   }) {
     return DeviceEndpoint(
       id: id,
       name: name ?? this.name,
       kind: kind ?? this.kind,
       capabilities: capabilities ?? this.capabilities,
+      capabilityDetails: capabilityDetails ?? this.capabilityDetails,
       controlledAreaId: identical(controlledAreaId, _unset)
           ? this.controlledAreaId
           : controlledAreaId as String?,
@@ -286,6 +398,7 @@ class DeviceEndpoint {
       observedAt: identical(observedAt, _unset)
           ? this.observedAt
           : observedAt as String?,
+      observedCapabilities: observedCapabilities ?? this.observedCapabilities,
     );
   }
 }
@@ -322,6 +435,8 @@ class PhysicalDevice {
     this.fanSpeed,
     this.targetTemperature,
     this.climateMode,
+    this.position,
+    this.colorTemperature,
     this.sensorValue,
   });
 
@@ -353,12 +468,15 @@ class PhysicalDevice {
 
   /// Demo-only display state (mock). Null means "unknown / not reported".
   /// [brightness] is 0-100, [fanSpeed] is 1-3, [targetTemperature] is °C,
-  /// [climateMode] is one of cold/heat/auto/fan.
+  /// [climateMode] is one of cold/heat/auto/fan, [position] is 0-100,
+  /// [colorTemperature] is 0-100.
   final bool? powerOn;
   final int? brightness;
   final int? fanSpeed;
   final double? targetTemperature;
   final String? climateMode;
+  final int? position;
+  final int? colorTemperature;
   final String? sensorValue;
 
   bool get needsConfiguration =>
@@ -392,6 +510,8 @@ class PhysicalDevice {
     Object? fanSpeed = _unset,
     Object? targetTemperature = _unset,
     Object? climateMode = _unset,
+    Object? position = _unset,
+    Object? colorTemperature = _unset,
     Object? sensorValue = _unset,
   }) {
     return PhysicalDevice(
@@ -441,6 +561,10 @@ class PhysicalDevice {
       climateMode: identical(climateMode, _unset)
           ? this.climateMode
           : climateMode as String?,
+      position: identical(position, _unset) ? this.position : position as int?,
+      colorTemperature: identical(colorTemperature, _unset)
+          ? this.colorTemperature
+          : colorTemperature as int?,
       sensorValue: identical(sensorValue, _unset)
           ? this.sensorValue
           : sensorValue as String?,
@@ -482,6 +606,46 @@ PowerDisplayState devicePowerDisplayState(PhysicalDevice device) {
   }
   return PowerDisplayState.unknown;
 }
+
+/// Whether [capability] can receive commands on [endpoint]: the canonical
+/// descriptor decides when present, otherwise the legacy
+/// [DeviceEndpoint.capabilities] set is the fallback (mock/fake repositories).
+bool capabilityWritable(DeviceEndpoint endpoint, String capability) {
+  final detail = endpoint.capabilityDetails[capability];
+  if (detail != null) return detail.writable;
+  return endpoint.capabilities.contains(capability);
+}
+
+/// Confirmed [capability] value on [endpoint], or null when there is no
+/// observation or it is not `confirmed`. Unconfirmed state is never returned:
+/// stale/unknown values must not be presented as confident ones.
+Object? confirmedCapabilityValue(DeviceEndpoint endpoint, String capability) {
+  final observation = endpoint.observedCapabilities[capability];
+  if (observation == null || observation.quality != 'confirmed') return null;
+  return observation.value;
+}
+
+/// First endpoint of [device] where [capability] is present and writable
+/// (descriptor-aware; legacy capability sets without descriptors stay
+/// writable). Returns null when no endpoint can receive the command.
+DeviceEndpoint? firstEndpointWithCapability(
+  PhysicalDevice device,
+  String capability,
+) {
+  for (final endpoint in device.endpoints) {
+    if (capabilityWritable(endpoint, capability)) return endpoint;
+  }
+  return null;
+}
+
+/// Bridges the UI's 3-level fan control to the canonical percent domain:
+/// 1→33, 2→67, 3→100.
+int speedLevelToPercent(int level) => (level * 100 / 3).round();
+
+/// Inverse of [speedLevelToPercent]: 33→1, 67→2, 80→2, 100→3. Clamped to the
+/// 1..3 domain.
+int percentToSpeedLevel(num percent) =>
+    ((percent * 3) / 100).round().clamp(1, 3).toInt();
 
 @immutable
 class GatewayInfo {
@@ -632,6 +796,52 @@ class EndpointPowerResult {
   final bool responseParsed;
 }
 
+/// Typed outcome of one canonical capability action (`set_brightness`,
+/// `set_speed`, `set_mode`, ...).
+///
+/// Same honesty contract as [EndpointPowerResult]: parsed outcomes are
+/// returned as-is, a null body becomes `unconfirmed` with
+/// `responseParsed == false`, and no success is ever fabricated.
+@immutable
+class CapabilityActionResult {
+  const CapabilityActionResult({
+    required this.action,
+    this.capability,
+    required this.outcome,
+    this.changed,
+    this.observedValue,
+    this.observedQuality,
+    this.observedAt,
+    this.errorCode,
+    this.errorDetail,
+    this.responseParsed = true,
+  });
+
+  /// Canonical action name sent to the backend (e.g. `set_brightness`).
+  final String action;
+
+  /// Canonical capability the action targets (e.g. `BRIGHTNESS`); null when
+  /// the action has no mapped capability.
+  final String? capability;
+
+  /// Canonical outcome (SUCCESS|NO_CHANGE|UNSUPPORTED|UNAVAILABLE|TIMEOUT|
+  /// FAILED|EXECUTION_DISABLED), or `unconfirmed` for an unparsed body.
+  final String outcome;
+
+  final bool? changed;
+
+  /// Value observed after execution in the targeted capability; null means
+  /// unknown/unavailable.
+  final Object? observedValue;
+  final String? observedQuality;
+  final String? observedAt;
+  final String? errorCode;
+  final String? errorDetail;
+
+  /// False when the response body was null and no typed result was parsed.
+  final bool responseParsed;
+}
+
 /// Result of an identify request: whether the provider supports it, plus the
 /// reason when it does not.
 @immutable
@@ -654,6 +864,16 @@ abstract interface class DeviceCommandRepository {
     String endpointId,
     bool enabled,
   );
+
+  /// Executes one canonical endpoint action (`set_power`, `set_brightness`,
+  /// `set_position`, `set_color`, `set_color_temperature`, `set_speed`,
+  /// `set_mode`) and returns its typed outcome.
+  Future<CapabilityActionResult> executeAction(
+    String deviceId,
+    String endpointId, {
+    required String action,
+    required Object value,
+  });
 
   Future<IdentifyResult> identifyDevice(String deviceId, {String? endpointId});
 

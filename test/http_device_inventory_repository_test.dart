@@ -974,6 +974,208 @@ void main() {
       );
     });
 
+    test(
+      'capability descriptors and per-capability observations parse',
+      () async {
+        final fake = FakeApiClient(
+          inventoryData: inventoryWith(
+            deviceMap(
+              id: 'device_x',
+              fields: {
+                'endpoints': <Map<String, dynamic>>[
+                  {
+                    'endpoint_id': 'main',
+                    'display_name': 'Principal',
+                    'capabilities': <Map<String, dynamic>>[
+                      {
+                        'capability': 'BRIGHTNESS',
+                        'readable': true,
+                        'writable': true,
+                        'range': [0, 100],
+                        'enum_values': null,
+                        'confidence': 0.9,
+                      },
+                      {
+                        'capability': 'MODE',
+                        'readable': true,
+                        'writable': true,
+                        'enum_values': ['auto', 'manual'],
+                      },
+                      // No capability name: malformed and skipped.
+                      {'readable': true},
+                    ],
+                    'observed_state': <String, dynamic>{
+                      'power': true,
+                      'quality': 'confirmed',
+                      'observed_at': '2026-09-11T12:00:00Z',
+                      'capabilities': <String, dynamic>{
+                        'BRIGHTNESS': {
+                          'value': 80,
+                          'quality': 'confirmed',
+                          'observed_at': '2026-09-11T13:00:00Z',
+                        },
+                        'MODE': {'value': 'manual', 'quality': 'confirmed'},
+                        'GHOST': 'nope',
+                      },
+                    },
+                  },
+                ],
+              },
+            ),
+          ),
+        );
+
+        final snapshot = await HttpDeviceInventoryRepository(fake).load();
+        final endpoint = snapshot.devices.single.endpoints.single;
+
+        expect(endpoint.capabilities, {'BRIGHTNESS', 'MODE'});
+        expect(endpoint.capabilityDetails['BRIGHTNESS']!.range, [0.0, 100.0]);
+        expect(endpoint.capabilityDetails['BRIGHTNESS']!.writable, isTrue);
+        expect(endpoint.capabilityDetails['BRIGHTNESS']!.confidence, 0.9);
+        expect(endpoint.capabilityDetails['MODE']!.enumValues, [
+          'auto',
+          'manual',
+        ]);
+        expect(endpoint.observedCapabilities, hasLength(2));
+        expect(endpoint.observedCapabilities['BRIGHTNESS']!.value, 80);
+        expect(
+          endpoint.observedCapabilities['BRIGHTNESS']!.observedAt,
+          '2026-09-11T13:00:00Z',
+        );
+        expect(endpoint.observedCapabilities['MODE']!.value, 'manual');
+        expect(endpoint.observedCapabilities.containsKey('GHOST'), isFalse);
+        expect(confirmedCapabilityValue(endpoint, 'BRIGHTNESS'), 80);
+      },
+    );
+
+    test(
+      'executeAction maps the typed outcome and per-capability observation',
+      () async {
+        final fake = FakeApiClient()
+          ..endpointActionData = {
+            'outcome': 'SUCCESS',
+            'changed': true,
+            'observed_state': {
+              'power': true,
+              'quality': 'confirmed',
+              'observed_at': '2026-09-11T12:00:00Z',
+              'capabilities': {
+                'BRIGHTNESS': {
+                  'value': 70,
+                  'quality': 'confirmed',
+                  'observed_at': '2026-09-11T12:01:00Z',
+                },
+              },
+            },
+            'error_code': null,
+            'error_detail': null,
+          };
+        final repository = HttpDeviceInventoryRepository(fake);
+
+        final result = await repository.executeAction(
+          'device_1',
+          'relay_1',
+          action: 'set_brightness',
+          value: 70,
+        );
+
+        expect(result.action, 'set_brightness');
+        expect(result.capability, 'BRIGHTNESS');
+        expect(result.outcome, 'SUCCESS');
+        expect(result.changed, isTrue);
+        expect(result.observedValue, 70);
+        expect(result.observedQuality, 'confirmed');
+        expect(result.observedAt, '2026-09-11T12:01:00Z');
+        expect(result.errorCode, isNull);
+        expect(result.errorDetail, isNull);
+        expect(result.responseParsed, isTrue);
+        expect(fake.actionCalls.single, {
+          'device_id': 'device_1',
+          'endpoint_id': 'relay_1',
+          'action': 'set_brightness',
+          'value': 70,
+          'request_id': null,
+        });
+      },
+    );
+
+    test(
+      'executeAction reports unconfirmed with the mapped capability when the '
+      'body is null',
+      () async {
+        final fake = FakeApiClient();
+        final repository = HttpDeviceInventoryRepository(fake);
+
+        final result = await repository.executeAction(
+          'device_1',
+          'relay_1',
+          action: 'set_mode',
+          value: 'manual',
+        );
+
+        expect(result.capability, 'MODE');
+        expect(result.outcome, 'unconfirmed');
+        expect(result.responseParsed, isFalse);
+        expect(result.changed, isNull);
+        expect(result.observedValue, isNull);
+        expect(result.observedQuality, isNull);
+        expect(fake.actionCalls.single['value'], 'manual');
+      },
+    );
+
+    test(
+      'executeAction extracts the legacy top-level power observation',
+      () async {
+        final fake = FakeApiClient()
+          ..endpointActionData = {
+            'outcome': 'SUCCESS',
+            'changed': true,
+            'observed_state': {
+              'power': true,
+              'quality': 'confirmed',
+              'observed_at': '2026-09-11T12:00:00Z',
+            },
+          };
+        final repository = HttpDeviceInventoryRepository(fake);
+
+        final result = await repository.executeAction(
+          'device_1',
+          'relay_1',
+          action: 'set_power',
+          value: true,
+        );
+
+        expect(result.capability, 'POWER');
+        expect(result.observedValue, isTrue);
+        expect(result.observedQuality, 'confirmed');
+        expect(result.observedAt, '2026-09-11T12:00:00Z');
+      },
+    );
+
+    test('executeAction propagates ApiException untouched', () async {
+      final fake = FakeApiClient()
+        ..endpointActionError = ApiException(422, {'detail': 'invalid_value'});
+      final repository = HttpDeviceInventoryRepository(fake);
+
+      await expectLater(
+        repository.executeAction(
+          'device_1',
+          'relay_1',
+          action: 'set_brightness',
+          value: 150,
+        ),
+        throwsA(
+          isA<ApiException>()
+              .having((error) => error.statusCode, 'code', 422)
+              .having(
+                (error) => (error.body as Map)['detail'],
+                'detail',
+                'invalid_value',
+              ),
+        ),
+      );
+    });
+
     test('identifyDevice maps supported/reason from the API', () async {
       final fake = FakeApiClient()
         ..identifyData = {

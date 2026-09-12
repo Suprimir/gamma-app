@@ -225,6 +225,132 @@ void main() {
     // No parsed observation: the state stays neutral, never fabricated.
     expect(find.text('Sin datos'), findsOneWidget);
   });
+
+  testWidgets('wall save commands capability fields with mapped values', (
+    tester,
+  ) async {
+    final repo = CommandDeviceFakeRepo(devices: const [_wallCapabilitiesLight]);
+    await pumpWall(tester, repo);
+
+    await tester.tap(find.text('Luz comandable'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Brillo'), findsOneWidget);
+    expect(find.text('Temperatura de color'), findsOneWidget);
+
+    final sliders = find.byType(Slider);
+    await tester.ensureVisible(sliders.first);
+    await tester.pumpAndSettle();
+    await tester.tapAt(tester.getCenter(sliders.first));
+    await tester.pumpAndSettle();
+    // The color-temperature default is 50: tap off-center so the value
+    // actually changes (Flutter sliders skip onChanged when it does not).
+    final colorTempRect = tester.getRect(sliders.last);
+    await tester.tapAt(
+      Offset(
+        colorTempRect.left + colorTempRect.width * 0.25,
+        colorTempRect.center.dy,
+      ),
+    );
+    await tester.pumpAndSettle();
+    debugPrint('CT-ACTIONS: ${repo.actionCalls}');
+
+    await tester.ensureVisible(find.text('Guardar cambios'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Guardar cambios'));
+    await tester.pumpAndSettle();
+
+    expect(repo.actionCalls, [
+      ('dev_wall_caps_01', 'light', 'set_brightness', 50),
+      ('dev_wall_caps_01', 'light', 'set_color_temperature', 20),
+    ]);
+    expect(find.text('Cambios realizados correctamente'), findsOneWidget);
+  });
+
+  testWidgets('wall blinds position slider commands set_position', (
+    tester,
+  ) async {
+    final repo = CommandDeviceFakeRepo(devices: const [_wallBlindCaps]);
+    await pumpWall(tester, repo);
+
+    await tester.tap(find.text('Persiana comandable'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Posición'), findsOneWidget);
+    final slider = find.byType(Slider).first;
+    await tester.ensureVisible(slider);
+    await tester.pumpAndSettle();
+    await tester.tapAt(tester.getCenter(slider));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Guardar cambios'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Guardar cambios'));
+    await tester.pumpAndSettle();
+
+    expect(repo.actionCalls, [
+      ('dev_wall_blind_01', 'cover', 'set_position', 50),
+    ]);
+  });
+
+  testWidgets('wall mode chips come from descriptor enum values', (
+    tester,
+  ) async {
+    final repo = CommandDeviceFakeRepo(devices: const [_wallClimateCaps]);
+    await pumpWall(tester, repo);
+
+    await tester.tap(find.text('Clima comandable'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('eco'), findsOneWidget);
+    expect(find.text('turbo'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('turbo'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('turbo'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Guardar cambios'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Guardar cambios'));
+    await tester.pumpAndSettle();
+
+    expect(repo.actionCalls, [
+      ('dev_wall_climate_01', 'mode', 'set_mode', 'turbo'),
+    ]);
+  });
+
+  testWidgets('wall save surfaces the writes-disabled notice', (tester) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_wallCapabilitiesLight],
+      actionResult: const CapabilityActionResult(
+        action: 'set_brightness',
+        capability: 'BRIGHTNESS',
+        outcome: 'EXECUTION_DISABLED',
+        changed: false,
+      ),
+    );
+    await pumpWall(tester, repo);
+
+    await tester.tap(find.text('Luz comandable'));
+    await tester.pumpAndSettle();
+
+    final slider = find.byType(Slider).first;
+    await tester.ensureVisible(slider);
+    await tester.pumpAndSettle();
+    await tester.tapAt(tester.getCenter(slider));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Guardar cambios'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Guardar cambios'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Escritura deshabilitada en el modo actual'),
+      findsOneWidget,
+    );
+  });
 }
 
 Future<void> pumpWall(
@@ -335,6 +461,108 @@ const _wallCommandLight = PhysicalDevice(
       name: 'Luz',
       kind: DeviceKind.light,
       capabilities: {'POWER'},
+    ),
+  ],
+);
+
+const _wallCapabilitiesLight = PhysicalDevice(
+  id: 'dev_wall_caps_01',
+  name: 'Luz comandable',
+  kind: DeviceKind.light,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'ZB-DL01',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'sala',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      semanticRole: 'light',
+      capabilities: {'POWER', 'BRIGHTNESS', 'COLOR_TEMPERATURE'},
+      capabilityDetails: {
+        'BRIGHTNESS': DeviceCapability(
+          name: 'BRIGHTNESS',
+          readable: true,
+          writable: true,
+          range: [0, 100],
+        ),
+        'COLOR_TEMPERATURE': DeviceCapability(
+          name: 'COLOR_TEMPERATURE',
+          readable: true,
+          writable: true,
+          range: [0, 100],
+        ),
+      },
+    ),
+  ],
+);
+
+const _wallBlindCaps = PhysicalDevice(
+  id: 'dev_wall_blind_01',
+  name: 'Persiana comandable',
+  kind: DeviceKind.unknown,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'BL-1',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'sala',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'cover',
+      name: 'Persiana',
+      kind: DeviceKind.unknown,
+      semanticRole: 'cover',
+      capabilities: {'POSITION'},
+      capabilityDetails: {
+        'POSITION': DeviceCapability(
+          name: 'POSITION',
+          readable: true,
+          writable: true,
+          range: [0, 100],
+        ),
+      },
+    ),
+  ],
+);
+
+const _wallClimateCaps = PhysicalDevice(
+  id: 'dev_wall_climate_01',
+  name: 'Clima comandable',
+  kind: DeviceKind.unknown,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'AC-1',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'sala',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'mode',
+      name: 'Modo',
+      kind: DeviceKind.unknown,
+      semanticRole: 'climate',
+      capabilities: {'MODE'},
+      capabilityDetails: {
+        'MODE': DeviceCapability(
+          name: 'MODE',
+          readable: true,
+          writable: true,
+          enumValues: ['eco', 'turbo'],
+        ),
+      },
+      observedCapabilities: {
+        'MODE': EndpointCapabilityObservation(
+          value: 'turbo',
+          quality: 'confirmed',
+        ),
+      },
     ),
   ],
 );
