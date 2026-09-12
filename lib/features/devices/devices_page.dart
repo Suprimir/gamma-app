@@ -190,7 +190,7 @@ class _DevicesPageState extends State<DevicesPage> {
       color: AppColors.bg,
       child: SafeArea(
         child: RefreshIndicator(
-          onRefresh: _load,
+          onRefresh: _controller.refreshStatesAndReload,
           color: AppColors.accent,
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),

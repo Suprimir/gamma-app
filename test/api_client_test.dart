@@ -949,6 +949,46 @@ void main() {
       await server.close(force: true);
     });
 
+    test(
+      'refreshDeviceStates() hace POST con include_offline y body vacío',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+        final calls = <String>[];
+        final includeOffline = <String?>[];
+        final bodies = <String>[];
+
+        server.listen((request) async {
+          calls.add('${request.method} ${request.uri.path}');
+          includeOffline.add(request.uri.queryParameters['include_offline']);
+          bodies.add(await utf8.decoder.bind(request).join());
+          request.response.write(
+            '{"scanned":7,"refreshed":9,"skipped_offline":6,'
+            '"duration_ms":12345,"per_device":{"dev_3":3,"dev_8":1}}',
+          );
+          await request.response.close();
+        });
+
+        final summary = await client.refreshDeviceStates();
+        expect(summary['scanned'], 7);
+        expect(summary['refreshed'], 9);
+        expect(summary['skipped_offline'], 6);
+        expect(summary['per_device'], {'dev_3': 3, 'dev_8': 1});
+
+        await client.refreshDeviceStates(includeOffline: true);
+
+        expect(calls, [
+          'POST /api/v1/devices/refresh-states',
+          'POST /api/v1/devices/refresh-states',
+        ]);
+        expect(includeOffline, ['false', 'true']);
+        for (final body in bodies) {
+          expect(body, isEmpty);
+        }
+        await server.close(force: true);
+      },
+    );
+
     test('bindEntity()/unbindEntity() usan path y body canónicos', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');

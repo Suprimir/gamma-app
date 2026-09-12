@@ -166,6 +166,21 @@ class FakeApiClient extends ApiClient {
     return refreshedDeviceData ?? _deviceDto(deviceId);
   }
 
+  final stateRefreshCalls = <bool>[];
+
+  @override
+  Future<Map<String, dynamic>> refreshDeviceStates({
+    bool includeOffline = false,
+  }) async {
+    stateRefreshCalls.add(includeOffline);
+    return const {
+      'scanned': 0,
+      'refreshed': 0,
+      'skipped_offline': 0,
+      'duration_ms': 0,
+    };
+  }
+
   final bindCalls = <Map<String, Object?>>[];
   final unbindCalls = <Map<String, Object?>>[];
 
@@ -502,6 +517,22 @@ void main() {
         throwsA(isA<UnsupportedError>()),
       );
     });
+
+    test(
+      'the HTTP repository opts into the bulk state sweep and forwards it',
+      () async {
+        final fake = FakeApiClient();
+        final repository = HttpDeviceInventoryRepository(fake);
+
+        // Production wiring: the controller detects the sweep surface here.
+        expect(asDeviceStateRefreshRepository(repository), isNotNull);
+
+        await repository.refreshDeviceStates();
+        await repository.refreshDeviceStates();
+
+        expect(fake.stateRefreshCalls, [false, false]);
+      },
+    );
 
     test('no fallback to mock when every call fails', () async {
       final fake = FakeApiClient(

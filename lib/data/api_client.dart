@@ -206,6 +206,24 @@ class ApiClient {
     return _decode(resp);
   }
 
+  /// Bulk read-only sweep of current device states into the observed-state
+  /// store. Returns the backend summary (`scanned`, `refreshed`,
+  /// `skipped_offline`, `duration_ms`, `per_device`). A full serial LAN sweep
+  /// can take up to a minute, hence the generous timeout.
+  Future<Map<String, dynamic>> refreshDeviceStates({
+    bool includeOffline = false,
+  }) async {
+    final resp = await _client
+        .post(
+          Uri.parse(
+            '$baseUrl/api/v1/devices/refresh-states'
+            '?include_offline=$includeOffline',
+          ),
+        )
+        .timeout(const Duration(seconds: 120));
+    return _decode(resp);
+  }
+
   /// Binds a logical entity to an endpoint (returns the DeviceDTO).
   /// `controlled_area_id` is omitted when null.
   Future<Map<String, dynamic>> bindEntity(

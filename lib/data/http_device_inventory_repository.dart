@@ -5,7 +5,10 @@ import 'device_inventory.dart';
 /// Raw JSON stops at this boundary: callers only see [DeviceInventorySnapshot]
 /// and [PhysicalDevice].
 class HttpDeviceInventoryRepository
-    implements DeviceInventoryRepository, DeviceCommandRepository {
+    implements
+        DeviceInventoryRepository,
+        DeviceCommandRepository,
+        DeviceStateRefreshRepository {
   HttpDeviceInventoryRepository(this._api);
 
   final ApiClient _api;
@@ -16,6 +19,9 @@ class HttpDeviceInventoryRepository
 
   @override
   bool get supportsIdentify => false;
+
+  @override
+  Future<void> refreshDeviceStates() => _api.refreshDeviceStates();
 
   @override
   Future<DeviceInventorySnapshot> load() async {

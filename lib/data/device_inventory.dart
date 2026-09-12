@@ -764,6 +764,27 @@ abstract interface class DeviceInventoryRepository {
   Future<void> identify(String deviceId, {String? endpointId});
 }
 
+/// Optional bulk state-sweep surface, segregated the same way as
+/// [DeviceCommandRepository]: only repositories backed by the observed-state
+/// store opt in, so every existing [DeviceInventoryRepository] implementer
+/// (including test fakes) keeps compiling untouched.
+abstract interface class DeviceStateRefreshRepository {
+  /// Triggers the backend read-only sweep of current device states and
+  /// returns once the summary was accepted. Success means the store is
+  /// refreshed, never that any device answered.
+  Future<void> refreshDeviceStates();
+}
+
+/// Narrows [repo] to [DeviceStateRefreshRepository] when supported, else null.
+DeviceStateRefreshRepository? asDeviceStateRefreshRepository(
+  DeviceInventoryRepository repo,
+) {
+  if (repo is DeviceStateRefreshRepository) {
+    return repo as DeviceStateRefreshRepository;
+  }
+  return null;
+}
+
 /// Typed outcome of one endpoint power command.
 ///
 /// Deliberately decoupled from [PhysicalDevice]: whether execution succeeded

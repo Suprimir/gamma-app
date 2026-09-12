@@ -359,7 +359,7 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 1440),
                 child: RefreshIndicator(
-                  onRefresh: _controller.loadDevices,
+                  onRefresh: _controller.refreshStatesAndReload,
                   child: ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(28, 28, 28, 48),

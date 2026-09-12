@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../data/device_capability_commit.dart';
@@ -34,11 +36,23 @@ class AdaptiveFeatureController extends ChangeNotifier {
   bool get supportsEndpointCommands =>
       asDeviceCommandRepository(_repository) != null;
 
+  /// Whether the repository can trigger the backend bulk state sweep
+  /// ([DeviceStateRefreshRepository]). Plain test fakes stay without it.
+  bool get supportsStateRefresh =>
+      asDeviceStateRefreshRepository(_repository) != null;
+
   DeviceInventorySnapshot? _snapshot;
   Object? _deviceError;
   bool _devicesLoading = false;
   bool _discovering = false;
   String? _selectedDeviceId;
+
+  /// In-flight guard for [refreshStatesAndReload]: at most one sweep at a
+  /// time so repeated gestures never stack network work.
+  bool _statesRefreshInFlight = false;
+
+  /// One-shot guard for the automatic sweep after the first successful load.
+  bool _autoSweepDone = false;
 
   /// Ids created through [addLocalDevice] ("Agregar dispositivo") that the
   /// backend doesn't know yet. Every canonical reload re-appends them, so a
@@ -87,16 +101,56 @@ class AdaptiveFeatureController extends ChangeNotifier {
     _devicesLoading = true;
     _deviceError = null;
     _notify();
+    var loaded = false;
     try {
       final previousLocals = _localOnlyDevices();
       _snapshot = await _repository.load();
       _restoreLocalDevices(previousLocals);
       _clearStaleSelection();
+      loaded = true;
     } catch (error) {
       _deviceError = error;
     } finally {
       _devicesLoading = false;
       _notify();
+    }
+    _maybeAutoSweep(loaded);
+  }
+
+  /// One-shot automatic state sweep after the first successful inventory
+  /// load, only when the repository supports it. Fire-and-forget: the load
+  /// path never awaits it and no timer is involved. Plain test fakes (no
+  /// [DeviceStateRefreshRepository]) are untouched.
+  void _maybeAutoSweep(bool loaded) {
+    if (!loaded || _autoSweepDone) return;
+    if (!supportsStateRefresh) return;
+    _autoSweepDone = true;
+    unawaited(refreshStatesAndReload());
+  }
+
+  /// Bulk read-only sweep of backend device states followed by a canonical
+  /// reload. Event-driven only (first successful load and user
+  /// pull-to-refresh gestures), never a timer.
+  ///
+  /// Repositories without the sweep surface are a no-op. A failed sweep is
+  /// silent (last known states stay as they were) and the inventory still
+  /// reloads, so the gesture always refreshes something.
+  Future<void> refreshStatesAndReload() async {
+    final sweeper = asDeviceStateRefreshRepository(_repository);
+    if (sweeper == null) return;
+    if (_statesRefreshInFlight) return;
+    _statesRefreshInFlight = true;
+    try {
+      try {
+        await sweeper.refreshDeviceStates();
+      } catch (_) {
+        // Silent by design: states stay as-is on sweep failure.
+      }
+      // The flag stays held through the reload so the auto-sweep fired by
+      // loadDevices coalesces instead of stacking a second sweep.
+      await loadDevices();
+    } finally {
+      _statesRefreshInFlight = false;
     }
   }
 

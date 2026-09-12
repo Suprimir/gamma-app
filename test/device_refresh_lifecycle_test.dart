@@ -210,6 +210,134 @@ void main() {
     expect(repo.loadCount, 1);
     expect(controller.snapshot, isNotNull);
   });
+
+  group('bulk state sweep', () {
+    test('auto-sweep fires once after the first successful load', () async {
+      final repo = _SweepLifecycleFakeRepo(devices: const [_lcTriple]);
+      final controller = AdaptiveFeatureController(repo);
+
+      await controller.loadDevices();
+      await pumpEventQueue();
+
+      expect(controller.supportsStateRefresh, isTrue);
+      expect(repo.refreshCount, 1);
+      expect(repo.loadCount, 2);
+
+      // Further loads never re-trigger the automatic sweep.
+      await controller.loadDevices();
+      await pumpEventQueue();
+
+      expect(repo.refreshCount, 1);
+      expect(repo.loadCount, 3);
+    });
+
+    test('auto-sweep never fires without the sweep surface', () async {
+      final repo = _LifecycleFakeRepo(devices: const [_lcTriple]);
+      final controller = AdaptiveFeatureController(repo);
+
+      await controller.loadDevices();
+      await pumpEventQueue();
+
+      expect(controller.supportsStateRefresh, isFalse);
+      expect(repo.loadCount, 1);
+    });
+
+    test('refreshStatesAndReload sweeps then reloads', () async {
+      final repo = _SweepLifecycleFakeRepo(devices: const [_lcTriple]);
+      final controller = AdaptiveFeatureController(repo);
+
+      await controller.refreshStatesAndReload();
+
+      expect(repo.refreshCount, 1);
+      expect(repo.loadCount, 1);
+      expect(controller.snapshot, isNotNull);
+    });
+
+    test('explicit sweep is a no-op without the sweep surface', () async {
+      final repo = _LifecycleFakeRepo(devices: const [_lcTriple]);
+      final controller = AdaptiveFeatureController(repo);
+
+      await controller.refreshStatesAndReload();
+
+      expect(repo.loadCount, 0);
+      expect(controller.snapshot, isNull);
+    });
+
+    test('failed sweep is silent and still reloads the inventory', () async {
+      final repo = _SweepLifecycleFakeRepo(devices: const [_lcTriple]);
+      final controller = AdaptiveFeatureController(repo);
+
+      await controller.loadDevices();
+      await pumpEventQueue();
+      final loadsBefore = repo.loadCount;
+
+      repo.refreshError = Exception('backend down');
+      await controller.refreshStatesAndReload();
+
+      expect(repo.refreshCount, 2);
+      expect(repo.loadCount, loadsBefore + 1);
+      expect(controller.snapshot, isNotNull);
+      expect(controller.deviceError, isNull);
+    });
+
+    test('in-flight guard coalesces concurrent sweeps', () async {
+      final repo = _SweepLifecycleFakeRepo(devices: const [_lcTriple]);
+      final controller = AdaptiveFeatureController(repo);
+      await controller.loadDevices();
+      await pumpEventQueue();
+
+      repo.pendingRefresh = Completer<void>();
+      final first = controller.refreshStatesAndReload();
+      final second = controller.refreshStatesAndReload();
+      await pumpEventQueue();
+
+      // 1 automatic + 1 explicit; the concurrent call was coalesced.
+      expect(repo.refreshCount, 2);
+
+      repo.pendingRefresh!.complete();
+      repo.pendingRefresh = null;
+      await first;
+      await second;
+
+      expect(repo.refreshCount, 2);
+      expect(repo.loadCount, 3);
+    });
+
+    testWidgets('mobile pull-to-refresh sweeps states and reloads', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final repo = _SweepLifecycleFakeRepo(devices: const [_lcTriple]);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DevicesPage(
+              api: ApiClient(baseUrl: 'http://127.0.0.1:8420'),
+              repository: repo,
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pumpAndSettle();
+
+      // The first successful load already fired the one-shot auto sweep.
+      expect(repo.refreshCount, 1);
+      final loadsBeforeGesture = repo.loadCount;
+
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, 400));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+
+      expect(repo.refreshCount, 2);
+      expect(repo.loadCount, loadsBeforeGesture + 1);
+      expect(find.text('Tus ubicaciones'), findsOneWidget);
+    });
+  });
 }
 
 Future<AdaptiveFeatureController> pumpDesktop(
@@ -494,4 +622,24 @@ class _LifecycleFakeRepo implements DeviceInventoryRepository {
 
   @override
   Future<void> identify(String deviceId, {String? endpointId}) async {}
+}
+
+/// Lifecycle fake with the optional bulk state-sweep surface
+/// ([DeviceStateRefreshRepository]): records calls and can fail or block them.
+class _SweepLifecycleFakeRepo extends _LifecycleFakeRepo
+    implements DeviceStateRefreshRepository {
+  _SweepLifecycleFakeRepo({super.devices});
+
+  int refreshCount = 0;
+  Object? refreshError;
+  Completer<void>? pendingRefresh;
+
+  @override
+  Future<void> refreshDeviceStates() async {
+    refreshCount++;
+    final pending = pendingRefresh;
+    if (pending != null) await pending.future;
+    final error = refreshError;
+    if (error != null) throw error;
+  }
 }
