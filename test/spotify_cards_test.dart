@@ -101,7 +101,7 @@ void main() {
     await pumpWall(tester, api);
 
     // Track progress_ms 1000 / duration_ms 3000 from the fake player.
-    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.byKey(const ValueKey('wall-spotify-progress')), findsOneWidget);
     expect(find.text('00:01 / 00:03'), findsOneWidget);
 
     // One up-next line only; the rows live behind the sheet.
@@ -117,6 +117,52 @@ void main() {
     expect(find.text('A continuación'), findsOneWidget);
     expect(find.text('Tema 2 · Artista 2'), findsOneWidget);
     expect(find.text('Tema 3 · Artista 3'), findsOneWidget);
+  });
+
+  testWidgets('wall progress slider previews during drag and seeks on end', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi();
+    await pumpWall(tester, api);
+
+    final slider = find.byKey(const ValueKey('wall-spotify-progress'));
+    expect(slider, findsOneWidget);
+    expect(find.text('00:01 / 00:03'), findsOneWidget);
+
+    // Hold the drag: the label previews the finger position and nothing is
+    // pushed to the backend yet.
+    final gesture = await tester.startGesture(tester.getCenter(slider));
+    await tester.pump();
+    await gesture.moveBy(const Offset(120, 0));
+    await tester.pump();
+    expect(api.seekPositions, isEmpty);
+    expect(find.text('00:01 / 00:03'), findsNothing);
+
+    await gesture.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(api.seekPositions, hasLength(1));
+    expect(api.seekPositions.single, greaterThan(1000));
+    expect(api.seekPositions.single, lessThanOrEqualTo(3000));
+  });
+
+  testWidgets('wall seek is disabled when the backend does not advertise it', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi()..actions = ['pause', 'skip_next'];
+    await pumpWall(tester, api);
+
+    expect(find.byKey(const ValueKey('wall-spotify-progress')), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+  });
+
+  testWidgets('wall progress disappears without a duration', (tester) async {
+    final api = _SpotifyCardApi()..durationMs = null;
+    await pumpWall(tester, api);
+
+    expect(find.byKey(const ValueKey('wall-spotify-progress')), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.byType(Slider), findsNothing);
   });
 
   testWidgets('wall transport follows the advertised actions list', (
@@ -146,14 +192,25 @@ void main() {
     final api = _SpotifyCardApi();
     await pumpWall(tester, api);
 
-    expect(find.byType(Slider), findsNothing);
+    // The progress scrubber is already a Slider; the volume one only exists
+    // inside its sheet.
+    expect(
+      find.byKey(const ValueKey('wall-spotify-volume-slider')),
+      findsNothing,
+    );
     await tester.tap(find.byTooltip('Volumen'));
     await settleSurface(tester);
 
     expect(find.text('Volumen'), findsOneWidget);
-    expect(find.byType(Slider), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('wall-spotify-volume-slider')),
+      findsOneWidget,
+    );
 
-    await tester.drag(find.byType(Slider), const Offset(-120, 0));
+    await tester.drag(
+      find.byKey(const ValueKey('wall-spotify-volume-slider')),
+      const Offset(-120, 0),
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(
@@ -279,7 +336,10 @@ void main() {
 
     expect(find.text('Tema'), findsOneWidget);
     expect(find.text('Artista · Parlante'), findsOneWidget);
-    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('desktop-spotify-progress')),
+      findsOneWidget,
+    );
     expect(find.text('00:01 / 00:03'), findsOneWidget);
 
     // One up-next line only; the rows live behind the sheet.
@@ -297,18 +357,76 @@ void main() {
     expect(find.text('Tema 3 · Artista 3'), findsOneWidget);
   });
 
+  testWidgets('desktop scrubber previews, commits and seeks on tap', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi();
+    await pumpDesktop(tester, api);
+
+    final slider = find.byKey(const ValueKey('desktop-spotify-progress'));
+    expect(slider, findsOneWidget);
+    expect(find.text('00:01 / 00:03'), findsOneWidget);
+
+    // Hold the drag: the label previews the finger position and nothing is
+    // pushed to the backend yet.
+    final gesture = await tester.startGesture(tester.getCenter(slider));
+    await tester.pump();
+    await gesture.moveBy(const Offset(120, 0));
+    await tester.pump();
+    expect(api.seekPositions, isEmpty);
+    expect(find.text('00:01 / 00:03'), findsNothing);
+
+    await gesture.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(api.seekPositions, hasLength(1));
+    expect(api.seekPositions.single, greaterThan(1000));
+    expect(api.seekPositions.single, lessThanOrEqualTo(3000));
+
+    // Tap-to-seek also commits a clamped position.
+    await tester.tapAt(tester.getCenter(slider));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(api.seekPositions, hasLength(2));
+    expect(api.seekPositions.last, lessThanOrEqualTo(3000));
+  });
+
+  testWidgets('desktop progress falls back to the bar with no active device', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi()..deviceAvailable = false;
+    await pumpDesktop(tester, api);
+
+    expect(
+      find.byKey(const ValueKey('desktop-spotify-progress')),
+      findsNothing,
+    );
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+  });
+
   testWidgets('desktop volume lives behind its trigger', (tester) async {
     final api = _SpotifyCardApi();
     await pumpDesktop(tester, api);
 
-    expect(find.byType(Slider), findsNothing);
+    // The progress scrubber is already a Slider; the volume one only exists
+    // inside its sheet.
+    expect(
+      find.byKey(const ValueKey('desktop-spotify-volume-slider')),
+      findsNothing,
+    );
     await tester.tap(find.byTooltip('Volumen'));
     await settleSurface(tester);
 
     expect(find.text('Volumen'), findsOneWidget);
-    expect(find.byType(Slider), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('desktop-spotify-volume-slider')),
+      findsOneWidget,
+    );
 
-    await tester.drag(find.byType(Slider), const Offset(-40, 0));
+    await tester.drag(
+      find.byKey(const ValueKey('desktop-spotify-volume-slider')),
+      const Offset(-40, 0),
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(
@@ -405,7 +523,10 @@ void main() {
       find.textContaining('Un título extremadamente largo'),
       findsOneWidget,
     );
-    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('desktop-spotify-progress')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('desktop launcher playlist tap issues playContext with the uri', (
@@ -494,6 +615,12 @@ class _SpotifyCardApi extends ApiClient {
   String accountName = 'Luis';
   String trackUri = 'spotify:track:1';
   String trackName = 'Tema';
+
+  /// Track duration reported by the fake player; null hides the progress row.
+  int? durationMs = 3000;
+
+  /// Seek positions received by [spotifySeek], in call order.
+  final seekPositions = <int>[];
   List<Map<String, dynamic>> playlists = [
     {
       'type': 'playlist',
@@ -590,7 +717,7 @@ class _SpotifyCardApi extends ApiClient {
               'album': null,
               'image_url': null,
               'progress_ms': 1000,
-              'duration_ms': 3000,
+              'duration_ms': durationMs,
             }
           : null,
       'device': deviceAvailable
@@ -652,6 +779,16 @@ class _SpotifyCardApi extends ApiClient {
   }) async {
     commands.add('volume:$volumePercent');
     return {'ok': true, 'action': 'volume', 'device_id': deviceId};
+  }
+
+  @override
+  Future<Map<String, dynamic>> spotifySeek(
+    int positionMs, {
+    String? deviceId,
+  }) async {
+    seekPositions.add(positionMs);
+    commands.add('seek:$positionMs');
+    return {'ok': true, 'action': 'seek', 'device_id': deviceId};
   }
 
   @override

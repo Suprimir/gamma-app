@@ -138,6 +138,12 @@ class _FakeSpotifyApi extends ApiClient {
   }) async => _command('volume:$volumePercent', deviceId);
 
   @override
+  Future<Map<String, dynamic>> spotifySeek(
+    int positionMs, {
+    String? deviceId,
+  }) async => _command('seek:$positionMs', deviceId);
+
+  @override
   Future<Map<String, dynamic>> spotifyTransfer(String deviceId) async =>
       _command('transfer', deviceId);
 
@@ -279,6 +285,22 @@ void main() {
       controller.dispose();
     },
   );
+
+  test('seek() clampa negativos, usa el device pick y refresca', () async {
+    final api = _FakeSpotifyApi();
+    final controller = SpotifyPlayerController(api);
+    await controller.refresh();
+    final refreshesBefore = api.playerCalls;
+
+    controller.selectDevice('dev_2');
+    await controller.seek(45000);
+    await controller.seek(-100);
+
+    expect(api.commands, ['seek:45000', 'seek:0']);
+    expect(api.commandDeviceIds, everyElement('dev_2'));
+    expect(api.playerCalls, refreshesBefore + 2);
+    controller.dispose();
+  });
 
   test('sin selección explícita el backend resuelve el dispositivo', () async {
     final api = _FakeSpotifyApi();

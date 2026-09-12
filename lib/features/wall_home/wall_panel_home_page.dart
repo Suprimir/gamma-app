@@ -1098,6 +1098,10 @@ class _WallMusicCardState extends State<_WallMusicCard> {
   String? _error;
   Timer? _oauthPoll;
 
+  /// Local scrub position while the user drags the progress slider; null
+  /// means "follow the controller's interpolated position".
+  int? _seekPreviewMs;
+
   @override
   void initState() {
     super.initState();
@@ -1490,15 +1494,72 @@ class _WallMusicCardState extends State<_WallMusicCard> {
     );
   }
 
-  /// Progress bar + a single `mm:ss / mm:ss` label. Rendered only when the
-  /// track reports a duration; the position comes from the controller's local
-  /// interpolation (no extra network) and stays honest while paused.
+  /// True when the scrubber may issue a seek: the backend advertises a
+  /// resolvable device and, when it sends an explicit [actions] list, a
+  /// `seek` entry. Legacy responses without actions keep the old device check.
+  bool _seekEnabled() {
+    if (_spotify.activeDevice == null) return false;
+    final actions = _spotify.player?['actions'];
+    final gated = actions is List && actions.isNotEmpty;
+    return gated ? _spotify.actionEnabled('seek') : true;
+  }
+
+  /// Progress scrubber: a touch-sized slider over the controller's
+  /// interpolated position. Dragging previews locally (label follows the
+  /// finger, no traffic); the seek commits on drag end / tap. When seeking is
+  /// disabled it degrades to the non-interactive bar.
   Widget _progress() {
     final duration = _spotify.durationMs;
     if (_spotify.track == null || duration == null || duration <= 0) {
       return const SizedBox.shrink();
     }
-    final position = (_spotify.progressMs ?? 0).clamp(0, duration);
+    final canonical = (_spotify.progressMs ?? 0).clamp(0, duration);
+    if (!_seekEnabled()) {
+      return _progressBar(canonical, duration);
+    }
+    final position = (_seekPreviewMs ?? canonical).clamp(0, duration);
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 8,
+                activeTrackColor: const Color(0xFF4ADE80),
+                inactiveTrackColor: Colors.white24,
+                thumbColor: const Color(0xFF4ADE80),
+                // 24px visual thumb with a 48px overlay/hit region.
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 12),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 24),
+              ),
+              child: Slider(
+                key: const ValueKey('wall-spotify-progress'),
+                value: position.toDouble(),
+                max: duration.toDouble(),
+                onChanged: (value) =>
+                    setState(() => _seekPreviewMs = value.round()),
+                onChangeEnd: (value) {
+                  final target = value.round().clamp(0, duration);
+                  setState(() => _seekPreviewMs = null);
+                  unawaited(_spotify.seek(target));
+                },
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            '${_formatPlaybackTime(position)} / ${_formatPlaybackTime(duration)}',
+            style: const TextStyle(fontSize: 15, color: Colors.white70),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Non-interactive fallback for the progress row (no device, or the
+  /// backend does not advertise `seek`).
+  Widget _progressBar(int position, int duration) {
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Row(
@@ -1507,7 +1568,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(5),
               child: LinearProgressIndicator(
-                value: position / duration,
+                value: duration <= 0 ? 0 : position / duration,
                 minHeight: 8,
                 backgroundColor: Colors.white24,
                 color: const Color(0xFF4ADE80),
@@ -1938,6 +1999,7 @@ class _WallVolumeSliderState extends State<_WallVolumeSlider> {
         const Icon(Icons.volume_down_rounded, color: Colors.white70),
         Expanded(
           child: Slider(
+            key: const ValueKey('wall-spotify-volume-slider'),
             value: value,
             max: 100,
             activeColor: const Color(0xFF4ADE80),

@@ -226,6 +226,15 @@ class SpotifyPlayerController extends ChangeNotifier {
     () => api.spotifySetVolume(volumePercent, deviceId: _selectedDeviceId),
   );
 
+  /// Seeks to [positionMs] in the current track. Negative values clamp to 0
+  /// so a rounding artifact never sends an invalid backend position.
+  Future<void> seek(int positionMs) => _command(
+    () => api.spotifySeek(
+      positionMs < 0 ? 0 : positionMs,
+      deviceId: _selectedDeviceId,
+    ),
+  );
+
   Future<void> shuffle(bool state) =>
       _command(() => api.spotifyShuffle(state, deviceId: _selectedDeviceId));
 

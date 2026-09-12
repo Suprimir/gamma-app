@@ -85,6 +85,10 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   /// so the card returns to the player state on its own.
   bool _showLibrary = false;
 
+  /// Local scrub position while the user drags the progress slider; null
+  /// means "follow the controller's interpolated position".
+  int? _spotifySeekPreviewMs;
+
   /// Last track uri seen by the shared listener, used to detect track changes
   /// without rebuilding the card on every position tick.
   String? _lastTrackUri;
@@ -1556,15 +1560,80 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     return null;
   }
 
-  /// Progress row with the thin bar and a single `mm:ss / mm:ss` label.
-  /// Position comes from the controller's local interpolation (advances
-  /// without extra traffic, stays frozen while paused).
+  /// True when the scrubber may issue a seek: the backend advertises a
+  /// resolvable device and, when it sends an explicit [actions] list, a
+  /// `seek` entry. Legacy responses without actions keep the old device check.
+  bool _spotifySeekEnabled() {
+    if (_spotify.activeDevice == null) return false;
+    final actions = _spotify.player?['actions'];
+    final gated = actions is List && actions.isNotEmpty;
+    return gated ? _spotify.actionEnabled('seek') : true;
+  }
+
+  /// Progress scrubber: a thin slider over the controller's interpolated
+  /// position. Dragging previews locally (label follows the finger, no
+  /// traffic); the seek commits on drag end / tap. When seeking is disabled
+  /// it degrades to the non-interactive bar.
   Widget _buildSpotifyProgress() {
     final duration = _spotify.durationMs;
     if (_spotify.track == null || duration == null || duration <= 0) {
       return const SizedBox.shrink();
     }
-    final position = (_spotify.progressMs ?? 0).clamp(0, duration);
+    final canonical = (_spotify.progressMs ?? 0).clamp(0, duration);
+    if (!_spotifySeekEnabled()) {
+      return _buildSpotifyProgressBar(canonical, duration);
+    }
+    final position = (_spotifySeekPreviewMs ?? canonical).clamp(0, duration);
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: SizedBox(
+              // Compact density: the SDK Slider owns its 48px touch height,
+              // so the desktop scrubber pins a shorter box with small parts.
+              height: 28,
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 4,
+                  activeTrackColor: AppColors.accent,
+                  inactiveTrackColor: AppColors.border,
+                  thumbColor: AppColors.accent,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 5,
+                  ),
+                  overlayShape: const RoundSliderOverlayShape(
+                    overlayRadius: 10,
+                  ),
+                ),
+                child: Slider(
+                  key: const ValueKey('desktop-spotify-progress'),
+                  value: position.toDouble(),
+                  max: duration.toDouble(),
+                  onChanged: (value) =>
+                      setState(() => _spotifySeekPreviewMs = value.round()),
+                  onChangeEnd: (value) {
+                    final target = value.round().clamp(0, duration);
+                    setState(() => _spotifySeekPreviewMs = null);
+                    unawaited(_spotify.seek(target));
+                  },
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '${_formatPlaybackTime(position)} / ${_formatPlaybackTime(duration)}',
+            style: const TextStyle(fontSize: 11, color: AppColors.textDim),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Non-interactive fallback for the progress row (no device, or the
+  /// backend does not advertise `seek`).
+  Widget _buildSpotifyProgressBar(int position, int duration) {
     return Padding(
       padding: const EdgeInsets.only(top: 10),
       child: Row(
@@ -1573,7 +1642,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
             child: ClipRRect(
               borderRadius: BorderRadius.circular(3),
               child: LinearProgressIndicator(
-                value: position / duration,
+                value: duration <= 0 ? 0 : position / duration,
                 minHeight: 4,
                 backgroundColor: AppColors.border,
                 color: AppColors.accent,
@@ -2936,6 +3005,7 @@ class _SpotifyVolumeSliderState extends State<_SpotifyVolumeSlider> {
           ),
           Expanded(
             child: Slider(
+              key: const ValueKey('desktop-spotify-volume-slider'),
               value: value,
               max: 100,
               onChanged: widget.enabled
