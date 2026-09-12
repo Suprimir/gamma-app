@@ -9,6 +9,7 @@ import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/features/dashboard/desktop_dashboard_page.dart';
 import 'package:gamma_app/features/spotify/spotify_player_controller.dart';
 import 'package:gamma_app/features/wall_home/wall_panel_home_page.dart';
+import 'package:gamma_app/ui/app_colors.dart';
 import 'package:gamma_app/ui/spotify_logo.dart';
 
 /// Widget coverage for the progressively disclosed Spotify cards: the player
@@ -245,33 +246,48 @@ void main() {
     );
   });
 
-  testWidgets('wall volume is disabled with a hint when unsupported', (
+  testWidgets('wall volume trigger is disabled when unsupported', (
     tester,
   ) async {
     final api = _SpotifyCardApi()..supportsVolume = false;
     await pumpWall(tester, api);
 
-    await tester.tap(find.byTooltip('Volumen'));
-    await settleSurface(tester);
-
-    final slider = tester.widget<Slider>(
-      find.byKey(const ValueKey('wall-spotify-volume-slider')),
+    final button = tester.widget<IconButton>(
+      find.byKey(const ValueKey('wall-spotify-volume')),
     );
-    expect(slider.onChanged, isNull);
-    expect(find.text(spotifyVolumeUnsupportedHint), findsOneWidget);
-    // The current value stays visible read-only next to the disabled slider.
-    expect(find.text('70%'), findsOneWidget);
+    expect(button.onPressed, isNull);
+    expect(button.tooltip, spotifyVolumeUnsupportedTooltip);
+    expect(button.disabledColor, Colors.white24);
+
+    // Tapping the disabled trigger must not open the volume sheet.
+    await tester.tap(find.byKey(const ValueKey('wall-spotify-volume')));
+    await settleSurface(tester);
+    expect(
+      find.byKey(const ValueKey('wall-spotify-volume-slider')),
+      findsNothing,
+    );
+    expect(find.text('Volumen'), findsNothing);
   });
 
-  testWidgets('wall volume stays enabled when the device supports it', (
+  testWidgets('wall volume trigger stays enabled when the device supports it', (
     tester,
   ) async {
     final api = _SpotifyCardApi()..supportsVolume = true;
     await pumpWall(tester, api);
 
+    final button = tester.widget<IconButton>(
+      find.byKey(const ValueKey('wall-spotify-volume')),
+    );
+    expect(button.onPressed, isNotNull);
+    expect(button.tooltip, 'Volumen');
+
     await tester.tap(find.byTooltip('Volumen'));
     await settleSurface(tester);
 
+    expect(
+      find.byKey(const ValueKey('wall-spotify-volume-slider')),
+      findsOneWidget,
+    );
     final slider = tester.widget<Slider>(
       find.byKey(const ValueKey('wall-spotify-volume-slider')),
     );
@@ -530,39 +546,55 @@ void main() {
     );
   });
 
-  testWidgets('desktop volume is disabled with a hint when unsupported', (
+  testWidgets('desktop volume trigger is disabled when unsupported', (
     tester,
   ) async {
     final api = _SpotifyCardApi()..supportsVolume = false;
     await pumpDesktop(tester, api);
 
-    await tester.tap(find.byTooltip('Volumen'));
-    await settleSurface(tester);
-
-    final slider = tester.widget<Slider>(
-      find.byKey(const ValueKey('desktop-spotify-volume-slider')),
+    final button = tester.widget<IconButton>(
+      find.byKey(const ValueKey('desktop-spotify-volume')),
     );
-    expect(slider.onChanged, isNull);
-    expect(find.text(spotifyVolumeUnsupportedHint), findsOneWidget);
-    // The current value stays visible read-only next to the disabled slider.
-    expect(find.text('70%'), findsOneWidget);
+    expect(button.onPressed, isNull);
+    expect(button.tooltip, spotifyVolumeUnsupportedTooltip);
+    expect(button.disabledColor, AppColors.textFaint);
+
+    // Tapping the disabled trigger must not open the volume sheet.
+    await tester.tap(find.byKey(const ValueKey('desktop-spotify-volume')));
+    await settleSurface(tester);
+    expect(
+      find.byKey(const ValueKey('desktop-spotify-volume-slider')),
+      findsNothing,
+    );
+    expect(find.text('Volumen'), findsNothing);
   });
 
-  testWidgets('desktop volume stays enabled when the device supports it', (
-    tester,
-  ) async {
-    final api = _SpotifyCardApi()..supportsVolume = true;
-    await pumpDesktop(tester, api);
+  testWidgets(
+    'desktop volume trigger stays enabled when the device supports it',
+    (tester) async {
+      final api = _SpotifyCardApi()..supportsVolume = true;
+      await pumpDesktop(tester, api);
 
-    await tester.tap(find.byTooltip('Volumen'));
-    await settleSurface(tester);
+      final button = tester.widget<IconButton>(
+        find.byKey(const ValueKey('desktop-spotify-volume')),
+      );
+      expect(button.onPressed, isNotNull);
+      expect(button.tooltip, 'Volumen');
 
-    final slider = tester.widget<Slider>(
-      find.byKey(const ValueKey('desktop-spotify-volume-slider')),
-    );
-    expect(slider.onChanged, isNotNull);
-    expect(find.text(spotifyVolumeUnsupportedHint), findsNothing);
-  });
+      await tester.tap(find.byTooltip('Volumen'));
+      await settleSurface(tester);
+
+      expect(
+        find.byKey(const ValueKey('desktop-spotify-volume-slider')),
+        findsOneWidget,
+      );
+      final slider = tester.widget<Slider>(
+        find.byKey(const ValueKey('desktop-spotify-volume-slider')),
+      );
+      expect(slider.onChanged, isNotNull);
+      expect(find.text(spotifyVolumeUnsupportedHint), findsNothing);
+    },
+  );
 
   testWidgets('desktop transport follows the advertised actions list', (
     tester,

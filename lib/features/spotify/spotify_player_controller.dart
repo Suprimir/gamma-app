@@ -58,6 +58,11 @@ int _systemNowMs() => DateTime.now().millisecondsSinceEpoch;
 const spotifyVolumeUnsupportedHint =
     'Este dispositivo no permite controlar el volumen desde GAMMA';
 
+/// Tooltip shown on the disabled volume trigger when the target device cannot
+/// be volume-controlled via the API.
+const spotifyVolumeUnsupportedTooltip =
+    'Este dispositivo no permite controlar el volumen';
+
 /// Shared Spotify playback state for the desktop and wall surfaces.
 ///
 /// Everything rendered from this controller reflects the last canonical

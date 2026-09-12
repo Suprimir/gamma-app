@@ -1664,12 +1664,14 @@ class _WallMusicCardState extends State<_WallMusicCard> {
   Widget _volumeButton() {
     final volume = _spotifyVolume();
     final muted = volume != null && volume <= 0;
+    final volumeUnsupported = _spotify.targetSupportsVolume == false;
     return IconButton(
       key: const ValueKey('wall-spotify-volume'),
-      tooltip: 'Volumen',
-      onPressed: _openVolumeSheet,
+      tooltip: volumeUnsupported ? spotifyVolumeUnsupportedTooltip : 'Volumen',
+      onPressed: volumeUnsupported ? null : _openVolumeSheet,
       iconSize: 28,
       color: Colors.white,
+      disabledColor: Colors.white24,
       icon: Icon(muted ? Icons.volume_off_rounded : Icons.volume_up_rounded),
     );
   }

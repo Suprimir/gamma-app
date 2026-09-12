@@ -1687,6 +1687,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   Widget _buildSpotifyActionIcons() {
     final volume = _spotifyVolume();
     final muted = volume != null && volume <= 0;
+    final volumeUnsupported = _spotify.targetSupportsVolume == false;
     final hasQueue =
         _spotify.upcomingQueue.isNotEmpty || _spotify.previousQueue.isNotEmpty;
     return Row(
@@ -1694,9 +1695,12 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
       children: [
         IconButton(
           key: const ValueKey('desktop-spotify-volume'),
-          tooltip: 'Volumen',
+          tooltip: volumeUnsupported
+              ? spotifyVolumeUnsupportedTooltip
+              : 'Volumen',
           visualDensity: VisualDensity.compact,
-          onPressed: _openSpotifyVolumeSheet,
+          disabledColor: AppColors.textFaint,
+          onPressed: volumeUnsupported ? null : _openSpotifyVolumeSheet,
           icon: Icon(
             muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
           ),
