@@ -1097,6 +1097,11 @@ class _WallMusicCardState extends State<_WallMusicCard> {
   String? _error;
   Timer? _oauthPoll;
 
+  /// Guards the one-shot settings refetch that runs once the player answers:
+  /// duplicate in-flight reads are skipped and failures keep the previous
+  /// account name.
+  bool _accountRefetchInFlight = false;
+
   @override
   void initState() {
     super.initState();
@@ -1105,10 +1110,14 @@ class _WallMusicCardState extends State<_WallMusicCard> {
     // backend confirms and never blocks the home load on it.
     unawaited(_spotify.refresh());
     _spotify.startPolling(interval: widget.pollInterval);
+    // The settings read happens once in [_loadStatus]; the listener converges
+    // the card when the playback backend starts answering (fresh auth).
+    _spotify.addListener(_onSpotifyAvailabilityChanged);
   }
 
   @override
   void dispose() {
+    _spotify.removeListener(_onSpotifyAvailabilityChanged);
     _oauthPoll?.cancel();
     _spotify.dispose();
     super.dispose();
@@ -1224,6 +1233,41 @@ class _WallMusicCardState extends State<_WallMusicCard> {
         }
       }
     });
+  }
+
+  /// Converges the card when the playback backend starts answering without
+  /// pressing Conectar (authorization completed from Settings or desktop): a
+  /// player response is proof of a usable account, so the OAuth poll — if any
+  /// — is no longer needed.
+  void _onSpotifyAvailabilityChanged() {
+    if (!mounted || _connected) return;
+    if (_spotify.needsAuth || _spotify.player == null) return;
+    _oauthPoll?.cancel();
+    _oauthPoll = null;
+    setState(() {
+      _connected = true;
+      _connecting = false;
+      _waitingAuth = false;
+      _error = null;
+    });
+    unawaited(_refreshAccount());
+  }
+
+  /// One-shot refetch of the account name from settings. Never polls: the
+  /// settings endpoint hits Spotify upstream. Failures are swallowed so the
+  /// previous name stays.
+  Future<void> _refreshAccount() async {
+    if (_accountRefetchInFlight) return;
+    _accountRefetchInFlight = true;
+    try {
+      final settings = await widget.api.spotifySettings();
+      if (!mounted) return;
+      setState(() => _account = settings['account_name']?.toString() ?? '');
+    } catch (_) {
+      // Best effort: keep the account name already on screen.
+    } finally {
+      _accountRefetchInFlight = false;
+    }
   }
 
   @override

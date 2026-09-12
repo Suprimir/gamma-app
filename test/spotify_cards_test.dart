@@ -96,6 +96,134 @@ void main() {
     );
     expect(next.onPressed, isNull);
   });
+
+  testWidgets('wall music card converges when the player becomes available', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi()
+      ..authenticated = false
+      ..spotifyReady = false
+      ..accountName = '';
+    tester.view.physicalSize = const Size(1280, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WallPanelHomePage(
+            api: api,
+            idleTimeout: null,
+            spotifyPollInterval: const Duration(seconds: 1),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('Sin conectar'), findsOneWidget);
+    expect(find.text('Conectar Spotify'), findsOneWidget);
+
+    // Authorization completed from Settings/desktop while this card is open:
+    // the next player poll must converge the card without a reload.
+    api
+      ..authenticated = true
+      ..spotifyReady = true
+      ..hasPlayback = false
+      ..accountName = 'Luis';
+
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+
+    expect(find.text('Conectado'), findsOneWidget);
+    expect(find.text('Sin reproducción'), findsOneWidget);
+    expect(find.byTooltip('Reproducir'), findsOneWidget);
+    expect(find.text('Luis'), findsOneWidget);
+    // Initial status read plus the one-shot refetch triggered by the player.
+    expect(api.settingsCalls, 2);
+
+    // Disconnect direction: a 401/503 player response restores the connect
+    // affordance even though the settings flag stays true.
+    api.spotifyReady = false;
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+
+    expect(find.text('Sin conectar'), findsOneWidget);
+    expect(find.text('Conectar Spotify'), findsOneWidget);
+
+    // Dispose the card so the periodic poll timer is cancelled.
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('desktop Spotify card converges when the player is available', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi()
+      ..authenticated = false
+      ..spotifyReady = false
+      ..accountName = ''
+      ..playlists = [];
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DesktopDashboardPage(
+          api: api,
+          spotifyPollInterval: const Duration(seconds: 1),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1400));
+
+    expect(find.text('Sin conectar'), findsOneWidget);
+    expect(find.text('Conectar Spotify'), findsOneWidget);
+
+    // Authorization completed from Settings while the dashboard is open: the
+    // player poll converges the card and the one-shot refetch fills the
+    // account name and playlists.
+    api
+      ..authenticated = true
+      ..spotifyReady = true
+      ..hasPlayback = false
+      ..accountName = 'Luis'
+      ..playlists = [
+        {
+          'type': 'playlist',
+          'uri': 'spotify:playlist:42',
+          'name': 'Mi Playlist',
+          'subtitle': '30 canciones',
+          'image_url': null,
+        },
+      ];
+
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+
+    expect(find.text('Conectado'), findsOneWidget);
+    expect(find.text('Sin reproducción'), findsOneWidget);
+    expect(find.byTooltip('Reproducir'), findsOneWidget);
+    expect(find.text('Luis'), findsOneWidget);
+    expect(find.text('Mi Playlist'), findsOneWidget);
+    // Initial home load plus the one-shot refetch triggered by the player.
+    expect(api.settingsCalls, 2);
+    expect(api.playlistsCalls, 2);
+
+    // Disconnect direction: a 401/503 player response restores the connect
+    // affordance even though the settings flag stays true.
+    api.spotifyReady = false;
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+
+    expect(find.text('Sin conectar'), findsOneWidget);
+    expect(find.text('Conectar Spotify'), findsOneWidget);
+
+    // Dispose the page so the periodic poll timer is cancelled.
+    await tester.pumpWidget(const SizedBox());
+  });
 }
 
 class _SpotifyCardApi extends ApiClient {
@@ -105,6 +233,24 @@ class _SpotifyCardApi extends ApiClient {
   bool deviceAvailable = true;
   final commands = <String>[];
   String? lastPlayUri;
+
+  /// Settings/player switches: flip both together to simulate the account
+  /// becoming authorized while a card is already mounted.
+  bool authenticated = true;
+  bool spotifyReady = true;
+  bool hasPlayback = true;
+  String accountName = 'Luis';
+  List<Map<String, dynamic>> playlists = [
+    {
+      'type': 'playlist',
+      'uri': 'spotify:playlist:42',
+      'name': 'Mi Playlist',
+      'subtitle': '30 canciones',
+      'image_url': null,
+    },
+  ];
+  int settingsCalls = 0;
+  int playlistsCalls = 0;
 
   @override
   Future<Map<String, dynamic>> deviceInventory({bool pending = false}) async =>
@@ -138,44 +284,47 @@ class _SpotifyCardApi extends ApiClient {
   Future<List<Map<String, dynamic>>> routines() async => const [];
 
   @override
-  Future<Map<String, dynamic>> spotifySettings() async => {
-    'authenticated': true,
-    'client_id_configured': true,
-    'account_name': 'Luis',
-  };
+  Future<Map<String, dynamic>> spotifySettings() async {
+    settingsCalls++;
+    return {
+      'authenticated': authenticated,
+      'client_id_configured': true,
+      'account_name': accountName,
+    };
+  }
 
   @override
-  Future<Map<String, dynamic>> spotifyPlaylists({int limit = 50}) async => {
-    'playlists': [
-      {
-        'type': 'playlist',
-        'uri': 'spotify:playlist:42',
-        'name': 'Mi Playlist',
-        'subtitle': '30 canciones',
-        'image_url': null,
-      },
-    ],
-  };
+  Future<Map<String, dynamic>> spotifyPlaylists({int limit = 50}) async {
+    playlistsCalls++;
+    return {'playlists': playlists};
+  }
 
   @override
-  Future<Map<String, dynamic>> spotifyPlayer() async => {
-    'has_playback': true,
-    'is_playing': _playing,
-    'track': {
-      'name': 'Tema',
-      'artist': 'Artista',
-      'album': null,
-      'image_url': null,
-      'progress_ms': 1000,
-      'duration_ms': 3000,
-    },
-    'device': deviceAvailable
-        ? {'id': 'dev_1', 'name': 'Parlante', 'volume_percent': 70}
-        : null,
-    'shuffle': false,
-    'repeat': 'off',
-    'volume_percent': 70,
-  };
+  Future<Map<String, dynamic>> spotifyPlayer() async {
+    if (!spotifyReady) {
+      throw ApiException(503, 'Spotify no está autorizado.');
+    }
+    return {
+      'has_playback': hasPlayback,
+      'is_playing': hasPlayback && _playing,
+      'track': hasPlayback
+          ? {
+              'name': 'Tema',
+              'artist': 'Artista',
+              'album': null,
+              'image_url': null,
+              'progress_ms': 1000,
+              'duration_ms': 3000,
+            }
+          : null,
+      'device': deviceAvailable
+          ? {'id': 'dev_1', 'name': 'Parlante', 'volume_percent': 70}
+          : null,
+      'shuffle': false,
+      'repeat': 'off',
+      'volume_percent': 70,
+    };
+  }
 
   @override
   Future<Map<String, dynamic>> spotifyDevices() async => {

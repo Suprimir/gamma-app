@@ -74,6 +74,11 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   bool _spotifyConnected = false;
   String _spotifyAccount = '';
 
+  /// Guards the one-shot settings/playlists refetch that runs once the player
+  /// answers: duplicate in-flight reads are skipped and failures keep the
+  /// previously loaded data.
+  bool _spotifyDetailsRefreshInFlight = false;
+
   /// Canonical playback state shared by the now-playing block, the transport
   /// and the device picker. Owned here; disposed with the page.
   late final SpotifyPlayerController _spotify = SpotifyPlayerController(
@@ -165,6 +170,9 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     VadModel.vad.onError.listen((message) {
       if (mounted && _listening) _fail('Error del VAD: $message');
     });
+    // The settings read happens once in [_loadData]; the listener converges
+    // the card when the playback backend starts answering (fresh auth).
+    _spotify.addListener(_onSpotifyAvailabilityChanged);
   }
 
   @override
@@ -205,6 +213,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     }
     _inputController.dispose();
     _player.dispose();
+    _spotify.removeListener(_onSpotifyAvailabilityChanged);
     _spotify.dispose();
     _staggerController.dispose();
     super.dispose();
@@ -1238,6 +1247,51 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   }
 
   // --------------------------------------------------------------- spotify
+
+  /// Converges the card when the playback backend starts answering: a fresh
+  /// authorization (from Settings or the wall) leaves the one-shot settings
+  /// read stale, so the connect affordance would otherwise persist until the
+  /// next reload. A player response is proof of a usable account; the
+  /// capabilities read is unchanged.
+  void _onSpotifyAvailabilityChanged() {
+    if (!mounted || _spotifyConnected) return;
+    if (_spotify.needsAuth || _spotify.player == null) return;
+    setState(() => _spotifyConnected = true);
+    unawaited(_refreshSpotifyDetails());
+  }
+
+  /// One-shot refetch of the Spotify fields loaded in [_loadData]: account
+  /// name and playlists. Never polls: the settings endpoint hits Spotify
+  /// upstream. Each read is independent and failures keep the previous data.
+  Future<void> _refreshSpotifyDetails() async {
+    if (_spotifyDetailsRefreshInFlight) return;
+    _spotifyDetailsRefreshInFlight = true;
+    try {
+      try {
+        final settings = await widget.api.spotifySettings();
+        if (!mounted) return;
+        setState(
+          () => _spotifyAccount = settings['account_name']?.toString() ?? '',
+        );
+      } catch (_) {
+        // Keep the previous account name.
+      }
+      try {
+        final playlistsData = await widget.api.spotifyPlaylists(limit: 6);
+        if (!mounted) return;
+        setState(() {
+          _playlists =
+              (playlistsData['playlists'] as List?)
+                  ?.cast<Map<String, dynamic>>() ??
+              const [];
+        });
+      } catch (_) {
+        // Keep the previous playlists.
+      }
+    } finally {
+      _spotifyDetailsRefreshInFlight = false;
+    }
+  }
 
   /// Spotify card driven by canonical backend data: connection state, real
   /// now-playing/transport when the service answers, and honest "sin
