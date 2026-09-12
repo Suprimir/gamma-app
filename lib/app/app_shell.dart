@@ -15,12 +15,21 @@ import 'wall_panel_shell.dart';
 /// resolve to a shell. Live resizes and mode changes swap shells without
 /// restart and without losing the selected destination or visited page State.
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.api, this.surfaceModeController});
+  const AppShell({
+    super.key,
+    required this.api,
+    this.surfaceModeController,
+    this.spotifyPollInterval = Duration.zero,
+  });
 
   final ApiClient api;
 
   /// Injected for tests; otherwise [AppShell] owns one and loads it once.
   final AdaptiveSurfaceModeController? surfaceModeController;
+
+  /// Playback polling cadence for the Home surfaces; zero (tests, previews)
+  /// keeps every timer off.
+  final Duration spotifyPollInterval;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -81,7 +90,8 @@ class _AppShellState extends State<AppShell> {
           key: _pageHostKey,
           index: _index,
           builders: [
-            for (final d in appDestinations) () => d.buildPage(widget.api),
+            for (final d in appDestinations)
+              () => d.buildPage(widget.api, widget.spotifyPollInterval),
           ],
         );
 

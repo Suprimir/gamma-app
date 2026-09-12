@@ -27,7 +27,7 @@ void main() {
       expect(d.icon, isNotNull);
       expect(d.selectedIcon, isNotNull);
       expect(d.buildPage, isNotNull);
-      expect(d.buildPage(api), isNotNull);
+      expect(d.buildPage(api, Duration.zero), isNotNull);
     }
   });
 }

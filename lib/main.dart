@@ -12,13 +12,25 @@ void main() {
     'GAMMA_PI',
     defaultValue: 'http://127.0.0.1:8420',
   );
-  runApp(GammaApp(api: ApiClient(baseUrl: baseUrl)));
+  runApp(
+    GammaApp(
+      api: ApiClient(baseUrl: baseUrl),
+      spotifyPollInterval: const Duration(seconds: 5),
+    ),
+  );
 }
 
 class GammaApp extends StatelessWidget {
-  const GammaApp({super.key, required this.api});
+  const GammaApp({
+    super.key,
+    required this.api,
+    this.spotifyPollInterval = Duration.zero,
+  });
 
   final ApiClient api;
+
+  /// Playback polling cadence for the Home surfaces; production passes 5s.
+  final Duration spotifyPollInterval;
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +48,7 @@ class GammaApp extends StatelessWidget {
         ),
         scaffoldBackgroundColor: AppColors.bg,
       ),
-      home: AppShell(api: api),
+      home: AppShell(api: api, spotifyPollInterval: spotifyPollInterval),
       // Above the Navigator: every touch anywhere (pages, pushed routes,
       // dialogs, sheets, touch keyboard) funnels through here and resets
       // the wall sleep countdown. Only WallPanelHomePage subscribes.

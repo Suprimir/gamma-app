@@ -1106,4 +1106,228 @@ void main() {
       await server.close(force: true);
     });
   });
+
+  group('spotify playback endpoints', () {
+    test('spotifyPlayer()/spotifyDevices() leen el estado canónico', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+      final paths = <String>[];
+
+      server.listen((request) async {
+        paths.add('${request.method} ${request.uri.path}');
+        if (request.uri.path.endsWith('/player')) {
+          request.response.write(
+            '{"has_playback":true,"is_playing":true,"track":{"name":"Tema",'
+            '"artist":"Artista","album":null,"image_url":null,'
+            '"progress_ms":1000,"duration_ms":3000},"device":{"id":"dev_1",'
+            '"name":"Parlante","volume_percent":60},"shuffle":false,'
+            '"repeat":"off","volume_percent":60}',
+          );
+        } else {
+          request.response.write(
+            '{"devices":[{"id":"dev_1","name":"Parlante","type":"speaker",'
+            '"is_active":true,"is_private_session":false,'
+            '"volume_percent":60,"is_default":true}],'
+            '"default_device_name":"Parlante","default_device_id":"dev_1"}',
+          );
+        }
+        await request.response.close();
+      });
+
+      final player = await client.spotifyPlayer();
+      expect(player['is_playing'], true);
+      expect((player['track'] as Map)['name'], 'Tema');
+
+      final devices = await client.spotifyDevices();
+      expect(devices['default_device_id'], 'dev_1');
+      expect((devices['devices'] as List).first['is_active'], true);
+
+      expect(paths, [
+        'GET /api/v1/spotify/player',
+        'GET /api/v1/spotify/devices',
+      ]);
+      await server.close(force: true);
+    });
+
+    test('spotifyPlay() envía exactamente un selector y omite nulos', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+      final bodies = <String>[];
+
+      server.listen((request) async {
+        expect(request.method, 'POST');
+        expect(request.uri.path, '/api/v1/spotify/play');
+        bodies.add(await utf8.decoder.bind(request).join());
+        request.response.write('{"ok":true,"action":"play","device_id":null}');
+        await request.response.close();
+      });
+
+      await client.spotifyPlay(uri: 'spotify:track:1');
+      await client.spotifyPlay(
+        contextUri: 'spotify:playlist:2',
+        deviceId: 'dev 1',
+        positionMs: 500,
+      );
+      await client.spotifyPlay(query: 'café');
+
+      expect(jsonDecode(bodies[0]), {'uri': 'spotify:track:1'});
+      expect(jsonDecode(bodies[1]), {
+        'context_uri': 'spotify:playlist:2',
+        'device_id': 'dev 1',
+        'position_ms': 500,
+      });
+      expect(jsonDecode(bodies[2]), {'query': 'café'});
+
+      // Exactly one selector is required by the backend contract.
+      await expectLater(client.spotifyPlay(), throwsArgumentError);
+      await expectLater(
+        client.spotifyPlay(uri: 'spotify:track:1', query: 'x'),
+        throwsArgumentError,
+      );
+      await server.close(force: true);
+    });
+
+    test('los comandos de transporte omiten el body sin device_id', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+      final calls = <String>[];
+      final bodies = <String>[];
+
+      server.listen((request) async {
+        calls.add('${request.method} ${request.uri.path}');
+        bodies.add(await utf8.decoder.bind(request).join());
+        request.response.write('{"ok":true,"action":"x","device_id":null}');
+        await request.response.close();
+      });
+
+      await client.spotifyPause();
+      await client.spotifyResume();
+      await client.spotifyNext();
+      await client.spotifyPrevious();
+      await client.spotifyPause(deviceId: 'dev 1');
+      await client.spotifyResume(deviceId: 'dev 1');
+      await client.spotifyNext(deviceId: 'dev 1');
+      await client.spotifyPrevious(deviceId: 'dev 1');
+
+      expect(calls, [
+        'POST /api/v1/spotify/pause',
+        'POST /api/v1/spotify/resume',
+        'POST /api/v1/spotify/next',
+        'POST /api/v1/spotify/previous',
+        'POST /api/v1/spotify/pause',
+        'POST /api/v1/spotify/resume',
+        'POST /api/v1/spotify/next',
+        'POST /api/v1/spotify/previous',
+      ]);
+      for (var i = 0; i < 4; i++) {
+        expect(bodies[i], isEmpty);
+      }
+      for (var i = 4; i < 8; i++) {
+        expect(jsonDecode(bodies[i]), {'device_id': 'dev 1'});
+      }
+      await server.close(force: true);
+    });
+
+    test(
+      'volume/seek/transfer/shuffle/repeat/queue usan su verbo y body',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+        final calls = <String>[];
+        final bodies = <String>[];
+
+        server.listen((request) async {
+          calls.add('${request.method} ${request.uri.path}');
+          bodies.add(await utf8.decoder.bind(request).join());
+          request.response.write('{"ok":true,"action":"x","device_id":null}');
+          await request.response.close();
+        });
+
+        await client.spotifySetVolume(42);
+        await client.spotifySetVolume(42, deviceId: 'dev 1');
+        await client.spotifySeek(1234, deviceId: 'dev 1');
+        await client.spotifyTransfer('dev 2');
+        await client.spotifyShuffle(true, deviceId: 'dev 1');
+        await client.spotifyRepeat('context');
+        await client.spotifyQueue('spotify:track:9', deviceId: 'dev 1');
+
+        expect(calls, [
+          'PUT /api/v1/spotify/volume',
+          'PUT /api/v1/spotify/volume',
+          'PUT /api/v1/spotify/seek',
+          'PUT /api/v1/spotify/transfer',
+          'PUT /api/v1/spotify/shuffle',
+          'PUT /api/v1/spotify/repeat',
+          'POST /api/v1/spotify/queue',
+        ]);
+        expect(jsonDecode(bodies[0]), {'volume_percent': 42});
+        expect(jsonDecode(bodies[1]), {
+          'volume_percent': 42,
+          'device_id': 'dev 1',
+        });
+        expect(jsonDecode(bodies[2]), {
+          'position_ms': 1234,
+          'device_id': 'dev 1',
+        });
+        expect(jsonDecode(bodies[3]), {'device_id': 'dev 2'});
+        expect(jsonDecode(bodies[4]), {'state': true, 'device_id': 'dev 1'});
+        expect(jsonDecode(bodies[5]), {'state': 'context'});
+        expect(jsonDecode(bodies[6]), {
+          'uri': 'spotify:track:9',
+          'device_id': 'dev 1',
+        });
+        await server.close(force: true);
+      },
+    );
+
+    test(
+      'los errores de reproducción mapean ApiException con detail',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+
+        server.listen((request) async {
+          if (request.uri.path.endsWith('/player')) {
+            request.response.statusCode = 503;
+            request.response.write(
+              '{"detail":"Spotify no está autorizado. '
+              'Conecta tu cuenta en Ajustes."}',
+            );
+          } else {
+            request.response.statusCode = 409;
+            request.response.write(
+              '{"detail":"No hay dispositivo activo para reproducir."}',
+            );
+          }
+          await request.response.close();
+        });
+
+        await expectLater(
+          client.spotifyPlayer(),
+          throwsA(
+            isA<ApiException>()
+                .having((e) => e.statusCode, 'statusCode', 503)
+                .having(
+                  (e) => (e.body as Map)['detail'],
+                  'detail',
+                  contains('no está autorizado'),
+                ),
+          ),
+        );
+        await expectLater(
+          client.spotifyPause(),
+          throwsA(
+            isA<ApiException>()
+                .having((e) => e.statusCode, 'statusCode', 409)
+                .having(
+                  (e) => (e.body as Map)['detail'],
+                  'detail',
+                  'No hay dispositivo activo para reproducir.',
+                ),
+          ),
+        );
+        await server.close(force: true);
+      },
+    );
+  });
 }

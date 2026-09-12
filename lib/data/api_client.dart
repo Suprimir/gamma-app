@@ -420,6 +420,148 @@ class ApiClient {
   Future<Map<String, dynamic>> spotifyPlaylists({int limit = 50}) =>
       _get('/api/v1/spotify/playlists?limit=$limit');
 
+  // --- Spotify playback ----------------------------------------------------
+
+  Future<Map<String, dynamic>> spotifyPlayer() =>
+      _get('/api/v1/spotify/player');
+
+  Future<Map<String, dynamic>> spotifyDevices() =>
+      _get('/api/v1/spotify/devices');
+
+  /// Starts playback. Requires exactly one selector — [uri], [contextUri] or
+  /// [query] (the backend resolves a query to its first match). Only non-null
+  /// fields are sent; `device_id` null lets the backend resolve the device.
+  Future<Map<String, dynamic>> spotifyPlay({
+    String? uri,
+    String? contextUri,
+    String? query,
+    String? deviceId,
+    int? positionMs,
+  }) async {
+    final selectors = [
+      uri,
+      contextUri,
+      query,
+    ].where((value) => value != null && value.isNotEmpty).length;
+    if (selectors != 1) {
+      throw ArgumentError(
+        'spotifyPlay requires exactly one of uri, contextUri or query',
+      );
+    }
+    final resp = await _client.post(
+      Uri.parse('$baseUrl/api/v1/spotify/play'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'uri': ?uri,
+        'context_uri': ?contextUri,
+        'query': ?query,
+        'device_id': ?deviceId,
+        'position_ms': ?positionMs,
+      }),
+    );
+    return _decode(resp);
+  }
+
+  /// POSTs a device-scoped playback command. The body is omitted when
+  /// [deviceId] is null so the backend resolves the active/default device.
+  Future<Map<String, dynamic>> _spotifyCommand(
+    String action, {
+    String? deviceId,
+  }) async {
+    final hasDevice = deviceId != null;
+    final resp = await _client.post(
+      Uri.parse('$baseUrl/api/v1/spotify/$action'),
+      headers: hasDevice ? {'Content-Type': 'application/json'} : null,
+      body: hasDevice ? jsonEncode({'device_id': deviceId}) : null,
+    );
+    return _decode(resp);
+  }
+
+  Future<Map<String, dynamic>> spotifyPause({String? deviceId}) =>
+      _spotifyCommand('pause', deviceId: deviceId);
+
+  Future<Map<String, dynamic>> spotifyResume({String? deviceId}) =>
+      _spotifyCommand('resume', deviceId: deviceId);
+
+  Future<Map<String, dynamic>> spotifyNext({String? deviceId}) =>
+      _spotifyCommand('next', deviceId: deviceId);
+
+  Future<Map<String, dynamic>> spotifyPrevious({String? deviceId}) =>
+      _spotifyCommand('previous', deviceId: deviceId);
+
+  Future<Map<String, dynamic>> spotifySetVolume(
+    int volumePercent, {
+    String? deviceId,
+  }) async {
+    final resp = await _client.put(
+      Uri.parse('$baseUrl/api/v1/spotify/volume'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'volume_percent': volumePercent,
+        'device_id': ?deviceId,
+      }),
+    );
+    return _decode(resp);
+  }
+
+  Future<Map<String, dynamic>> spotifySeek(
+    int positionMs, {
+    String? deviceId,
+  }) async {
+    final resp = await _client.put(
+      Uri.parse('$baseUrl/api/v1/spotify/seek'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'position_ms': positionMs, 'device_id': ?deviceId}),
+    );
+    return _decode(resp);
+  }
+
+  Future<Map<String, dynamic>> spotifyTransfer(String deviceId) async {
+    final resp = await _client.put(
+      Uri.parse('$baseUrl/api/v1/spotify/transfer'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'device_id': deviceId}),
+    );
+    return _decode(resp);
+  }
+
+  Future<Map<String, dynamic>> spotifyShuffle(
+    bool state, {
+    String? deviceId,
+  }) async {
+    final resp = await _client.put(
+      Uri.parse('$baseUrl/api/v1/spotify/shuffle'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'state': state, 'device_id': ?deviceId}),
+    );
+    return _decode(resp);
+  }
+
+  /// [state] is one of `off`, `track`, `context`.
+  Future<Map<String, dynamic>> spotifyRepeat(
+    String state, {
+    String? deviceId,
+  }) async {
+    final resp = await _client.put(
+      Uri.parse('$baseUrl/api/v1/spotify/repeat'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'state': state, 'device_id': ?deviceId}),
+    );
+    return _decode(resp);
+  }
+
+  Future<Map<String, dynamic>> spotifyQueue(
+    String uri, {
+    String? deviceId,
+  }) async {
+    final resp = await _client.post(
+      Uri.parse('$baseUrl/api/v1/spotify/queue'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'uri': uri, 'device_id': ?deviceId}),
+    );
+    return _decode(resp);
+  }
+
   Future<Map<String, dynamic>> voiceStatus() => _get('/api/v1/voice/status');
 
   Future<Map<String, dynamic>> ttsSettings() => _get('/api/v1/tts/settings');

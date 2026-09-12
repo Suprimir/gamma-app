@@ -5,20 +5,22 @@ contrato actual permite. Este documento lista, priorizado, lo que falta
 programar en el core (`0.0.0.0:8420`) para cerrar el resto, con evidencia
 exacta y la forma sugerida de cada endpoint.
 
-**Estado (2026-09-12):** los puntos 1, 2 y 3 ya fueron implementados en el
+**Estado (2026-09-12):** los puntos 1, 2, 3 y 4 ya fueron implementados en el
 core y verificados en vivo (fix del response de acciones, las 7 acciones
-canónicas y la población de `observed_state` con observaciones por
-capability). Sigue vigente el resto: Spotify playback, STT puro, rutinas
-(`enabled` + ejecución), catálogo de entidades, ciclo de vida de devices y
-clima. Del lado app quedan pendientes el picker de color hex (no existe UI)
-y `set_temperature` (no existe acción en el core).
+canónicas, la población de `observed_state` con observaciones por
+capability y los 13 endpoints de reproducción de Spotify). Sigue vigente el
+resto: STT puro, rutinas (`enabled` + ejecución), catálogo de entidades,
+ciclo de vida de devices y clima. Del lado app quedan pendientes el picker de
+color hex (no existe UI) y `set_temperature` (no existe acción en el core).
 
 ## Camino rápido (qué programar primero)
 
 1. **Fix del resultado de acciones** — `POST /api/v1/devices/{device_id}/endpoints/{endpoint_id}/actions` devuelve `null` en éxito.
 2. **Acciones de endpoint más allá de `set_power`** — brightness, position, color, color_temperature, speed, mode.
 3. **Poblar `observed_state`** en los DTOs de devices/endpoints.
-4. Resto por feature: Spotify playback, STT puro, rutinas (`enabled` + ejecución), catálogo de entidades, ciclo de vida de dispositivos, clima.
+4. ~~Spotify playback~~ ✅ implementado y verificado (13 endpoints). El resto
+   por feature: STT puro, rutinas (`enabled` + ejecución), catálogo de
+   entidades, ciclo de vida de dispositivos, clima.
 
 ---
 
@@ -84,20 +86,39 @@ en el resultado.
   línea"/"última conexión" por dispositivo, esa señal tiene que vivir en el
   contrato canónico (p. ej. dentro de `observed_state`).
 
-## 4. Spotify: falta reproducción
+## 4. Spotify: reproducción — ✅ implementada y verificada (2026-09-12)
 
-Hoy la API cubre búsqueda, playlists, settings y auth. Faltan controles de
-reproducción (play/pause/resume/next/previous/volume/transfer device y
-"reproducir playlist/uri"). Forma sugerida:
+El core expone los 13 endpoints de reproducción (OpenAPI + curl en vivo):
 
-- `POST /api/v1/spotify/play` body `{ "uri" | "context_uri", "device_id"? }`
-- `POST /api/v1/spotify/pause`
-- `POST /api/v1/spotify/next`, `POST /api/v1/spotify/previous`
-- `PUT /api/v1/spotify/volume` body `{ "volume_percent" }`
-- `POST /api/v1/spotify/transfer` body `{ "device_id" }`
+- `GET /api/v1/spotify/player` → `{has_playback, is_playing, track, device,
+  shuffle, repeat, volume_percent}`.
+- `GET /api/v1/spotify/devices` → `{devices[], default_device_name,
+  default_device_id}`.
+- `POST /api/v1/spotify/play` body `{uri? | context_uri? | query?,
+  device_id?, position_ms?}` (exactamente un selector; `query` resuelve al
+  primer match: canción → playlist → álbum).
+- `POST /api/v1/spotify/pause|resume|next|previous` body opcional
+  `{device_id?}`; `PUT /volume` `{volume_percent}`; `PUT /seek`
+  `{position_ms}`; `PUT /transfer` `{device_id}`; `PUT /shuffle` `{state}`;
+  `PUT /repeat` `{state: off|track|context}`; `POST /queue` `{uri}`.
+- Errores: 401 auth vencida, 403 Premium requerido, 409 sin dispositivo
+  activo / orden rechazada, 422 inválido, 503 módulo desactivado o servicio
+  sin autorizar.
 
-La UI ya tiene el tap de playlist (home desktop) y el card de música (wall);
-hoy no pueden reproducir.
+**Pendiente del lado operador (no del cliente):** la cuenta todavía no está
+autorizada; el server responde `503` con
+"Spotify no está autorizado. Conecta tu cuenta en Ajustes." hasta conectar
+la cuenta, y reproducir requiere Premium (403). El cliente muestra la CTA
+de conexión y los estados "Sin reproducción" / "Sin dispositivo activo" en
+vez de inventar estado.
+
+**Lado app (2026-09-12):** `ApiClient` expone los 13 métodos;
+`SpotifyPlayerController` (`lib/features/spotify/`) comparte estado entre
+desktop y wall (refresh de player+devices, comandos device-scoped, polling
+de 5s cableado desde `main.dart` → `AppShell`, `needsAuth` en 401/503); la
+tarjeta Spotify del desktop reproduce playlists con `playContext`, muestra
+transporte/volumen/selector de dispositivo; el card de música del wall usa
+los mismos estados con targets táctiles grandes.
 
 ## 5. Voz: STT puro para dictado
 
@@ -160,6 +181,9 @@ quiere server-side: endpoint de clima por ubicación configurable.
 - **`observed_state`** parseado y listo para mostrar on/off confirmado.
 - **Dashboards**: sin fallback a mock, cámaras por `/cameras/status`,
   playlists con metadata real, tarjeta de estado sin inventar.
+- **Spotify playback**: controller compartido (desktop + wall) con refresh
+  de player/devices, polling de 5s, transporte, volumen, selector de
+  dispositivo y tap de playlist → `playContext` (context_uri real).
 - **Turns** con `session_id` desde chips mobile, acciones desktop y wall.
 - **Rutinas relacionadas** reales (GET /routines filtrado), **TTS preview**,
   **card de Sistema** (health), **bindings reales**, **identify honesto**,
@@ -168,9 +192,11 @@ quiere server-side: endpoint de clima por ubicación configurable.
 ## Estado de verificación del cliente
 
 - `flutter analyze`: 0 errores (9 infos preexistentes del baseline).
-- `flutter test`: 508 pasan / 118 fallan — los 118 son fallos
+- `flutter test`: 527 pasan / 118 fallan — los 118 son fallos
   **preexistentes** del rediseño (expectativas de tests viejas), sin
-  regresiones nuevas; 5 de ellos quedaron arreglados durante este trabajo.
+  regresiones nuevas; los 19 tests nuevos de Spotify playback (API client,
+  controller y tarjetas desktop/wall) pasan, y 5 fallos preexistentes
+  quedaron arreglados durante este trabajo.
 
 ## Checklist de verificación (para el core)
 

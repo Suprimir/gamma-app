@@ -21,7 +21,7 @@ class AppDestination {
   final String label;
   final IconData icon;
   final IconData selectedIcon;
-  final Widget Function(ApiClient api) buildPage;
+  final Widget Function(ApiClient api, Duration spotifyPollInterval) buildPage;
 }
 
 /// The five top-level destinations of the app shell, in tab order.
@@ -31,34 +31,35 @@ final List<AppDestination> appDestinations = [
     label: 'Inicio',
     icon: Icons.cottage_outlined,
     selectedIcon: Icons.cottage,
-    buildPage: (api) => AdaptiveHomePage(api: api),
+    buildPage: (api, spotifyPollInterval) =>
+        AdaptiveHomePage(api: api, spotifyPollInterval: spotifyPollInterval),
   ),
   AppDestination(
     index: 1,
     label: 'Dispositivos',
     icon: Icons.lightbulb_outline,
     selectedIcon: Icons.lightbulb,
-    buildPage: (api) => DevicesPage(api: api),
+    buildPage: (api, _) => DevicesPage(api: api),
   ),
   AppDestination(
     index: 2,
     label: 'Rutinas',
     icon: Icons.auto_awesome_outlined,
     selectedIcon: Icons.auto_awesome,
-    buildPage: (api) => RoutinesPage(api: api),
+    buildPage: (api, _) => RoutinesPage(api: api),
   ),
   AppDestination(
     index: 3,
     label: 'Ajustes',
     icon: Icons.settings_outlined,
     selectedIcon: Icons.settings,
-    buildPage: (api) => SettingsPage(api: api),
+    buildPage: (api, _) => SettingsPage(api: api),
   ),
   AppDestination(
     index: 4,
     label: 'Cámaras',
     icon: Icons.videocam_outlined,
     selectedIcon: Icons.videocam,
-    buildPage: (api) => CamerasPage(api: api),
+    buildPage: (api, _) => CamerasPage(api: api),
   ),
 ];

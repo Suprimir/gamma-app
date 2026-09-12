@@ -17,6 +17,7 @@ import '../../data/http_device_inventory_repository.dart';
 import '../../data/weather_repository.dart';
 import '../../ui/shared_widgets.dart';
 import '../voice/vad_model.dart';
+import '../spotify/spotify_player_controller.dart';
 import 'wall_activity_bus.dart';
 import 'wall_voice_controller.dart';
 import '../devices/wall_devices_page.dart';
@@ -33,9 +34,17 @@ import '../areas/area_editor.dart';
 /// mobile and desktop keep the existing voice [DashboardPage]. Compact wall
 /// panels never reach here (AppShell already falls back to mobile).
 class AdaptiveHomePage extends StatelessWidget {
-  const AdaptiveHomePage({super.key, required this.api});
+  const AdaptiveHomePage({
+    super.key,
+    required this.api,
+    this.spotifyPollInterval = Duration.zero,
+  });
 
   final ApiClient api;
+
+  /// Playback polling cadence for the home surface. Production wires 5s
+  /// through [AppShell]; tests stay at zero so no timer outlives them.
+  final Duration spotifyPollInterval;
 
   @override
   Widget build(BuildContext context) {
@@ -47,10 +56,14 @@ class AdaptiveHomePage extends StatelessWidget {
       return WallPanelHomePage(
         api: api,
         idleTimeout: const Duration(seconds: 60),
+        spotifyPollInterval: spotifyPollInterval,
       );
     }
     if (scope.isDesktopSurface) {
-      return DesktopDashboardPage(api: api);
+      return DesktopDashboardPage(
+        api: api,
+        spotifyPollInterval: spotifyPollInterval,
+      );
     }
     return DashboardPage(api: api);
   }
@@ -67,6 +80,7 @@ class WallPanelHomePage extends StatefulWidget {
     required this.api,
     DeviceInventoryRepository? repository,
     this.idleTimeout,
+    this.spotifyPollInterval = Duration.zero,
   }) : repository = repository ?? HttpDeviceInventoryRepository(api);
 
   final ApiClient api;
@@ -75,6 +89,10 @@ class WallPanelHomePage extends StatefulWidget {
   /// Inactivity delay before the sleep overlay takes over. Null disables
   /// sleep (widget tests and non-wall previews). Production wall passes 60s.
   final Duration? idleTimeout;
+
+  /// Playback polling cadence for the music card; zero disables polling
+  /// (default so direct-construction tests stay timer-free).
+  final Duration spotifyPollInterval;
 
   @override
   State<WallPanelHomePage> createState() => _WallPanelHomePageState();
@@ -541,6 +559,7 @@ class _WallPanelHomePageState extends State<WallPanelHomePage>
                   quickBusy: _quickBusy,
                   quickBusyKey: _quickBusyKey,
                   onQuickAction: _runQuickAction,
+                  spotifyPollInterval: widget.spotifyPollInterval,
                 ),
                 // Tablet-style gesture pill: floats at the bottom of Inicio
                 // and only shows while sliding, hinting swipe-up-to-sleep.
@@ -737,6 +756,7 @@ class _WallHomeBody extends StatelessWidget {
     required this.quickBusy,
     required this.quickBusyKey,
     required this.onQuickAction,
+    required this.spotifyPollInterval,
     this.refreshError,
     this.onRefresh,
   });
@@ -752,6 +772,7 @@ class _WallHomeBody extends StatelessWidget {
   final bool quickBusy;
   final String? quickBusyKey;
   final ValueChanged<_QuickActionDef> onQuickAction;
+  final Duration spotifyPollInterval;
 
   /// Non-destructive refresh failure shown above the retained snapshot.
   final Object? refreshError;
@@ -787,7 +808,11 @@ class _WallHomeBody extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            _WallHeroRow(api: api, voice: voice),
+            _WallHeroRow(
+              api: api,
+              voice: voice,
+              spotifyPollInterval: spotifyPollInterval,
+            ),
             if (refreshError != null) ...[
               const SizedBox(height: 12),
               _RefreshErrorBanner(onRetry: onRefresh),
@@ -877,10 +902,15 @@ class _WallSectionTitle extends StatelessWidget {
 /// Top hero row from the reference layout: assistant + music side by side,
 /// stacked on narrow widths. Floating cards with press animation.
 class _WallHeroRow extends StatelessWidget {
-  const _WallHeroRow({required this.api, required this.voice});
+  const _WallHeroRow({
+    required this.api,
+    required this.voice,
+    required this.spotifyPollInterval,
+  });
 
   final ApiClient api;
   final WallVoiceController voice;
+  final Duration spotifyPollInterval;
 
   @override
   Widget build(BuildContext context) {
@@ -892,7 +922,7 @@ class _WallHeroRow extends StatelessWidget {
             children: [
               _WallAssistantCard(voice: voice),
               const SizedBox(height: 14),
-              _WallMusicCard(api: api),
+              _WallMusicCard(api: api, pollInterval: spotifyPollInterval),
             ],
           );
         }
@@ -901,7 +931,12 @@ class _WallHeroRow extends StatelessWidget {
           children: [
             Expanded(child: _WallAssistantCard(voice: voice)),
             const SizedBox(width: 14),
-            Expanded(child: _WallMusicCard(api: api)),
+            Expanded(
+              child: _WallMusicCard(
+                api: api,
+                pollInterval: spotifyPollInterval,
+              ),
+            ),
           ],
         );
       },
@@ -1036,9 +1071,12 @@ String _voiceStatusCopy(WallVoiceController c) {
 }
 
 class _WallMusicCard extends StatefulWidget {
-  const _WallMusicCard({required this.api});
+  const _WallMusicCard({required this.api, required this.pollInterval});
 
   final ApiClient api;
+
+  /// Playback polling cadence; zero disables polling entirely.
+  final Duration pollInterval;
 
   @override
   State<_WallMusicCard> createState() => _WallMusicCardState();
@@ -1046,6 +1084,10 @@ class _WallMusicCard extends StatefulWidget {
 
 class _WallMusicCardState extends State<_WallMusicCard> {
   static const _externalUrlChannel = MethodChannel('gamma_app/external_url');
+
+  late final SpotifyPlayerController _spotify = SpotifyPlayerController(
+    widget.api,
+  );
 
   bool _loading = true;
   bool _connecting = false;
@@ -1059,11 +1101,16 @@ class _WallMusicCardState extends State<_WallMusicCard> {
   void initState() {
     super.initState();
     _loadStatus();
+    // Playback state is its own async source: the card renders whatever the
+    // backend confirms and never blocks the home load on it.
+    unawaited(_spotify.refresh());
+    _spotify.startPolling(interval: widget.pollInterval);
   }
 
   @override
   void dispose() {
     _oauthPoll?.cancel();
+    _spotify.dispose();
     super.dispose();
   }
 
@@ -1152,6 +1199,8 @@ class _WallMusicCardState extends State<_WallMusicCard> {
             _connecting = false;
             _waitingAuth = false;
           });
+          // Freshly authorized: pull the now-available playback state.
+          unawaited(_spotify.refresh());
           return;
         }
         if (attempts >= 60) {
@@ -1185,114 +1234,440 @@ class _WallMusicCardState extends State<_WallMusicCard> {
         color: const Color(0xFF141826),
         borderRadius: BorderRadius.circular(24),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: const Color(0xFF4ADE80),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Icon(
-              Icons.music_note,
-              size: 30,
-              color: Color(0xFF141826),
-            ),
-          ),
-          const SizedBox(height: 14),
-          // Wrap instead of Row: the pill text must never overflow the card
-          // on narrow panels (wraps to a second line instead).
-          Wrap(
-            alignment: WrapAlignment.center,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 8,
-            runSpacing: 4,
+      child: ListenableBuilder(
+        listenable: _spotify,
+        builder: (context, _) {
+          // A player 401/503 means the account is not usable, even when the
+          // last settings read said otherwise: show the connect affordance.
+          final connected = _connected && !_spotify.needsAuth;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                'Spotify',
-                style: TextStyle(
-                  fontSize: 20,
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4ADE80),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(
+                  Icons.music_note,
+                  size: 30,
+                  color: Color(0xFF141826),
+                ),
+              ),
+              const SizedBox(height: 14),
+              // Wrap instead of Row: the pill text must never overflow the
+              // card on narrow panels (wraps to a second line instead).
+              Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  const Text(
+                    'Spotify',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: connected ? Colors.green : Colors.white24,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      _loading
+                          ? '...'
+                          : (connected ? 'Conectado' : 'Sin conectar'),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              if (_loading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else if (!connected) ...[
+                Text(
+                  _waitingAuth
+                      ? 'Autorizá GAMMA en Spotify y se conecta sola.'
+                      : 'Conectá tu cuenta para ver tu música acá.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 13, color: Colors.white70),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: _connecting ? null : _connect,
+                  icon: _connecting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.link_rounded, size: 18),
+                  label: Text(
+                    _waitingAuth ? 'Esperando...' : 'Conectar Spotify',
+                  ),
+                ),
+              ] else ...[
+                if (_account.isNotEmpty)
+                  Text(
+                    _account,
+                    style: const TextStyle(fontSize: 13, color: Colors.white70),
+                  ),
+                const SizedBox(height: 10),
+                _nowPlaying(),
+                const SizedBox(height: 16),
+                _transport(),
+                const SizedBox(height: 6),
+                _volume(),
+                const SizedBox(height: 4),
+                _deviceButton(),
+                if (_spotify.error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _spotify.error!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.redAccent,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _spotify.refresh,
+                    child: const Text('Reintentar reproducción'),
+                  ),
+                ],
+              ],
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _error!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 12, color: Colors.redAccent),
+                ),
+                TextButton(
+                  onPressed: _loadStatus,
+                  child: const Text('Reintentar Spotify'),
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Album art + name/artist, or the honest empty state when nothing is (or
+  /// was ever) loaded.
+  Widget _nowPlaying() {
+    final track = _spotify.track;
+    if (_spotify.player?['has_playback'] != true || track == null) {
+      return const Text(
+        'Sin reproducción',
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 15, color: Colors.white70),
+      );
+    }
+    final name = track['name']?.toString();
+    final artist = track['artist']?.toString();
+    final imageUrl = track['image_url']?.toString();
+    final hasImage = imageUrl != null && imageUrl.isNotEmpty;
+    Widget artworkFallback() => Container(
+      color: const Color(0xFF262B3D),
+      child: const Icon(
+        Icons.music_note_rounded,
+        size: 28,
+        color: Colors.white54,
+      ),
+    );
+    return Row(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: SizedBox(
+            width: 64,
+            height: 64,
+            child: hasImage
+                ? Image.network(
+                    imageUrl,
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                    errorBuilder: (context, _, _) => artworkFallback(),
+                  )
+                : artworkFallback(),
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                (name == null || name.isEmpty) ? 'Sin título' : name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 17,
                   fontWeight: FontWeight.w700,
                   color: Colors.white,
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
+              if (artist != null && artist.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  artist,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, color: Colors.white70),
                 ),
-                decoration: BoxDecoration(
-                  color: _connected ? Colors.green : Colors.white24,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  _loading
-                      ? '...'
-                      : (_connected ? 'Conectado' : 'Sin conectar'),
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
+              ],
             ],
           ),
-          const SizedBox(height: 6),
-          if (_loading)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          else if (_connected) ...[
-            if (_account.isNotEmpty)
-              Text(
-                _account,
-                style: const TextStyle(fontSize: 13, color: Colors.white70),
-              ),
-            const SizedBox(height: 4),
-            const Text(
-              'Controlala desde tu celu o la desktop.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Colors.white70),
-            ),
-          ] else ...[
-            Text(
-              _waitingAuth
-                  ? 'Autorizá GAMMA en Spotify y se conecta sola.'
-                  : 'Conectá tu cuenta para ver tu música acá.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13, color: Colors.white70),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _connecting ? null : _connect,
-              icon: _connecting
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.link_rounded, size: 18),
-              label: Text(_waitingAuth ? 'Esperando...' : 'Conectar Spotify'),
-            ),
-          ],
-          if (_error != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              _error!,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, color: Colors.redAccent),
-            ),
-            TextButton(
-              onPressed: _loadStatus,
-              child: const Text('Reintentar Spotify'),
-            ),
-          ],
-        ],
+        ),
+      ],
+    );
+  }
+
+  Widget _transportButton({
+    required IconData icon,
+    required String tooltip,
+    required bool enabled,
+    required VoidCallback onPressed,
+    bool primary = false,
+  }) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: enabled ? onPressed : null,
+      iconSize: primary ? 38 : 32,
+      icon: Icon(icon),
+      color: primary ? const Color(0xFF141826) : Colors.white,
+      disabledColor: Colors.white24,
+      style: IconButton.styleFrom(
+        backgroundColor: primary
+            ? const Color(0xFF1ED760)
+            : Colors.white.withValues(alpha: 0.10),
+        disabledBackgroundColor: Colors.white10,
+        padding: const EdgeInsets.all(14),
       ),
+    );
+  }
+
+  Widget _transport() {
+    final enabled = _spotify.activeDevice != null;
+    final playing = _spotify.isPlaying;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        _transportButton(
+          icon: Icons.skip_previous_rounded,
+          tooltip: 'Anterior',
+          enabled: enabled,
+          onPressed: _spotify.previous,
+        ),
+        const SizedBox(width: 12),
+        _transportButton(
+          icon: playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+          tooltip: playing ? 'Pausar' : 'Reproducir',
+          enabled: enabled,
+          onPressed: playing ? _spotify.pause : _spotify.play,
+          primary: true,
+        ),
+        const SizedBox(width: 12),
+        _transportButton(
+          icon: Icons.skip_next_rounded,
+          tooltip: 'Siguiente',
+          enabled: enabled,
+          onPressed: _spotify.next,
+        ),
+      ],
+    );
+  }
+
+  Widget _volume() {
+    final playerVolume = _spotify.player?['volume_percent'];
+    final deviceVolume = _spotify.activeDevice?['volume_percent'];
+    final volume = playerVolume is int
+        ? playerVolume
+        : (deviceVolume is int ? deviceVolume : null);
+    return _WallVolumeSlider(
+      value: volume,
+      enabled: _spotify.activeDevice != null,
+      onCommit: _spotify.setVolume,
+    );
+  }
+
+  Widget _deviceButton() {
+    final name = _spotify.activeDevice?['name']?.toString();
+    final empty = name == null || name.isEmpty;
+    return SizedBox(
+      width: double.infinity,
+      child: TextButton.icon(
+        key: const ValueKey('wall-spotify-device'),
+        onPressed: _pickDevice,
+        icon: const Icon(Icons.speaker_rounded, size: 22),
+        label: Text(
+          empty ? 'Sin dispositivo activo' : name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        style: TextButton.styleFrom(
+          foregroundColor: Colors.white,
+          minimumSize: const Size(0, 56),
+        ),
+      ),
+    );
+  }
+
+  /// Touch-sized device picker: every target is a full-width 56px row and
+  /// "Automático" clears the explicit pick (the backend resolves it).
+  Future<void> _pickDevice() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF1B2030),
+      builder: (sheetContext) {
+        final activeId = _spotify.activeDevice?['id'];
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const ListTile(
+                  title: Text(
+                    'Reproducir en',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(
+                    Icons.auto_awesome,
+                    color: Colors.white70,
+                  ),
+                  title: const Text(
+                    'Automático',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  subtitle: const Text(
+                    'GAMMA elige el dispositivo activo',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                  trailing:
+                      _spotify.selectedDeviceId == null && activeId != null
+                      ? const Icon(Icons.check, color: Color(0xFF4ADE80))
+                      : null,
+                  onTap: () => Navigator.pop(sheetContext, ''),
+                ),
+                for (final device in _spotify.devices)
+                  ListTile(
+                    leading: Icon(
+                      device['is_active'] == true
+                          ? Icons.speaker
+                          : Icons.speaker_outlined,
+                      color: Colors.white70,
+                    ),
+                    title: Text(
+                      device['name']?.toString() ??
+                          device['id']?.toString() ??
+                          'Dispositivo',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    subtitle: device['is_default'] == true
+                        ? const Text(
+                            'Predeterminado',
+                            style: TextStyle(color: Colors.white54),
+                          )
+                        : null,
+                    trailing: device['id'] == activeId
+                        ? const Icon(Icons.check, color: Color(0xFF4ADE80))
+                        : null,
+                    onTap: () =>
+                        Navigator.pop(sheetContext, device['id']?.toString()),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted || choice == null) return;
+    if (choice.isEmpty) {
+      _spotify.selectDevice(null);
+      return;
+    }
+    await _spotify.transferTo(choice);
+  }
+}
+
+/// Touch-sized volume slider. Drag value is local so a polling refresh never
+/// fights the finger; only the drag end commits to the backend.
+class _WallVolumeSlider extends StatefulWidget {
+  const _WallVolumeSlider({
+    required this.value,
+    required this.enabled,
+    required this.onCommit,
+  });
+
+  final int? value;
+  final bool enabled;
+  final ValueChanged<int> onCommit;
+
+  @override
+  State<_WallVolumeSlider> createState() => _WallVolumeSliderState();
+}
+
+class _WallVolumeSliderState extends State<_WallVolumeSlider> {
+  double? _drag;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = (_drag ?? widget.value?.toDouble() ?? 0).clamp(0.0, 100.0);
+    return Row(
+      children: [
+        const Icon(Icons.volume_down_rounded, color: Colors.white70),
+        Expanded(
+          child: Slider(
+            value: value,
+            max: 100,
+            activeColor: const Color(0xFF4ADE80),
+            inactiveColor: Colors.white24,
+            onChanged: widget.enabled ? (v) => setState(() => _drag = v) : null,
+            onChangeEnd: widget.enabled
+                ? (v) {
+                    setState(() => _drag = null);
+                    widget.onCommit(v.round());
+                  }
+                : null,
+          ),
+        ),
+        SizedBox(
+          width: 40,
+          child: Text(
+            '${value.round()}%',
+            textAlign: TextAlign.end,
+            style: const TextStyle(fontSize: 13, color: Colors.white70),
+          ),
+        ),
+      ],
     );
   }
 }
