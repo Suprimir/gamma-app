@@ -19,14 +19,28 @@ abstract final class AppColors {
   static const border = Color(0x1A14202D);
   static const borderStrong = Color(0x2E14202D);
 
-  // Accent
-  static const accent = Color(0xFF4665C9);
-  static const accentStrong = Color(0xFF2F4FAE);
+  // Accent — runtime-themable. HomeThemeController.applyAccent() recolors
+  // these from the selected appearance so every explicit token reference
+  // (plus ThemeData.colorScheme.primary) follows the theme.
+  static Color accent = const Color(0xFF4665C9);
+  static Color accentStrong = const Color(0xFF2F4FAE);
   // Accent tints (web rgba(70,101,201, a))
-  static const accentTint = Color(0x144665C9);
-  static const accentTintActive = Color(0x664665C9);
-  static const accentTintStrong = Color(0x334665C9);
-  static const accentTintHover = Color(0x1F4665C9);
+  static Color accentTint = const Color(0x144665C9);
+  static Color accentTintActive = const Color(0x664665C9);
+  static Color accentTintStrong = const Color(0x334665C9);
+  static Color accentTintHover = const Color(0x1F4665C9);
+
+  /// Recolors every accent token from the selected theme's principal [base]
+  /// color. Widgets read these statics directly, so a single call keeps the
+  /// whole UI in sync (no per-widget plumbing).
+  static void applyAccent(Color base) {
+    accent = base;
+    accentStrong = Color.lerp(base, Colors.black, 0.18)!;
+    accentTint = base.withValues(alpha: 0x14 / 255);
+    accentTintActive = base.withValues(alpha: 0x66 / 255);
+    accentTintStrong = base.withValues(alpha: 0x33 / 255);
+    accentTintHover = base.withValues(alpha: 0x1F / 255);
+  }
 
   // Gamma Indigo (mockup primary #4F46E5)
   static const gammaIndigo = Color(0xFF4F46E5);

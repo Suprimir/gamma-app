@@ -196,7 +196,7 @@ class _WallAreasHeader extends StatelessWidget {
           ),
           child: Text(
             '$count',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w700,
               color: AppColors.accentStrong,
@@ -244,7 +244,7 @@ class _WallAreaCard extends StatelessWidget {
                   color: AppColors.accentTint,
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.place_outlined,
                   size: 28,
                   color: AppColors.accent,
@@ -309,11 +309,11 @@ class _WallNewAreaCard extends StatelessWidget {
             border: Border.all(color: AppColors.accentTintActive),
             borderRadius: BorderRadius.circular(20),
           ),
-          child: const Row(
+          child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(Icons.add, color: AppColors.accent),
-              SizedBox(width: 10),
+              const SizedBox(width: 10),
               Text(
                 'Nueva habitación',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),

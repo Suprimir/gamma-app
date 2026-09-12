@@ -990,11 +990,11 @@ class _WallAssistantCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              const Row(
+              Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(Icons.auto_awesome, size: 16, color: AppColors.accent),
-                  SizedBox(width: 6),
+                  const SizedBox(width: 6),
                   Text(
                     'GAMMA',
                     style: TextStyle(
@@ -2038,7 +2038,7 @@ class _WallQuickGrid extends StatelessWidget {
                         Container(
                           width: 48,
                           height: 48,
-                          decoration: const BoxDecoration(
+                          decoration: BoxDecoration(
                             color: AppColors.accentTint,
                             shape: BoxShape.circle,
                           ),

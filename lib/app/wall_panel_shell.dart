@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../features/dashboard/home_theme_background.dart';
 import '../ui/app_colors.dart';
 import 'navigation_destinations.dart';
 
@@ -27,28 +28,30 @@ class WallPanelShell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.bg,
-      body: SafeArea(
-        right: false,
-        child: Stack(
-          children: [
-            // Page reserves the rail width so content never slides under it,
-            // while the rail itself floats centered like the reference mock.
-            Positioned.fill(
-              child: Padding(
-                padding: const EdgeInsets.only(left: 124),
-                child: page,
+      body: HomeThemeBackground(
+        child: SafeArea(
+          right: false,
+          child: Stack(
+            children: [
+              // Page reserves the rail width so content never slides under it,
+              // while the rail itself floats centered like the reference mock.
+              Positioned.fill(
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 124),
+                  child: page,
+                ),
               ),
-            ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: _WallSideRail(
-                key: const ValueKey('wall-panel-side-rail'),
-                destinations: destinations,
-                currentIndex: currentIndex,
-                onSelected: onSelected,
+              Align(
+                alignment: Alignment.centerLeft,
+                child: _WallSideRail(
+                  key: const ValueKey('wall-panel-side-rail'),
+                  destinations: destinations,
+                  currentIndex: currentIndex,
+                  onSelected: onSelected,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

@@ -261,7 +261,7 @@ class _AreaRow extends StatelessWidget {
                   color: AppColors.accentTint,
                   borderRadius: BorderRadius.circular(13),
                 ),
-                child: const Icon(
+                child: Icon(
                   CupertinoIcons.placemark,
                   color: AppColors.accent,
                 ),

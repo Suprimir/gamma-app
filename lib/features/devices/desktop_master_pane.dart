@@ -194,7 +194,7 @@ class _DesktopMasterPaneState extends State<DesktopMasterPane> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.place_outlined,
                       size: 18,
                       color: AppColors.accent,

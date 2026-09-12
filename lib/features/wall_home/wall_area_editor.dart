@@ -214,7 +214,7 @@ class WallSheetOption extends StatelessWidget {
               ),
               ...?actions,
               if (selected && !destructive)
-                const Icon(Icons.check, size: 24, color: AppColors.accent),
+                Icon(Icons.check, size: 24, color: AppColors.accent),
             ],
           ),
         ),
@@ -378,8 +378,8 @@ class _WallAreaEditorDialogState extends State<_WallAreaEditorDialog> {
                     horizontal: 18,
                     vertical: 22,
                   ),
-                  suffixIcon: const Padding(
-                    padding: EdgeInsets.only(right: 8),
+                  suffixIcon: Padding(
+                    padding: const EdgeInsets.only(right: 8),
                     child: Icon(
                       Icons.keyboard_outlined,
                       size: 28,

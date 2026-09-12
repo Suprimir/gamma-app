@@ -507,7 +507,7 @@ class _MasterListState extends State<_MasterList> {
                 ),
                 child: Text(
                   '${devices.length}',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                     color: AppColors.accentStrong,

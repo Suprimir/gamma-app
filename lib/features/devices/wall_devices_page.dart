@@ -418,7 +418,7 @@ class _WallDevicesHeader extends StatelessWidget {
           ),
           child: Text(
             '$count',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w700,
               color: AppColors.accentStrong,
@@ -500,7 +500,7 @@ class _WallSearchField extends StatelessWidget {
                   ),
                 )
               else
-                const Icon(
+                Icon(
                   Icons.keyboard_outlined,
                   size: 24,
                   color: AppColors.accent,
@@ -632,11 +632,7 @@ class _WallLocationChipsState extends State<_WallLocationChips> {
           ),
           child: Row(
             children: [
-              const Icon(
-                Icons.place_outlined,
-                size: 24,
-                color: AppColors.accent,
-              ),
+              Icon(Icons.place_outlined, size: 24, color: AppColors.accent),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -733,7 +729,7 @@ class _WallListActions extends StatelessWidget {
             style: OutlinedButton.styleFrom(
               foregroundColor: AppColors.accentStrong,
               minimumSize: const Size.fromHeight(60),
-              side: const BorderSide(color: AppColors.accentTintActive),
+              side: BorderSide(color: AppColors.accentTintActive),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
               ),
@@ -752,7 +748,7 @@ class _WallListActions extends StatelessWidget {
             style: OutlinedButton.styleFrom(
               foregroundColor: AppColors.accentStrong,
               minimumSize: const Size.fromHeight(60),
-              side: const BorderSide(color: AppColors.accentTintActive),
+              side: BorderSide(color: AppColors.accentTintActive),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
               ),
@@ -927,8 +923,8 @@ class _WallAddDeviceDialogState extends State<_WallAddDeviceDialog> {
                     horizontal: 18,
                     vertical: 22,
                   ),
-                  suffixIcon: const Padding(
-                    padding: EdgeInsets.only(right: 8),
+                  suffixIcon: Padding(
+                    padding: const EdgeInsets.only(right: 8),
                     child: Icon(
                       Icons.keyboard_outlined,
                       size: 28,
@@ -1096,11 +1092,7 @@ class _WallTypeCard extends StatelessWidget {
                 ),
               ),
               if (selected)
-                const Icon(
-                  Icons.check_circle,
-                  size: 24,
-                  color: AppColors.accent,
-                ),
+                Icon(Icons.check_circle, size: 24, color: AppColors.accent),
             ],
           ),
         ),
@@ -1129,7 +1121,7 @@ class _WallAddAreaChip extends StatelessWidget {
         selected: selected,
         onSelected: (_) => onTap(),
         avatar: selected
-            ? const Icon(Icons.check, size: 22, color: AppColors.accentStrong)
+            ? Icon(Icons.check, size: 22, color: AppColors.accentStrong)
             : const Icon(
                 Icons.place_outlined,
                 size: 22,
@@ -2332,11 +2324,11 @@ class _WallPowerCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isGateway) {
-      return const _WallCard(
+      return _WallCard(
         child: Row(
           children: [
             Icon(Icons.hub_outlined, size: 30, color: AppColors.accent),
-            SizedBox(width: 16),
+            const SizedBox(width: 16),
             Expanded(
               child: Text(
                 'Este gateway conecta tus dispositivos. No tiene controles: '
@@ -3116,13 +3108,13 @@ class _WallRoutinesCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.auto_awesome_outlined,
                 size: 22,
                 color: AppColors.accentStrong,
               ),
               const SizedBox(width: 10),
-              const Expanded(
+              Expanded(
                 child: Text(
                   'Rutinas relacionadas',
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),

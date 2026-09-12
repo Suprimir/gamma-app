@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'data/api_client.dart';
+import 'features/dashboard/home_theme_controller.dart';
 import 'features/wall_home/wall_activity_bus.dart';
 import 'ui/app_colors.dart';
 import 'app/app_shell.dart';
@@ -20,7 +21,7 @@ void main() {
   );
 }
 
-class GammaApp extends StatelessWidget {
+class GammaApp extends StatefulWidget {
   const GammaApp({
     super.key,
     required this.api,
@@ -34,27 +35,48 @@ class GammaApp extends StatelessWidget {
   final Duration spotifyPollInterval;
 
   @override
+  State<GammaApp> createState() => _GammaAppState();
+}
+
+class _GammaAppState extends State<GammaApp> {
+  final HomeThemeController _themeController = HomeThemeController.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    // Best-effort: a missing prefs backend (e.g. widget tests) must never
+    // crash startup. The default accent still applies.
+    _themeController.load().catchError((Object _) {});
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'GAMMA',
-      theme: ThemeData(
-        // The whole UI uses explicit light design tokens (AppColors). Force
-        // Brightness.light so a system dark-mode device does not flip the
-        // inherited colorScheme (uncolored Text/Icon widgets would otherwise
-        // render light-on-dark over the light background, e.g. red/white
-        // text on dark surfaces).
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppColors.accent,
-          brightness: Brightness.light,
-        ),
-        scaffoldBackgroundColor: AppColors.bg,
-      ),
-      home: AppShell(api: api, spotifyPollInterval: spotifyPollInterval),
-      // Above the Navigator: every touch anywhere (pages, pushed routes,
-      // dialogs, sheets, touch keyboard) funnels through here and resets
-      // the wall sleep countdown. Only WallPanelHomePage subscribes.
-      builder: (context, child) =>
-          _WallActivityProbe(child: child ?? const SizedBox.shrink()),
+    return ListenableBuilder(
+      listenable: _themeController.presetIdNotifier,
+      builder: (context, _) {
+        final preset = _themeController.preset;
+        return MaterialApp(
+          title: 'GAMMA',
+          theme: ThemeData(
+            // Accent follows the selected appearance; the rest of the light
+            // design tokens stay neutral for contrast.
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: preset.accent,
+              brightness: Brightness.light,
+            ).copyWith(primary: preset.accent),
+            scaffoldBackgroundColor: AppColors.bg,
+          ),
+          home: AppShell(
+            api: widget.api,
+            spotifyPollInterval: widget.spotifyPollInterval,
+          ),
+          // Above the Navigator: every touch anywhere (pages, pushed routes,
+          // dialogs, sheets, touch keyboard) funnels through here and resets
+          // the wall sleep countdown. Only WallPanelHomePage subscribes.
+          builder: (context, child) =>
+              _WallActivityProbe(child: child ?? const SizedBox.shrink()),
+        );
+      },
     );
   }
 }

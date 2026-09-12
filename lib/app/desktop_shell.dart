@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../adaptive/adaptive_layout.dart';
 import '../data/api_client.dart';
+import '../features/dashboard/home_theme_background.dart';
 import 'desktop_drawer.dart';
 import 'desktop_header.dart';
 import 'navigation_destinations.dart';
@@ -44,7 +45,9 @@ class DesktopShell extends StatelessWidget {
                   onSelect: onSelected,
                   collapsed: collapsed,
                 ),
-                Expanded(child: page),
+                Expanded(
+                  child: HomeThemeBackground(child: page),
+                ),
               ],
             ),
           ),

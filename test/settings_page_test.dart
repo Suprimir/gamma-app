@@ -137,7 +137,7 @@ Future<void> _pumpSettings(
   WidgetTester tester,
   _FakeSettingsApi api, {
   _FakeTtsPlayer? player,
-  Size size = const Size(600, 1400),
+  Size size = const Size(600, 1800),
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -195,6 +195,8 @@ void main() {
     expect(find.text('Escritura habilitada'), findsNothing);
 
     api.healthError = null;
+    await tester.ensureVisible(find.text('Reintentar'));
+    await tester.pump();
     await tester.tap(find.text('Reintentar'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
@@ -291,6 +293,11 @@ void main() {
       size: const Size(600, 1800),
     );
 
+    await tester.scrollUntilVisible(
+      find.text('Inteligencia artificial'),
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Inteligencia artificial'), findsOneWidget);
     expect(find.text('Clave de Gemini y ajustes del modelo'), findsOneWidget);
 

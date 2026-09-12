@@ -31,8 +31,6 @@ import '../voice/voice_session.dart';
 import '../wall_home/wall_home_projection.dart';
 import '../wall_home/wall_quick_actions_usage.dart';
 import 'home_derivations.dart';
-import 'home_theme.dart';
-import 'home_theme_controller.dart';
 
 class DesktopDashboardPage extends StatefulWidget {
   const DesktopDashboardPage({
@@ -54,9 +52,6 @@ class DesktopDashboardPage extends StatefulWidget {
 
 class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     with TickerProviderStateMixin {
-  String _themeId = HomeThemePreset.claro.id;
-  HomeThemePreset get _preset => HomeThemePreset.fromId(_themeId);
-
   DeviceInventorySnapshot? _snapshot;
   Object? _error;
   Object? _refreshError;
@@ -169,7 +164,6 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     );
     _sessionId = getOrCreateVoiceSessionId();
     _vadReady = VadModel.ensureReady();
-    _loadTheme();
     _player.stream.playing.listen((playing) {
       if (mounted) {
         setState(() => _state = playing ? LoopState.speaking : LoopState.idle);
@@ -206,7 +200,6 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     if (!_wasActive && isActive) {
       setState(() => _animationVersion++);
       _staggerController.forward(from: 0);
-      _loadTheme();
     }
     _wasActive = isActive;
     if (isActive && !_loadStarted) {
@@ -469,50 +462,6 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     }
   }
 
-  Future<void> _loadTheme() async {
-    final id = await HomeThemeController.loadPresetId();
-    if (mounted) setState(() => _themeId = id);
-  }
-
-  Future<void> _selectTheme(String id) async {
-    final normalized = HomeThemePreset.fromId(id).id;
-    setState(() => _themeId = normalized);
-    await HomeThemeController.savePresetId(normalized);
-  }
-
-  Future<void> _openThemePicker() async {
-    final selected = await showDialog<String>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Personalizar fondo'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final preset in HomeThemePreset.allPresets)
-                  _ThemePresetTile(
-                    preset: preset,
-                    selected: preset.id == _themeId,
-                    onTap: () => Navigator.of(context).pop(preset.id),
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cerrar'),
-            ),
-          ],
-        );
-      },
-    );
-    if (selected != null && selected != _themeId) {
-      await _selectTheme(selected);
-    }
-  }
-
   Future<void> _loadData() async {
     setState(() {
       _loading = true;
@@ -624,19 +573,10 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
 
   @override
   Widget build(BuildContext context) {
-    final preset = _preset;
+    // The desktop shell paints the theme-aware gradient behind this page.
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: preset.gradientColors,
-          ),
-        ),
-        child: SafeArea(child: _buildBody()),
-      ),
+      body: SafeArea(child: _buildBody()),
     );
   }
 
@@ -684,7 +624,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     );
   }
 
-  /// Minimal toolbar: no greeting, no date — just refresh + theme picker.
+  /// Minimal toolbar: no greeting, no date — just refresh.
   Widget _buildToolbar() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.end,
@@ -694,12 +634,6 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
           icon: const Icon(Icons.refresh_outlined),
           color: AppColors.textDim,
           onPressed: _loading ? null : _loadData,
-        ),
-        IconButton(
-          tooltip: 'Personalizar fondo',
-          icon: const Icon(Icons.palette_outlined),
-          color: AppColors.textDim,
-          onPressed: _openThemePicker,
         ),
       ],
     );
@@ -850,7 +784,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
             ),
           ),
           const SizedBox(height: 12),
-          const Row(
+          Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(Icons.auto_awesome, size: 16, color: AppColors.accent),
@@ -970,7 +904,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
                   color: AppColors.accentTint,
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.home_outlined,
                   size: 20,
                   color: AppColors.accent,
@@ -2062,7 +1996,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
           ),
           const SizedBox(height: 12),
           if (_routines.isEmpty) ...[
-            const Center(
+            Center(
               child: Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
                 child: Icon(
@@ -2349,7 +2283,7 @@ class _StatusRow extends StatelessWidget {
         ),
         Text(
           value,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w700,
             color: AppColors.accent,
@@ -2593,7 +2527,7 @@ class _AreaActionOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = destructive ? AppColors.errorRed : AppColors.gammaIndigo;
+    final accent = destructive ? AppColors.errorRed : AppColors.accent;
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Material(
@@ -3089,7 +3023,7 @@ class _RoutineRow extends StatelessWidget {
                 color: AppColors.accentTint,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.auto_awesome_outlined,
                 size: 18,
                 color: AppColors.accent,
@@ -3214,53 +3148,6 @@ class _DesktopTypewriterState extends State<_DesktopTypewriter>
           ),
         );
       },
-    );
-  }
-}
-
-class _ThemePresetTile extends StatelessWidget {
-  const _ThemePresetTile({
-    required this.preset,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final HomeThemePreset preset;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      onTap: onTap,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-      leading: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (final color in preset.gradientColors)
-            Container(
-              width: 18,
-              height: 18,
-              margin: const EdgeInsets.only(right: 4),
-              decoration: BoxDecoration(
-                color: color,
-                shape: BoxShape.circle,
-                border: Border.all(color: const Color(0x1A14202D)),
-              ),
-            ),
-        ],
-      ),
-      title: Text(
-        preset.label,
-        style: TextStyle(
-          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-        ),
-      ),
-      subtitle: Text(preset.description, style: const TextStyle(fontSize: 12)),
-      trailing: Icon(
-        selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-        color: selected ? AppColors.accent : AppColors.textFaint,
-      ),
     );
   }
 }

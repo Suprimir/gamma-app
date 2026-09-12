@@ -10,7 +10,7 @@ import 'routine_actions.dart';
 import '../../ui/shared_widgets.dart';
 import '../../ui/app_colors.dart';
 
-const _accent = AppColors.accent;
+Color get _accent => AppColors.accent;
 const _dimText = AppColors.textDim;
 const _dimCap = AppColors.textDim;
 const _border = AppColors.border;
@@ -703,7 +703,7 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
           Container(
             width: 32,
             height: 32,
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               color: _accent,
               shape: BoxShape.circle,
             ),
@@ -1061,7 +1061,7 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: _accent, width: 1.4),
+        borderSide: BorderSide(color: _accent, width: 1.4),
       ),
     );
   }
@@ -1191,7 +1191,7 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
         children: [
           Text(
             '«$text»',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
               color: AppColors.accentStrong,
@@ -1297,7 +1297,7 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
                       color: AppColors.accentTint,
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       CupertinoIcons.sparkles,
                       size: 27,
                       color: _accent,
@@ -1452,7 +1452,7 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
             alignment: Alignment.center,
             child: Text(
               '${index + 1}',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
                 color: _accent,
@@ -2687,7 +2687,7 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: _accent, width: 1.4),
+            borderSide: BorderSide(color: _accent, width: 1.4),
           ),
         ),
       ),
@@ -2912,7 +2912,7 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
             ),
             child: Text(
               '$count',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
                 color: AppColors.accentStrong,
@@ -3143,7 +3143,7 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
       );
     }
     final check = selected
-        ? const Positioned(
+        ? Positioned(
             right: 6,
             bottom: 6,
             child: DecoratedBox(
@@ -3387,7 +3387,7 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: _accent, width: 1.4),
+        borderSide: BorderSide(color: _accent, width: 1.4),
       ),
     );
   }

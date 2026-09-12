@@ -192,7 +192,7 @@ class _AreaMasterList extends StatelessWidget {
                 ),
                 child: Text(
                   '${areas.length}',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                     color: AppColors.accentStrong,
@@ -311,7 +311,7 @@ class _DesktopAreaRowState extends State<_DesktopAreaRow> {
                       color: AppColors.accentTint,
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.place_outlined,
                       size: 17,
                       color: AppColors.accent,
