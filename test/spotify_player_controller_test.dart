@@ -72,12 +72,31 @@ class _FakeSpotifyApi extends ApiClient {
   };
 
   /// SSE stand-in: the controller subscribes through [events] and tests push
-  /// payloads with [emitEvent]. Never closes on its own, so no resubscribe
+  /// frames with [emitEvent]. Never closes on its own, so no resubscribe
   /// timers fire in tests.
   final eventsController = StreamController<Map<String, dynamic>>.broadcast();
 
-  void emitEvent(String name, Map<String, dynamic> data) =>
-      eventsController.add({'event': name, 'data': data});
+  int _nextEventId = 0;
+
+  /// Pushes the REAL production frame shape: [ApiClient.events] yields
+  /// `{'event': <name>, 'data': <envelope>}`, where the decoded bus envelope
+  /// is `{id, event, data, timestamp}` and the actual payload sits one level
+  /// deeper.
+  void emitEvent(String name, Map<String, dynamic> data) {
+    _nextEventId++;
+    emitEnvelope({
+      'id': _nextEventId,
+      'event': name,
+      'data': data,
+      'timestamp': _nextEventId,
+    });
+  }
+
+  /// Pushes a raw bus envelope as the stream frame; the regression tests use
+  /// it to pin the production nesting explicitly.
+  void emitEnvelope(Map<String, dynamic> envelope) {
+    eventsController.add({'event': envelope['event'], 'data': envelope});
+  }
 
   Future<void> close() => eventsController.close();
 
@@ -706,19 +725,60 @@ void main() {
     await api.close();
   });
 
+  test(
+    'un frame con envelope actualiza track e isPlaying de inmediato',
+    () async {
+      final api = _FakeSpotifyApi();
+      final controller = SpotifyPlayerController(api);
+      controller.startPolling(interval: const Duration(hours: 1));
+
+      // Raw shape yielded by ApiClient.events(): the bus envelope nests the
+      // real payload under `data`. The old handler applied the envelope
+      // itself, so `status`/`item` were absent, `isPlaying` stayed stale and
+      // the card only converged on the next fallback poll.
+      api.emitEnvelope({
+        'id': 1,
+        'event': 'spotify_state_changed',
+        'data': {
+          'status': 'playing',
+          'item': {
+            'uri': 'spotify:track:9',
+            'name': 'OJALA',
+            'artist': 'Artista',
+            'duration_ms': 180000,
+          },
+          'position': {'position_ms': 0, 'timestamp_ms': 0, 'speed': 1.0},
+        },
+        'timestamp': 1234,
+      });
+      await pumpEventQueue();
+
+      expect(controller.track?['name'], 'OJALA');
+      expect(controller.isPlaying, isTrue);
+      controller.dispose();
+      await api.close();
+    },
+  );
+
   test('spotify_queue_changed guarda previous/upcoming/limited', () async {
     final api = _FakeSpotifyApi();
     final controller = SpotifyPlayerController(api);
     controller.startPolling(interval: const Duration(hours: 1));
 
-    api.emitEvent('spotify_queue_changed', {
-      'previous': [
-        {'uri': 'spotify:track:1', 'name': 'Antes', 'artist': 'A'},
-      ],
-      'upcoming': [
-        {'uri': 'spotify:track:2', 'name': 'Después', 'artist': 'B'},
-      ],
-      'limited': true,
+    // Same production nesting as the state frame: envelope under `data`.
+    api.emitEnvelope({
+      'id': 2,
+      'event': 'spotify_queue_changed',
+      'data': {
+        'previous': [
+          {'uri': 'spotify:track:1', 'name': 'Antes', 'artist': 'A'},
+        ],
+        'upcoming': [
+          {'uri': 'spotify:track:2', 'name': 'Después', 'artist': 'B'},
+        ],
+        'limited': true,
+      },
+      'timestamp': 5678,
     });
     await pumpEventQueue();
 

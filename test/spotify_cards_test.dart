@@ -90,6 +90,28 @@ void main() {
     expect(api.commands, contains('resume'));
   });
 
+  testWidgets('wall player applies an SSE envelope immediately', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi();
+    await pumpWall(tester, api, pollInterval: const Duration(hours: 1));
+
+    expect(find.text('Tema'), findsOneWidget);
+
+    // Production frame shape: the bus envelope wraps the real payload.
+    api.emitEvent('spotify_state_changed', {
+      'status': 'playing',
+      'item': {'name': 'OJALA', 'artist': 'Artista', 'duration_ms': 180000},
+      'position': {'position_ms': 0, 'timestamp_ms': 0, 'speed': 1.0},
+    });
+    await settleSurface(tester);
+
+    expect(find.text('OJALA'), findsOneWidget);
+
+    // Dispose so the SSE ticker/subscription do not outlive the tree.
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('wall player shows progress and opens the queue sheet', (
     tester,
   ) async {
@@ -682,6 +704,23 @@ class _SpotifyCardApi extends ApiClient {
 
   @override
   Stream<Map<String, dynamic>> events() => _events.stream;
+
+  int _nextEventId = 0;
+
+  /// Pushes the REAL production frame shape: the bus envelope nests the
+  /// payload under `data`, mirroring what [ApiClient.events] yields.
+  void emitEvent(String name, Map<String, dynamic> data) {
+    _nextEventId++;
+    _events.add({
+      'event': name,
+      'data': {
+        'id': _nextEventId,
+        'event': name,
+        'data': data,
+        'timestamp': _nextEventId,
+      },
+    });
+  }
 
   @override
   Future<Map<String, dynamic>> spotifyPlaybackQueue({int limit = 20}) async => {

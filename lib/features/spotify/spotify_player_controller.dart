@@ -371,10 +371,25 @@ class SpotifyPlayerController extends ChangeNotifier {
     });
   }
 
+  /// Dispatches one stream frame.
+  ///
+  /// [ApiClient.events] yields `{'event': <name>, 'data': <decoded frame>}`,
+  /// and the core bus wraps every payload in an envelope
+  /// (`{id, event, data, timestamp}`), so the real payload lives one level
+  /// deeper. Alternate producers that emit the payload directly still work
+  /// through the fallback.
   void _onEvent(Map<String, dynamic> event) {
-    final data = event['data'];
-    if (data is! Map) return;
-    switch (event['event']) {
+    final outer = event['data'];
+    if (outer is! Map) return;
+    var name = event['event'];
+    var data = outer;
+    final innerData = outer['data'];
+    final innerName = outer['event'];
+    if (innerData is Map && innerName is String) {
+      name = innerName;
+      data = innerData;
+    }
+    switch (name) {
       case 'spotify_state_changed':
         _applyStateEvent(data.cast<String, dynamic>());
       case 'spotify_queue_changed':
