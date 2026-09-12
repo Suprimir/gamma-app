@@ -378,6 +378,8 @@ class _WallPanelHomePageState extends State<WallPanelHomePage>
       builder: (_) => _WallSleepOverlay(
         key: const ValueKey('wall-sleep-overlay'),
         onWake: _wake,
+        api: widget.api,
+        pollInterval: widget.spotifyPollInterval,
         liftPx: _sheetOwned ? _sheetLift : double.infinity,
         gesturesEnabled: !_sheetOwned,
         animateEntrance: animateEntrance,
@@ -1653,13 +1655,8 @@ class _WallMusicCardState extends State<_WallMusicCard> {
             ),
           ],
         ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [_deviceButton(), _volumeButton()],
-          ),
-        ),
+        Align(alignment: Alignment.centerLeft, child: _volumeButton()),
+        Align(alignment: Alignment.centerRight, child: _deviceButton()),
       ],
     );
   }
@@ -2661,12 +2658,20 @@ class _WallSleepOverlay extends StatefulWidget {
   const _WallSleepOverlay({
     super.key,
     required this.onWake,
+    required this.api,
+    this.pollInterval = Duration.zero,
     this.liftPx = double.infinity,
     this.gesturesEnabled = true,
     this.animateEntrance = true,
   });
 
   final VoidCallback onWake;
+
+  /// Backend client for the read-only now-playing chip shown while sleeping.
+  final ApiClient api;
+
+  /// Fallback poll interval for the now-playing chip (zero disables).
+  final Duration pollInterval;
 
   /// Interactive reveal driven by the home gesture strip: px of the sheet
   /// pulled up from the bottom edge. Infinity = fully presented.
@@ -2694,6 +2699,12 @@ class _WallSleepOverlayState extends State<_WallSleepOverlay>
   WeatherReading? _weather;
   Timer? _weatherTimer;
 
+  /// Read-only now-playing chip for the idle screen; same canonical state
+  /// as the music card (SSE + optional fallback poll).
+  late final SpotifyPlayerController _spotify = SpotifyPlayerController(
+    widget.api,
+  );
+
   /// Exit/snap-back driver for the swipe-up-to-wake gesture.
   late final AnimationController _fling = AnimationController(
     vsync: this,
@@ -2719,6 +2730,8 @@ class _WallSleepOverlayState extends State<_WallSleepOverlay>
       const Duration(minutes: 10),
       (_) => _loadWeather(),
     );
+    _spotify.refresh();
+    _spotify.startPolling(interval: widget.pollInterval);
   }
 
   void _scheduleNextMinute() {
@@ -2745,6 +2758,7 @@ class _WallSleepOverlayState extends State<_WallSleepOverlay>
     _timer?.cancel();
     _weatherTimer?.cancel();
     _weatherRepo.close();
+    _spotify.dispose();
     _fling.dispose();
     super.dispose();
   }
@@ -2753,6 +2767,85 @@ class _WallSleepOverlayState extends State<_WallSleepOverlay>
     final reading = await _weatherRepo.current();
     if (!mounted || reading == null) return;
     setState(() => _weather = reading);
+  }
+
+  /// Compact read-only now-playing chip for the idle screen, mirroring the
+  /// weather corner. Hidden when no track is loaded; state comes from the
+  /// shared canonical controller (SSE + optional fallback poll).
+  Widget _sleepNowPlaying() {
+    final track = _spotify.track;
+    if (track == null) return const SizedBox.shrink();
+    final name = track['name']?.toString() ?? '';
+    final artist = track['artist']?.toString() ?? '';
+    final imageUrl = track['image_url']?.toString();
+    final hasImage = imageUrl != null && imageUrl.isNotEmpty;
+    if (name.isEmpty && artist.isEmpty && !hasImage) {
+      return const SizedBox.shrink();
+    }
+    Widget fallback() => Container(
+      color: const Color(0xFF262B3D).withValues(alpha: 0.7),
+      child: const Icon(
+        Icons.music_note_rounded,
+        size: 24,
+        color: Colors.white54,
+      ),
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: SizedBox(
+            width: 52,
+            height: 52,
+            child: hasImage
+                ? Image.network(
+                    imageUrl,
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                    errorBuilder: (context, _, _) => fallback(),
+                  )
+                : fallback(),
+          ),
+        ),
+        const SizedBox(width: 12),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 280),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                name.isEmpty ? 'Sin título' : name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.none,
+                  color: Colors.white,
+                  shadows: [Shadow(blurRadius: 12, color: Color(0x66000000))],
+                ),
+              ),
+              if (artist.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  artist,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    decoration: TextDecoration.none,
+                    color: Colors.white70,
+                    shadows: [Shadow(blurRadius: 12, color: Color(0x66000000))],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   /// Tablet-style wake: drag the sleep screen up (the bottom pill hints it)
@@ -2907,6 +3000,16 @@ class _WallSleepOverlayState extends State<_WallSleepOverlay>
                                 ),
                               ),
                             ],
+                          ),
+                        ),
+                        // Now-playing chip: top-right mirror of the weather
+                        // block; hidden while nothing is loaded.
+                        Positioned(
+                          top: 24,
+                          right: 24,
+                          child: ListenableBuilder(
+                            listenable: _spotify,
+                            builder: (context, _) => _sleepNowPlaying(),
                           ),
                         ),
                         // Clock: horizontally centered, upper third.

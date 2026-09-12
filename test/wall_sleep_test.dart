@@ -12,7 +12,7 @@ import 'package:gamma_app/features/wall_home/wall_panel_home_page.dart';
 /// whole window including the shell side rail — visibility is asserted
 /// through presence in the tree plus fullscreen size.
 void main() {
-  Future<void> pumpSleepyWallHome(WidgetTester tester) async {
+  Future<void> pumpSleepyWallHome(WidgetTester tester, {ApiClient? api}) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -20,7 +20,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: WallPanelHomePage(
-          api: _FakeApi(),
+          api: api ?? _FakeApi(),
           repository: MockDeviceInventoryRepository(),
           idleTimeout: const Duration(seconds: 10),
         ),
@@ -99,6 +99,52 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: SizedBox()));
   });
 
+  testWidgets('sleep screen shows the now-playing track when available', (
+    WidgetTester tester,
+  ) async {
+    await pumpSleepyWallHome(tester, api: _MusicFakeApi());
+
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(isAsleep(tester), isTrue);
+
+    // Allow the controller's initial refresh to land.
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      find.descendant(
+        of: sleepOverlay(),
+        matching: find.text('Tema de prueba'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: sleepOverlay(),
+        matching: find.text('Artista de prueba'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+  });
+
+  testWidgets('sleep screen hides the chip when nothing is playing', (
+    WidgetTester tester,
+  ) async {
+    await pumpSleepyWallHome(tester);
+
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(isAsleep(tester), isTrue);
+
+    await tester.pump();
+    expect(find.text('Tema de prueba'), findsNothing);
+
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+  });
+
   testWidgets('sleep is disabled without idleTimeout', (
     WidgetTester tester,
   ) async {
@@ -160,4 +206,30 @@ void main() {
 
 class _FakeApi extends ApiClient {
   _FakeApi() : super(baseUrl: 'http://test');
+}
+
+/// Player + devices only: the sleep chip needs the canonical now-playing.
+class _MusicFakeApi extends ApiClient {
+  _MusicFakeApi() : super(baseUrl: 'http://test');
+
+  @override
+  Future<Map<String, dynamic>> spotifyPlayer() async => {
+    'has_playback': true,
+    'is_playing': true,
+    'track': {
+      'name': 'Tema de prueba',
+      'artist': 'Artista de prueba',
+      'image_url': null,
+      'duration_ms': 180000,
+    },
+    'position': {'position_ms': 0, 'timestamp_ms': 0, 'speed': 1.0},
+    'actions': <String>[],
+  };
+
+  @override
+  Future<Map<String, dynamic>> spotifyDevices() async => {
+    'devices': <Map<String, dynamic>>[],
+    'default_device_name': null,
+    'default_device_id': null,
+  };
 }
