@@ -256,7 +256,7 @@ void main() {
       ];
     await pumpWall(tester, api);
 
-    await tester.tap(find.byTooltip('Ver cola'));
+    await tester.tap(find.byKey(const ValueKey('wall-spotify-up-next')));
     await settleSurface(tester);
 
     expect(find.text('Anteriores'), findsOneWidget);

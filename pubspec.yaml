@@ -79,6 +79,7 @@ flutter:
     - assets/silero_vad_legacy.onnx
     - assets/silero_vad_v5.onnx
     - assets/images/Fondo1.jpg
+    - assets/images/spotify_icon.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

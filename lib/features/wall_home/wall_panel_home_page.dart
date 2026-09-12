@@ -19,7 +19,6 @@ import '../../ui/shared_widgets.dart';
 import '../../ui/spotify_logo.dart';
 import '../voice/vad_model.dart';
 import '../spotify/spotify_player_controller.dart';
-import '../settings/settings_page.dart';
 import 'wall_activity_bus.dart';
 import 'wall_voice_controller.dart';
 import '../devices/wall_devices_page.dart';
@@ -1320,8 +1319,6 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                 const SizedBox(height: 14),
                 _transport(),
                 _upNextLine(),
-                const SizedBox(height: 6),
-                _secondaryActions(),
                 if (_spotify.error != null) ...[
                   const SizedBox(height: 8),
                   Text(
@@ -1431,47 +1428,34 @@ class _WallMusicCardState extends State<_WallMusicCard> {
         ),
         const SizedBox(width: 16),
         Expanded(
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              const Padding(
-                padding: EdgeInsets.only(top: 3),
-                child: SpotifyLogo(size: 18),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      (name == null || name.isEmpty) ? 'Sin título' : name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
-                    ),
-                    if (subtitle.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Colors.white70,
-                        ),
-                      ),
-                    ],
-                  ],
+              Text(
+                (name == null || name.isEmpty) ? 'Sin título' : name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
                 ),
               ),
+              if (subtitle.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 14, color: Colors.white70),
+                ),
+              ],
             ],
           ),
         ),
+        const SizedBox(width: 10),
+        const SpotifyLogo(size: 18),
       ],
     );
   }
@@ -1637,31 +1621,59 @@ class _WallMusicCardState extends State<_WallMusicCard> {
     bool enabledFor(String action) =>
         gated ? _spotify.actionEnabled(action) : hasDevice;
     final playing = _spotify.isPlaying;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+    // Transport stays centered; the device and volume buttons sit flush
+    // right (respecting the card padding), replacing the old icon row.
+    return Stack(
+      alignment: Alignment.center,
+      fit: StackFit.passthrough,
       children: [
-        _transportButton(
-          icon: Icons.skip_previous_rounded,
-          tooltip: 'Anterior',
-          enabled: enabledFor('skip_prev'),
-          onPressed: _spotify.previous,
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _transportButton(
+              icon: Icons.skip_previous_rounded,
+              tooltip: 'Anterior',
+              enabled: enabledFor('skip_prev'),
+              onPressed: _spotify.previous,
+            ),
+            const SizedBox(width: 12),
+            _transportButton(
+              icon: playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+              tooltip: playing ? 'Pausar' : 'Reproducir',
+              enabled: enabledFor(playing ? 'pause' : 'play'),
+              onPressed: playing ? _spotify.pause : _spotify.play,
+              primary: true,
+            ),
+            const SizedBox(width: 12),
+            _transportButton(
+              icon: Icons.skip_next_rounded,
+              tooltip: 'Siguiente',
+              enabled: enabledFor('skip_next'),
+              onPressed: _spotify.next,
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        _transportButton(
-          icon: playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-          tooltip: playing ? 'Pausar' : 'Reproducir',
-          enabled: enabledFor(playing ? 'pause' : 'play'),
-          onPressed: playing ? _spotify.pause : _spotify.play,
-          primary: true,
-        ),
-        const SizedBox(width: 12),
-        _transportButton(
-          icon: Icons.skip_next_rounded,
-          tooltip: 'Siguiente',
-          enabled: enabledFor('skip_next'),
-          onPressed: _spotify.next,
+        Align(
+          alignment: Alignment.centerRight,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [_deviceButton(), _volumeButton()],
+          ),
         ),
       ],
+    );
+  }
+
+  Widget _volumeButton() {
+    final volume = _spotifyVolume();
+    final muted = volume != null && volume <= 0;
+    return IconButton(
+      key: const ValueKey('wall-spotify-volume'),
+      tooltip: 'Volumen',
+      onPressed: _openVolumeSheet,
+      iconSize: 28,
+      color: Colors.white,
+      icon: Icon(muted ? Icons.volume_off_rounded : Icons.volume_up_rounded),
     );
   }
 
@@ -1684,39 +1696,6 @@ class _WallMusicCardState extends State<_WallMusicCard> {
 
   /// Icon-only secondary actions: volume sheet, device sheet, queue sheet
   /// (only with a known queue) and the overflow menu.
-  Widget _secondaryActions() {
-    final volume = _spotifyVolume();
-    final muted = volume != null && volume <= 0;
-    final hasQueue =
-        _spotify.upcomingQueue.isNotEmpty || _spotify.previousQueue.isNotEmpty;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        IconButton(
-          key: const ValueKey('wall-spotify-volume'),
-          tooltip: 'Volumen',
-          onPressed: _openVolumeSheet,
-          iconSize: 28,
-          color: Colors.white,
-          icon: Icon(
-            muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-          ),
-        ),
-        _deviceButton(),
-        if (hasQueue)
-          IconButton(
-            key: const ValueKey('wall-spotify-queue'),
-            tooltip: 'Ver cola',
-            onPressed: _openQueueSheet,
-            iconSize: 28,
-            color: Colors.white,
-            icon: const Icon(Icons.playlist_play_rounded),
-          ),
-        _overflowMenu(),
-      ],
-    );
-  }
-
   Widget _deviceButton() {
     final name = _spotify.activeDevice?['name']?.toString();
     final empty = name == null || name.isEmpty;
@@ -1846,29 +1825,6 @@ class _WallMusicCardState extends State<_WallMusicCard> {
   }
 
   /// Overflow menu on the wall: full settings page for the Spotify account.
-  Widget _overflowMenu() {
-    return PopupMenuButton<String>(
-      key: const ValueKey('wall-spotify-overflow'),
-      tooltip: 'Más opciones',
-      icon: const Icon(Icons.more_vert_rounded, color: Colors.white, size: 28),
-      onSelected: (value) {
-        if (value == 'settings') _openSpotifySettings();
-      },
-      itemBuilder: (context) => const [
-        PopupMenuItem(
-          value: 'settings',
-          child: Text('Abrir ajustes de Spotify'),
-        ),
-      ],
-    );
-  }
-
-  void _openSpotifySettings() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => SettingsPage(api: widget.api)),
-    );
-  }
-
   /// Touch-sized device picker: every target is a full-width 56px row and
   /// "Automático" clears the explicit pick (the backend resolves it).
   Future<void> _pickDevice() async {
