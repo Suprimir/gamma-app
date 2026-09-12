@@ -1360,4 +1360,162 @@ void main() {
       },
     );
   });
+
+  group('core settings', () {
+    test('configOverview() hace GET del agregado redactado', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+
+      server.listen((request) async {
+        expect(request.method, 'GET');
+        expect(request.uri.path, '/api/v1/settings');
+        request.response.write(
+          '{"spotify":{"client_id":{"value":"abc","source":"env"}},'
+          '"news":{"api_key":{"configured":true,"source":"store",'
+          '"last4":"0e2f"}}}',
+        );
+        await request.response.close();
+      });
+
+      final overview = await client.configOverview();
+
+      expect((overview['spotify'] as Map)['client_id']['source'], 'env');
+      expect((overview['news'] as Map)['api_key']['last4'], '0e2f');
+      await server.close(force: true);
+    });
+
+    test('los GET por sección usan su path', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+      final paths = <String>[];
+
+      server.listen((request) async {
+        expect(request.method, 'GET');
+        paths.add(request.uri.path);
+        request.response.write('{"ok":true}');
+        await request.response.close();
+      });
+
+      await client.spotifyConfig();
+      await client.newsConfig();
+      await client.llmConfig();
+      await client.camerasConfig();
+
+      expect(paths, [
+        '/api/v1/settings/spotify',
+        '/api/v1/settings/news',
+        '/api/v1/settings/llm',
+        '/api/v1/settings/cameras',
+      ]);
+      await server.close(force: true);
+    });
+
+    test('updateSpotifyConfig() envía solo los campos no nulos', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+      final bodies = <String>[];
+
+      server.listen((request) async {
+        expect(request.method, 'PUT');
+        expect(request.uri.path, '/api/v1/settings/spotify');
+        bodies.add(await utf8.decoder.bind(request).join());
+        request.response.write(
+          '{"client_id":{"value":"nuevo","source":"store"},'
+          '"applies":"hot","reconnect_required":true,"message":"ok"}',
+        );
+        await request.response.close();
+      });
+
+      final result = await client.updateSpotifyConfig(
+        clientId: 'nuevo',
+        clientSecret: 'secreto',
+      );
+      await client.updateSpotifyConfig(deviceName: 'GAMMA');
+
+      expect(jsonDecode(bodies[0]), {
+        'client_id': 'nuevo',
+        'client_secret': 'secreto',
+      });
+      expect(jsonDecode(bodies[1]), {'device_name': 'GAMMA'});
+      expect(result['reconnect_required'], true);
+      expect(result['message'], 'ok');
+      await server.close(force: true);
+    });
+
+    test('news y llm usan PUT con su body exacto', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+      final calls = <String>[];
+      final bodies = <String>[];
+
+      server.listen((request) async {
+        calls.add('${request.method} ${request.uri.path}');
+        bodies.add(await utf8.decoder.bind(request).join());
+        request.response.write('{"applies":"hot","message":"ok"}');
+        await request.response.close();
+      });
+
+      await client.updateNewsConfig('news-key');
+      await client.updateLlmConfig('gemini-key');
+
+      expect(calls, ['PUT /api/v1/settings/news', 'PUT /api/v1/settings/llm']);
+      expect(jsonDecode(bodies[0]), {'api_key': 'news-key'});
+      expect(jsonDecode(bodies[1]), {'gemini_api_key': 'gemini-key'});
+      await server.close(force: true);
+    });
+
+    test(
+      'updateCamerasConfig() envía el puerto int y omite los nulos',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+        final bodies = <String>[];
+
+        server.listen((request) async {
+          expect(request.method, 'PUT');
+          expect(request.uri.path, '/api/v1/settings/cameras');
+          bodies.add(await utf8.decoder.bind(request).join());
+          request.response.write(
+            '{"applies":"restart_required","message":"ok"}',
+          );
+          await request.response.close();
+        });
+
+        await client.updateCamerasConfig(nvrHost: '10.0.0.5', nvrPort: 8080);
+        await client.updateCamerasConfig(nvrPass: 'secreto');
+
+        expect(jsonDecode(bodies[0]), {
+          'nvr_host': '10.0.0.5',
+          'nvr_port': 8080,
+        });
+        expect(jsonDecode(bodies[1]), {'nvr_pass': 'secreto'});
+        await server.close(force: true);
+      },
+    );
+
+    test('un 422 de settings se propaga con el detail del backend', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+
+      server.listen((request) async {
+        request.response.statusCode = 422;
+        request.response.write('{"detail":"API key inválida."}');
+        await request.response.close();
+      });
+
+      await expectLater(
+        client.updateNewsConfig('mala'),
+        throwsA(
+          isA<ApiException>()
+              .having((e) => e.statusCode, 'statusCode', 422)
+              .having(
+                (e) => (e.body as Map)['detail'],
+                'detail',
+                'API key inválida.',
+              ),
+        ),
+      );
+      await server.close(force: true);
+    });
+  });
 }

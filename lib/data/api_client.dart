@@ -621,6 +621,74 @@ class ApiClient {
     return _decode(resp);
   }
 
+  // --- Configuración del núcleo (/api/v1/settings) -------------------------
+
+  /// Aggregated redacted settings view. Secrets are never returned: entries
+  /// expose `configured`/`source`/`last4` only.
+  Future<Map<String, dynamic>> configOverview() => _get('/api/v1/settings');
+
+  Future<Map<String, dynamic>> spotifyConfig() =>
+      _get('/api/v1/settings/spotify');
+
+  /// Partial Spotify update: only non-null fields are written. Secrets are
+  /// never echoed back — an omitted secret keeps the stored one.
+  Future<Map<String, dynamic>> updateSpotifyConfig({
+    String? clientId,
+    String? clientSecret,
+    String? deviceName,
+    String? market,
+  }) => _putJson('/api/v1/settings/spotify', {
+    'client_id': ?clientId,
+    'client_secret': ?clientSecret,
+    'device_name': ?deviceName,
+    'market': ?market,
+  });
+
+  Future<Map<String, dynamic>> newsConfig() => _get('/api/v1/settings/news');
+
+  /// Validates the key against the news provider; invalid keys answer 422 with
+  /// a Spanish `detail`.
+  Future<Map<String, dynamic>> updateNewsConfig(String apiKey) =>
+      _putJson('/api/v1/settings/news', {'api_key': apiKey});
+
+  Future<Map<String, dynamic>> llmConfig() => _get('/api/v1/settings/llm');
+
+  /// The new key applies after restarting the core (`applies`/`message` in the
+  /// response).
+  Future<Map<String, dynamic>> updateLlmConfig(String apiKey) =>
+      _putJson('/api/v1/settings/llm', {'gemini_api_key': apiKey});
+
+  Future<Map<String, dynamic>> camerasConfig() =>
+      _get('/api/v1/settings/cameras');
+
+  /// Partial cameras/NVR update: only non-null fields are written. The
+  /// password is write-only; an omitted value keeps the stored one.
+  Future<Map<String, dynamic>> updateCamerasConfig({
+    String? nvrHost,
+    int? nvrPort,
+    String? nvrIsapiPath,
+    String? nvrUser,
+    String? nvrPass,
+  }) => _putJson('/api/v1/settings/cameras', {
+    'nvr_host': ?nvrHost,
+    'nvr_port': ?nvrPort,
+    'nvr_isapi_path': ?nvrIsapiPath,
+    'nvr_user': ?nvrUser,
+    'nvr_pass': ?nvrPass,
+  });
+
+  Future<Map<String, dynamic>> _putJson(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    final resp = await _client.put(
+      Uri.parse('$baseUrl$path'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+    return _decode(resp);
+  }
+
   Future<Map<String, dynamic>> activateVoice() async {
     final resp = await _client.post(
       Uri.parse('$baseUrl/api/v1/voice/activate'),

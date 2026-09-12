@@ -52,6 +52,40 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _systemError;
   bool _systemLoading = true;
 
+  // Configuración del núcleo (settings API, redacted view)
+  Map<String, dynamic>? _configOverview;
+  String? _configError;
+  bool _configLoading = true;
+
+  final _spotifyClientIdCtrl = TextEditingController();
+  final _spotifyClientSecretCtrl = TextEditingController();
+  final _spotifyDeviceNameCtrl = TextEditingController();
+  final _spotifyMarketCtrl = TextEditingController();
+  final _newsApiKeyCtrl = TextEditingController();
+  final _llmApiKeyCtrl = TextEditingController();
+  final _nvrHostCtrl = TextEditingController();
+  final _nvrPortCtrl = TextEditingController();
+  final _nvrIsapiPathCtrl = TextEditingController();
+  final _nvrUserCtrl = TextEditingController();
+  final _nvrPassCtrl = TextEditingController();
+
+  bool _savingSpotifyConfig = false;
+  String _spotifyConfigStatus = '';
+  bool _spotifyConfigStatusOk = true;
+  bool _spotifyReconnectRequired = false;
+
+  bool _savingNewsConfig = false;
+  String _newsConfigStatus = '';
+  bool _newsConfigStatusOk = true;
+
+  bool _savingLlmConfig = false;
+  String _llmConfigStatus = '';
+  bool _llmConfigStatusOk = true;
+
+  bool _savingCamerasConfig = false;
+  String _camerasConfigStatus = '';
+  bool _camerasConfigStatusOk = true;
+
   // Spotify
   Map<String, dynamic>? _spotifySettings;
   bool _connecting = false;
@@ -95,6 +129,17 @@ class _SettingsPageState extends State<SettingsPage> {
     _oauthPoll?.cancel();
     if (_ownsSurfaceModeController) _surfaceModeController.dispose();
     if (_ownsTtsPlayer) _ttsPlayer.dispose();
+    _spotifyClientIdCtrl.dispose();
+    _spotifyClientSecretCtrl.dispose();
+    _spotifyDeviceNameCtrl.dispose();
+    _spotifyMarketCtrl.dispose();
+    _newsApiKeyCtrl.dispose();
+    _llmApiKeyCtrl.dispose();
+    _nvrHostCtrl.dispose();
+    _nvrPortCtrl.dispose();
+    _nvrIsapiPathCtrl.dispose();
+    _nvrUserCtrl.dispose();
+    _nvrPassCtrl.dispose();
     super.dispose();
   }
 
@@ -105,10 +150,13 @@ class _SettingsPageState extends State<SettingsPage> {
         _error = null;
         _systemLoading = true;
         _systemError = null;
+        _configLoading = true;
+        _configError = null;
       });
     }
-    // Runs independently: a health failure must never blank the whole page.
+    // Run independently: a health/config failure must never blank the page.
     final system = _loadSystem();
+    final config = _loadConfig();
     try {
       final results = await Future.wait([
         widget.api.ttsSettings(),
@@ -142,6 +190,7 @@ class _SettingsPageState extends State<SettingsPage> {
       });
     }
     await system;
+    await config;
   }
 
   /// Reads `/api/v1/health` for the compact Sistema card. Never throws: the
@@ -170,6 +219,290 @@ class _SettingsPageState extends State<SettingsPage> {
       _systemError = null;
     });
     _loadSystem();
+  }
+
+  // --- Configuración del núcleo (settings API) -----------------------------
+
+  /// Reads the aggregated redacted settings view once. Never throws: every
+  /// config card owns its loading/error state, so a failure here never blanks
+  /// the page (same contract as [_loadSystem]).
+  Future<void> _loadConfig() async {
+    try {
+      final overview = await widget.api.configOverview();
+      if (!mounted) return;
+      // Assign before hydrating: the field lookups read `_configOverview`.
+      _configOverview = overview;
+      _hydrateConfigFields(overview);
+      setState(() {
+        _configError = null;
+        _configLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _configError = _errorDetail(e);
+        _configLoading = false;
+      });
+    }
+  }
+
+  void _retryConfig() {
+    setState(() {
+      _configLoading = true;
+      _configError = null;
+    });
+    _loadConfig();
+  }
+
+  Map<String, dynamic>? _configSection(String name) {
+    final raw = _configOverview?[name];
+    return raw is Map ? raw.cast<String, dynamic>() : null;
+  }
+
+  /// Field entry map (`value`/`source`, or `configured`/`last4`) for [key].
+  Map<String, dynamic>? _configEntry(String section, String key) {
+    final raw = _configSection(section)?[key];
+    return raw is Map ? raw.cast<String, dynamic>() : null;
+  }
+
+  String? _configValue(String section, String key) =>
+      _configEntry(section, key)?['value']?.toString();
+
+  /// Redacted-view source hint; `env` values stay editable (saving moves them
+  /// into the store).
+  String? _configSourceHint(String section, String key) {
+    final source = _configEntry(section, key)?['source']?.toString();
+    return switch (source) {
+      'env' => 'definido en .env',
+      'store' => 'Guardado en la app',
+      _ => null,
+    };
+  }
+
+  /// Secret helper. Secret values never reach the client: only
+  /// configured/source/last4 are rendered.
+  String? _secretHint(String section, String key) {
+    final entry = _configEntry(section, key);
+    if (entry == null) return null;
+    if (entry['configured'] != true) return 'Sin configurar';
+    final last4 = entry['last4'];
+    return last4 == null || last4.toString().isEmpty
+        ? 'Configurado'
+        : 'Configurado · últimos 4: $last4';
+  }
+
+  /// Fills the form fields from the redacted view. Secret inputs always start
+  /// empty: blank means "keep the stored value".
+  void _hydrateConfigFields(Map<String, dynamic> overview) {
+    _spotifyClientIdCtrl.text = _configValue('spotify', 'client_id') ?? '';
+    _spotifyDeviceNameCtrl.text = _configValue('spotify', 'device_name') ?? '';
+    _spotifyMarketCtrl.text = _configValue('spotify', 'market') ?? '';
+    _spotifyClientSecretCtrl.clear();
+
+    _newsApiKeyCtrl.clear();
+    _llmApiKeyCtrl.clear();
+
+    _nvrHostCtrl.text = _configValue('cameras', 'nvr_host') ?? '';
+    _nvrPortCtrl.text = _configValue('cameras', 'nvr_port') ?? '';
+    _nvrIsapiPathCtrl.text = _configValue('cameras', 'nvr_isapi_path') ?? '';
+    _nvrUserCtrl.text = _configValue('cameras', 'nvr_user') ?? '';
+    _nvrPassCtrl.clear();
+  }
+
+  /// True when [controller] holds a new, non-empty value. Blank never counts
+  /// as a change (no clear/delete flows in this slice).
+  bool _isNewValue(TextEditingController controller, String? current) {
+    final text = controller.text.trim();
+    return text.isNotEmpty && text != current;
+  }
+
+  void _showSavedMessage(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  String _successMessage(Map<String, dynamic> response, String fallback) {
+    final message = response['message']?.toString();
+    return message == null || message.isEmpty ? fallback : message;
+  }
+
+  Future<void> _saveSpotifyConfig() async {
+    if (_savingSpotifyConfig) return;
+    final currentId = _configValue('spotify', 'client_id');
+    final currentDevice = _configValue('spotify', 'device_name');
+    final currentMarket = _configValue('spotify', 'market');
+    final clientId = _spotifyClientIdCtrl.text.trim();
+    final clientSecret = _spotifyClientSecretCtrl.text;
+    final deviceName = _spotifyDeviceNameCtrl.text.trim();
+    final market = _spotifyMarketCtrl.text.trim();
+    final sendsClientId = _isNewValue(_spotifyClientIdCtrl, currentId);
+    final sendsDeviceName = _isNewValue(_spotifyDeviceNameCtrl, currentDevice);
+    final sendsMarket = _isNewValue(_spotifyMarketCtrl, currentMarket);
+    if (!sendsClientId &&
+        clientSecret.isEmpty &&
+        !sendsDeviceName &&
+        !sendsMarket) {
+      setState(() {
+        _spotifyConfigStatus = 'No hay cambios para guardar.';
+        _spotifyConfigStatusOk = true;
+      });
+      return;
+    }
+    setState(() {
+      _savingSpotifyConfig = true;
+      _spotifyConfigStatus = '';
+      _spotifyReconnectRequired = false;
+    });
+    try {
+      final response = await widget.api.updateSpotifyConfig(
+        clientId: sendsClientId ? clientId : null,
+        clientSecret: clientSecret.isEmpty ? null : clientSecret,
+        deviceName: sendsDeviceName ? deviceName : null,
+        market: sendsMarket ? market : null,
+      );
+      if (!mounted) return;
+      setState(() {
+        _savingSpotifyConfig = false;
+        _spotifyReconnectRequired = response['reconnect_required'] == true;
+      });
+      _showSavedMessage(
+        _successMessage(response, 'Configuración de Spotify guardada.'),
+      );
+      await _loadConfig();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _savingSpotifyConfig = false;
+        _spotifyConfigStatus = _errorDetail(e);
+        _spotifyConfigStatusOk = false;
+      });
+    }
+  }
+
+  Future<void> _saveNewsConfig() async {
+    if (_savingNewsConfig) return;
+    final apiKey = _newsApiKeyCtrl.text.trim();
+    if (apiKey.isEmpty) {
+      setState(() {
+        _newsConfigStatus = 'Ingresá una API key para guardar.';
+        _newsConfigStatusOk = false;
+      });
+      return;
+    }
+    setState(() {
+      _savingNewsConfig = true;
+      _newsConfigStatus = '';
+    });
+    try {
+      final response = await widget.api.updateNewsConfig(apiKey);
+      if (!mounted) return;
+      setState(() => _savingNewsConfig = false);
+      _showSavedMessage(
+        _successMessage(response, 'API key de noticias guardada.'),
+      );
+      await _loadConfig();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _savingNewsConfig = false;
+        _newsConfigStatus = _errorDetail(e);
+        _newsConfigStatusOk = false;
+      });
+    }
+  }
+
+  Future<void> _saveLlmConfig() async {
+    if (_savingLlmConfig) return;
+    final apiKey = _llmApiKeyCtrl.text.trim();
+    if (apiKey.isEmpty) {
+      setState(() {
+        _llmConfigStatus = 'Ingresá una API key para guardar.';
+        _llmConfigStatusOk = false;
+      });
+      return;
+    }
+    setState(() {
+      _savingLlmConfig = true;
+      _llmConfigStatus = '';
+    });
+    try {
+      final response = await widget.api.updateLlmConfig(apiKey);
+      if (!mounted) return;
+      setState(() => _savingLlmConfig = false);
+      _showSavedMessage(
+        _successMessage(response, 'Se aplicará al reiniciar el núcleo'),
+      );
+      await _loadConfig();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _savingLlmConfig = false;
+        _llmConfigStatus = _errorDetail(e);
+        _llmConfigStatusOk = false;
+      });
+    }
+  }
+
+  Future<void> _saveCamerasConfig() async {
+    if (_savingCamerasConfig) return;
+    final currentHost = _configValue('cameras', 'nvr_host');
+    final currentPort = _configValue('cameras', 'nvr_port');
+    final currentPath = _configValue('cameras', 'nvr_isapi_path');
+    final currentUser = _configValue('cameras', 'nvr_user');
+    final host = _nvrHostCtrl.text.trim();
+    final portText = _nvrPortCtrl.text.trim();
+    final path = _nvrIsapiPathCtrl.text.trim();
+    final user = _nvrUserCtrl.text.trim();
+    final pass = _nvrPassCtrl.text;
+    int? port;
+    if (portText.isNotEmpty) {
+      port = int.tryParse(portText);
+      if (port == null) {
+        setState(() {
+          _camerasConfigStatus = 'El puerto debe ser un número.';
+          _camerasConfigStatusOk = false;
+        });
+        return;
+      }
+    }
+    final sendsHost = _isNewValue(_nvrHostCtrl, currentHost);
+    final sendsPort = portText.isNotEmpty && portText != currentPort;
+    final sendsPath = _isNewValue(_nvrIsapiPathCtrl, currentPath);
+    final sendsUser = _isNewValue(_nvrUserCtrl, currentUser);
+    if (!sendsHost && !sendsPort && !sendsPath && !sendsUser && pass.isEmpty) {
+      setState(() {
+        _camerasConfigStatus = 'No hay cambios para guardar.';
+        _camerasConfigStatusOk = true;
+      });
+      return;
+    }
+    setState(() {
+      _savingCamerasConfig = true;
+      _camerasConfigStatus = '';
+    });
+    try {
+      final response = await widget.api.updateCamerasConfig(
+        nvrHost: sendsHost ? host : null,
+        nvrPort: sendsPort ? port : null,
+        nvrIsapiPath: sendsPath ? path : null,
+        nvrUser: sendsUser ? user : null,
+        nvrPass: pass.isEmpty ? null : pass,
+      );
+      if (!mounted) return;
+      setState(() => _savingCamerasConfig = false);
+      _showSavedMessage(
+        _successMessage(response, 'Configuración de cámaras guardada.'),
+      );
+      await _loadConfig();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _savingCamerasConfig = false;
+        _camerasConfigStatus = _errorDetail(e);
+        _camerasConfigStatusOk = false;
+      });
+    }
   }
 
   // --- Voz del asistente ---------------------------------------------------
@@ -486,6 +819,14 @@ class _SettingsPageState extends State<SettingsPage> {
                   _modulesCard(),
                   const SizedBox(height: 14),
                   _systemCard(),
+                  const SizedBox(height: 14),
+                  _spotifyConfigCard(),
+                  const SizedBox(height: 14),
+                  _newsConfigCard(),
+                  const SizedBox(height: 14),
+                  _llmConfigCard(),
+                  const SizedBox(height: 14),
+                  _camerasConfigCard(),
                 ],
               ),
             ),
@@ -717,6 +1058,326 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
         ],
       ),
+    );
+  }
+
+  // --- Tarjetas de configuración del núcleo --------------------------------
+
+  /// Wraps a config card body with the shared loading / failure isolation:
+  /// a failed aggregated read (or a missing section) never blanks the page.
+  Widget _configCardBody(
+    String sectionName,
+    Widget Function(Map<String, dynamic> section) builder,
+  ) {
+    if (_configLoading) {
+      return const Row(
+        children: [
+          SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          SizedBox(width: 10),
+          Text(
+            'Leyendo configuración…',
+            style: TextStyle(fontSize: 13, color: AppColors.textDim),
+          ),
+        ],
+      );
+    }
+    if (_configError != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'No se pudo leer la configuración del núcleo.',
+            style: TextStyle(fontSize: 13, color: AppColors.red),
+          ),
+          const SizedBox(height: 4),
+          TextButton.icon(
+            onPressed: _retryConfig,
+            icon: const Icon(Icons.refresh, size: 18),
+            label: const Text('Reintentar'),
+          ),
+        ],
+      );
+    }
+    final section = _configSection(sectionName);
+    if (section == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Esta sección no está disponible.',
+            style: TextStyle(fontSize: 13, color: AppColors.textDim),
+          ),
+          const SizedBox(height: 4),
+          TextButton.icon(
+            onPressed: _retryConfig,
+            icon: const Icon(Icons.refresh, size: 18),
+            label: const Text('Reintentar'),
+          ),
+        ],
+      );
+    }
+    return builder(section);
+  }
+
+  Widget _configField({
+    required Key key,
+    required String label,
+    required TextEditingController controller,
+    String? helper,
+    bool obscure = false,
+    TextInputType? keyboardType,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(
+        key: key,
+        controller: controller,
+        obscureText: obscure,
+        keyboardType: keyboardType,
+        decoration: InputDecoration(
+          labelText: label,
+          helperText: helper,
+          helperMaxLines: 2,
+          filled: true,
+          fillColor: AppColors.surfaceRaised,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 16,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: AppColors.border),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: AppColors.accent, width: 1.4),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _configSaveRow({
+    required Key key,
+    required bool saving,
+    required VoidCallback onSave,
+  }) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        ToolButton(
+          key: key,
+          icon: CupertinoIcons.checkmark,
+          label: saving ? 'Guardando…' : 'Guardar',
+          filled: true,
+          onTap: () {
+            if (!saving) onSave();
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _configStatusText(String status, bool ok) {
+    if (status.isEmpty) return const SizedBox.shrink();
+    return Text(
+      status,
+      style: TextStyle(
+        fontSize: 13,
+        height: 1.4,
+        color: ok ? AppColors.green : AppColors.red,
+      ),
+    );
+  }
+
+  Widget _spotifyReconnectWarning() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+        decoration: BoxDecoration(
+          color: AppColors.amber.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.amber.withValues(alpha: 0.4)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Reconectá tu cuenta para usar las credenciales nuevas',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 2),
+            TextButton.icon(
+              key: const ValueKey('spotify-reconnect'),
+              onPressed: _connecting ? null : _connectSpotify,
+              icon: const Icon(CupertinoIcons.arrow_2_circlepath, size: 18),
+              label: const Text('Reconectar con Spotify'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _spotifyConfigCard() {
+    return _settingsCard(
+      icon: CupertinoIcons.lock,
+      title: 'Configuración de Spotify',
+      child: _configCardBody('spotify', (section) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _configField(
+              key: const ValueKey('config-spotify-client-id'),
+              label: 'Client ID',
+              controller: _spotifyClientIdCtrl,
+              helper: _configSourceHint('spotify', 'client_id'),
+            ),
+            _configField(
+              key: const ValueKey('config-spotify-client-secret'),
+              label: 'Client Secret',
+              controller: _spotifyClientSecretCtrl,
+              helper: _secretHint('spotify', 'client_secret'),
+              obscure: true,
+            ),
+            _configField(
+              key: const ValueKey('config-spotify-device-name'),
+              label: 'Dispositivo',
+              controller: _spotifyDeviceNameCtrl,
+              helper: _configSourceHint('spotify', 'device_name'),
+            ),
+            _configField(
+              key: const ValueKey('config-spotify-market'),
+              label: 'Mercado',
+              controller: _spotifyMarketCtrl,
+              helper: _configSourceHint('spotify', 'market'),
+            ),
+            if (_spotifyReconnectRequired) _spotifyReconnectWarning(),
+            _configSaveRow(
+              key: const ValueKey('config-spotify-save'),
+              saving: _savingSpotifyConfig,
+              onSave: _saveSpotifyConfig,
+            ),
+            const SizedBox(height: 4),
+            _configStatusText(_spotifyConfigStatus, _spotifyConfigStatusOk),
+          ],
+        );
+      }),
+    );
+  }
+
+  Widget _newsConfigCard() {
+    return _settingsCard(
+      icon: CupertinoIcons.news,
+      title: 'Noticias',
+      child: _configCardBody('news', (section) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _configField(
+              key: const ValueKey('config-news-api-key'),
+              label: 'API key',
+              controller: _newsApiKeyCtrl,
+              helper: _secretHint('news', 'api_key'),
+              obscure: true,
+            ),
+            _configSaveRow(
+              key: const ValueKey('config-news-save'),
+              saving: _savingNewsConfig,
+              onSave: _saveNewsConfig,
+            ),
+            const SizedBox(height: 4),
+            _configStatusText(_newsConfigStatus, _newsConfigStatusOk),
+          ],
+        );
+      }),
+    );
+  }
+
+  Widget _llmConfigCard() {
+    return _settingsCard(
+      icon: CupertinoIcons.lightbulb,
+      title: 'Inteligencia artificial',
+      child: _configCardBody('llm', (section) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _configField(
+              key: const ValueKey('config-llm-api-key'),
+              label: 'Gemini API key',
+              controller: _llmApiKeyCtrl,
+              helper: _secretHint('llm', 'gemini_api_key'),
+              obscure: true,
+            ),
+            _configSaveRow(
+              key: const ValueKey('config-llm-save'),
+              saving: _savingLlmConfig,
+              onSave: _saveLlmConfig,
+            ),
+            const SizedBox(height: 4),
+            _configStatusText(_llmConfigStatus, _llmConfigStatusOk),
+          ],
+        );
+      }),
+    );
+  }
+
+  Widget _camerasConfigCard() {
+    return _settingsCard(
+      icon: CupertinoIcons.videocam,
+      title: 'Cámaras',
+      child: _configCardBody('cameras', (section) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _configField(
+              key: const ValueKey('config-cameras-host'),
+              label: 'Host del NVR',
+              controller: _nvrHostCtrl,
+              helper: _configSourceHint('cameras', 'nvr_host'),
+            ),
+            _configField(
+              key: const ValueKey('config-cameras-port'),
+              label: 'Puerto',
+              controller: _nvrPortCtrl,
+              helper: _configSourceHint('cameras', 'nvr_port'),
+              keyboardType: TextInputType.number,
+            ),
+            _configField(
+              key: const ValueKey('config-cameras-isapi-path'),
+              label: 'Ruta ISAPI',
+              controller: _nvrIsapiPathCtrl,
+              helper: _configSourceHint('cameras', 'nvr_isapi_path'),
+            ),
+            _configField(
+              key: const ValueKey('config-cameras-user'),
+              label: 'Usuario',
+              controller: _nvrUserCtrl,
+              helper: _configSourceHint('cameras', 'nvr_user'),
+            ),
+            _configField(
+              key: const ValueKey('config-cameras-pass'),
+              label: 'Contraseña',
+              controller: _nvrPassCtrl,
+              helper: _secretHint('cameras', 'nvr_pass'),
+              obscure: true,
+            ),
+            _configSaveRow(
+              key: const ValueKey('config-cameras-save'),
+              saving: _savingCamerasConfig,
+              onSave: _saveCamerasConfig,
+            ),
+            const SizedBox(height: 4),
+            _configStatusText(_camerasConfigStatus, _camerasConfigStatusOk),
+          ],
+        );
+      }),
     );
   }
 
