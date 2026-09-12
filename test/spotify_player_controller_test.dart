@@ -64,6 +64,10 @@ class _FakeSpotifyApi extends ApiClient {
   /// the optimistic preview while the seek request is in flight.
   Completer<Map<String, dynamic>>? seekCompleter;
 
+  /// When set, [spotifyTransfer] awaits this before answering: used to hold
+  /// the optimistic device switch while the request is in flight.
+  Completer<Map<String, dynamic>>? transferCompleter;
+
   /// Queue listing returned by [spotifyPlaybackQueue].
   Map<String, dynamic> queue = {
     'previous': [],
@@ -183,8 +187,11 @@ class _FakeSpotifyApi extends ApiClient {
   }
 
   @override
-  Future<Map<String, dynamic>> spotifyTransfer(String deviceId) async =>
-      _command('transfer', deviceId);
+  Future<Map<String, dynamic>> spotifyTransfer(String deviceId) async {
+    final held = transferCompleter;
+    if (held != null) await held.future;
+    return _command('transfer', deviceId);
+  }
 
   @override
   Future<Map<String, dynamic>> spotifyShuffle(
@@ -587,11 +594,13 @@ void main() {
       expect(api.commands, ['transfer']);
       expect(api.commandDeviceIds, ['dev_2']);
       // The player response still reports dev_1 (the fake does not mutate):
-      // activeDevice stays canonical and never fabricates the transfer.
-      expect(controller.activeDevice?['id'], 'dev_1');
+      // the optimistic override keeps showing the picked device until the
+      // backend catches up (bounded by the pending-device timeout).
+      expect(controller.activeDevice?['id'], 'dev_2');
 
       controller.selectDevice(null);
       expect(controller.selectedDeviceId, isNull);
+      // Automático drops the optimistic pick: canonical state decides again.
       expect(controller.activeDevice?['id'], 'dev_1');
       controller.dispose();
     },
@@ -1020,6 +1029,177 @@ void main() {
       expect(controller.activeDevice?['id'], 'dev_2');
       expect(controller.targetSupportsVolume, isFalse);
 
+      controller.dispose();
+      await api.close();
+    });
+  });
+
+  group('optimistic device switch', () {
+    test(
+      'transferTo shows the picked device until canonical state confirms',
+      () async {
+        final api = _FakeSpotifyApi();
+        api.transferCompleter = Completer<Map<String, dynamic>>();
+        final controller = SpotifyPlayerController(api);
+        await controller.refresh();
+        expect(controller.activeDevice?['id'], 'dev_1');
+
+        final transfer = controller.transferTo('dev_2');
+        // The picked listing entry wins immediately, before the API resolves.
+        expect(controller.activeDevice?['id'], 'dev_2');
+        expect(controller.activeDevice?['name'], 'Cocina');
+        expect(controller.selectedDeviceId, 'dev_2');
+
+        // A refresh still reading the old device keeps the override.
+        await controller.refresh();
+        expect(controller.activeDevice?['id'], 'dev_2');
+
+        // The backend catches up: the override is settled by canonical state.
+        api.player = {
+          ...api.player,
+          'device': {'id': 'dev_2', 'name': 'Cocina', 'volume_percent': 30},
+        };
+        api.transferCompleter!.complete({'ok': true});
+        await transfer;
+        expect(controller.activeDevice?['id'], 'dev_2');
+
+        // Prove the override is gone: canonical state back to dev_1 wins.
+        api.player = {
+          ...api.player,
+          'device': {'id': 'dev_1', 'name': 'Parlante', 'volume_percent': 70},
+        };
+        await controller.refresh();
+        expect(controller.activeDevice?['id'], 'dev_1');
+
+        controller.dispose();
+        await api.close();
+      },
+    );
+
+    test('a failed transfer clears the optimistic device', () async {
+      final api = _FakeSpotifyApi()..commandError = StateError('sin conexión');
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+
+      final transfer = controller.transferTo('dev_2');
+      expect(controller.activeDevice?['id'], 'dev_2');
+      await transfer;
+
+      expect(controller.activeDevice?['id'], 'dev_1');
+      // The explicit pick itself is kept, like before this change.
+      expect(controller.selectedDeviceId, 'dev_2');
+
+      controller.dispose();
+      await api.close();
+    });
+
+    test('the optimistic device expires after the bounded window', () async {
+      var now = 1000;
+      final api = _FakeSpotifyApi();
+      api.transferCompleter = Completer<Map<String, dynamic>>();
+      final controller = SpotifyPlayerController(api, nowMs: () => now);
+      await controller.refresh();
+
+      final transfer = controller.transferTo('dev_2');
+      expect(controller.activeDevice?['id'], 'dev_2');
+
+      now += 12000;
+      expect(controller.activeDevice?['id'], 'dev_1');
+
+      api.transferCompleter!.complete({'ok': true});
+      await transfer;
+      controller.dispose();
+      await api.close();
+    });
+
+    test(
+      'an is_active event with device_name resolves the real entry',
+      () async {
+        final api = _FakeSpotifyApi();
+        api.devices = {
+          'devices': [
+            {'id': 'dev_1', 'name': 'Parlante', 'supports_volume': true},
+            {'id': 'dev_2', 'name': 'Cocina', 'supports_volume': false},
+          ],
+          'default_device_id': 'dev_1',
+        };
+        final controller = SpotifyPlayerController(api);
+        await controller.refresh();
+        expect(controller.targetSupportsVolume, isTrue);
+
+        controller.startPolling(interval: const Duration(hours: 1));
+        api.emitEvent('spotify_state_changed', {
+          'status': 'playing',
+          'is_active': true,
+          'device_name': 'Cocina',
+        });
+        await Future<void>.delayed(Duration.zero);
+
+        // Real id + capability from the listing, without an HTTP refresh.
+        expect(controller.activeDevice?['id'], 'dev_2');
+        expect(controller.activeDevice?['name'], 'Cocina');
+        expect(controller.targetSupportsVolume, isFalse);
+
+        // Case-insensitive fallback for the same listing entry.
+        api.emitEvent('spotify_state_changed', {
+          'status': 'playing',
+          'is_active': true,
+          'device_name': 'cocina',
+        });
+        await Future<void>.delayed(Duration.zero);
+        expect(controller.activeDevice?['id'], 'dev_2');
+
+        controller.dispose();
+        await api.close();
+      },
+    );
+
+    test('an unknown device_name keeps the previous device map', () async {
+      final api = _FakeSpotifyApi();
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+      expect(controller.activeDevice?['id'], 'dev_1');
+
+      controller.startPolling(interval: const Duration(hours: 1));
+      api.emitEvent('spotify_state_changed', {
+        'status': 'playing',
+        'is_active': true,
+        'device_name': 'Fantasma',
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.activeDevice?['id'], 'dev_1');
+
+      controller.dispose();
+      await api.close();
+    });
+
+    test('an event naming the pending device clears the override', () async {
+      final api = _FakeSpotifyApi();
+      api.transferCompleter = Completer<Map<String, dynamic>>();
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+      final transfer = controller.transferTo('dev_2');
+      expect(controller.activeDevice?['id'], 'dev_2');
+
+      controller.startPolling(interval: const Duration(hours: 1));
+      api.emitEvent('spotify_state_changed', {
+        'status': 'playing',
+        'is_active': true,
+        'device_name': 'Cocina',
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      // With the override cleared, canonical state can switch back to dev_1.
+      api.player = {
+        ...api.player,
+        'device': {'id': 'dev_1', 'name': 'Parlante', 'volume_percent': 70},
+      };
+      await controller.refresh();
+      expect(controller.activeDevice?['id'], 'dev_1');
+
+      api.transferCompleter!.complete({'ok': true});
+      await transfer;
       controller.dispose();
       await api.close();
     });

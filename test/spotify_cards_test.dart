@@ -596,6 +596,43 @@ void main() {
     },
   );
 
+  testWidgets(
+    'desktop shows the picked device immediately while transferring',
+    (tester) async {
+      final api = _SpotifyCardApi()
+        ..extraDevices = [
+          {
+            'id': 'dev_2',
+            'name': 'Cocina',
+            'volume_percent': 30,
+            'supports_volume': false,
+          },
+        ]
+        ..transferCompleter = Completer<Map<String, dynamic>>();
+      await pumpDesktop(tester, api);
+
+      expect(find.textContaining('Parlante'), findsWidgets);
+
+      await tester.tap(find.byTooltip('Elegir dispositivo'));
+      await settleSurface(tester);
+      await tester.tap(find.text('Cocina'));
+      await settleSurface(tester);
+
+      // Optimistic switch: the picked name shows before the backend confirms,
+      // and the volume trigger reflects the new device's capability.
+      expect(find.textContaining('Cocina'), findsWidgets);
+      final volumeButton = tester.widget<IconButton>(
+        find.byKey(const ValueKey('desktop-spotify-volume')),
+      );
+      expect(volumeButton.onPressed, isNull);
+
+      // Release the transfer so no future outlives the test.
+      api.transferCompleter!.complete({'ok': true});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+    },
+  );
+
   testWidgets('desktop transport follows the advertised actions list', (
     tester,
   ) async {
@@ -773,6 +810,14 @@ class _SpotifyCardApi extends ApiClient {
   /// omits the field (unknown), mirroring the contract `bool | null`.
   bool? supportsVolume;
 
+  /// Additional listing entries exposed to the device picker (optimistic
+  /// switch tests).
+  List<Map<String, dynamic>> extraDevices = [];
+
+  /// When set, [spotifyTransfer] awaits this before answering: used to hold
+  /// the optimistic device switch while the request is in flight.
+  Completer<Map<String, dynamic>>? transferCompleter;
+
   /// Settings/player switches: flip both together to simulate the account
   /// becoming authorized while a card is already mounted.
   bool authenticated = true;
@@ -929,6 +974,7 @@ class _SpotifyCardApi extends ApiClient {
               'volume_percent': 70,
               'supports_volume': ?supportsVolume,
             },
+            ...extraDevices,
           ]
         : [],
     'default_device_id': null,
@@ -958,6 +1004,14 @@ class _SpotifyCardApi extends ApiClient {
   Future<Map<String, dynamic>> spotifyPrevious({String? deviceId}) async {
     commands.add('previous');
     return {'ok': true, 'action': 'previous', 'device_id': deviceId};
+  }
+
+  @override
+  Future<Map<String, dynamic>> spotifyTransfer(String deviceId) async {
+    final held = transferCompleter;
+    if (held != null) await held.future;
+    commands.add('transfer');
+    return {'ok': true, 'action': 'transfer', 'device_id': deviceId};
   }
 
   @override

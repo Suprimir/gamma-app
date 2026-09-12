@@ -100,6 +100,11 @@ class SpotifyPlayerController extends ChangeNotifier {
   /// captured at that moment (0 while paused).
   ({int ms, int wallMs, double speed})? _pendingSeek;
 
+  /// Optimistic transfer target while the backend catches up: the picked
+  /// device id plus the local wall-clock ms when it was set. Bounded by
+  /// [_pendingDeviceTimeoutMs] and cleared once canonical state confirms it.
+  ({String id, int wallMs})? _pendingDevice;
+
   /// Bumped on every applied SSE state event. An HTTP player read that started
   /// before a bump is stale and must not overwrite the fresher event.
   int _stateVersion = 0;
@@ -107,6 +112,10 @@ class SpotifyPlayerController extends ChangeNotifier {
   /// Safety window for a pending seek; after it the preview falls back to the
   /// canonical state instead of masking a lost acknowledgement forever.
   static const _pendingSeekTimeoutMs = 10000;
+
+  /// Safety window for the optimistic transfer target; after it the card falls
+  /// back to canonical state instead of masking a lost switch forever.
+  static const _pendingDeviceTimeoutMs = 12000;
 
   /// Last `GET /spotify/player` body (or SSE merge), or null while unknown.
   Map<String, dynamic>? get player => _player;
@@ -137,15 +146,81 @@ class SpotifyPlayerController extends ChangeNotifier {
   }
 
   /// Player-reported device, else the explicit pick, else the backend default.
+  ///
+  /// An in-flight transfer optimistically wins: the card must not keep showing
+  /// the previous device while the backend catches up. The override expires
+  /// after [_pendingDeviceTimeoutMs].
   Map<String, dynamic>? get activeDevice {
+    _expirePendingDevice();
+    final pendingId = _pendingDevice?.id;
+    if (pendingId != null) {
+      final pending = _deviceById(pendingId);
+      if (pending != null) return pending;
+    }
     final fromPlayer = _player?['device'];
     if (fromPlayer is Map) return fromPlayer.cast<String, dynamic>();
     final wanted = _selectedDeviceId ?? _defaultDeviceId;
     if (wanted == null) return null;
+    return _deviceById(wanted);
+  }
+
+  Map<String, dynamic>? _deviceById(String id) {
     for (final device in _devices) {
-      if (device['id'] == wanted) return device;
+      if (device['id']?.toString() == id) return device;
     }
     return null;
+  }
+
+  /// Listing entry whose name matches [name]: exact first, then
+  /// case-insensitive. Null when the listing does not know the device.
+  Map<String, dynamic>? _deviceByName(String name) {
+    for (final device in _devices) {
+      if (device['name']?.toString() == name) return device;
+    }
+    final lower = name.toLowerCase();
+    for (final device in _devices) {
+      if (device['name']?.toString().toLowerCase() == lower) return device;
+    }
+    return null;
+  }
+
+  /// Drops the optimistic transfer target once its bounded window elapsed.
+  void _expirePendingDevice() {
+    final pending = _pendingDevice;
+    if (pending == null) return;
+    if (_nowMs() - pending.wallMs >= _pendingDeviceTimeoutMs) {
+      _pendingDevice = null;
+    }
+  }
+
+  /// Drops the optimistic transfer target (command failure / teardown).
+  void _clearPendingDevice() {
+    _pendingDevice = null;
+  }
+
+  /// Clears the optimistic target when [player] reports its id as the
+  /// canonical device (HTTP refresh or SSE merge).
+  void _settlePendingDeviceByCanonical(Map<String, dynamic>? player) {
+    _expirePendingDevice();
+    final pending = _pendingDevice;
+    if (pending == null) return;
+    final device = player?['device'];
+    if (device is Map && device['id']?.toString() == pending.id) {
+      _pendingDevice = null;
+    }
+  }
+
+  /// Clears the optimistic target when an SSE event names the pending device:
+  /// the real switch happened even before the HTTP listing catches up.
+  void _clearPendingDeviceIfNamed(String eventName) {
+    final pending = _pendingDevice;
+    if (pending == null) return;
+    final pendingName = _deviceById(pending.id)?['name']?.toString();
+    if (pendingName == null || pendingName.isEmpty) return;
+    if (pendingName == eventName ||
+        pendingName.toLowerCase() == eventName.toLowerCase()) {
+      _pendingDevice = null;
+    }
   }
 
   /// Whether the resolved target device can be volume-controlled via the API.
@@ -281,6 +356,7 @@ class SpotifyPlayerController extends ChangeNotifier {
       if (!playerIsStale) {
         _player = player;
         _acknowledgePendingSeek(player);
+        _settlePendingDeviceByCanonical(player);
       }
       _needsAuth = false;
       _error = null;
@@ -348,17 +424,27 @@ class SpotifyPlayerController extends ChangeNotifier {
       _command(() => api.spotifyRepeat(state, deviceId: _selectedDeviceId));
 
   /// Transfers playback to [deviceId] and remembers it as the explicit pick.
+  ///
+  /// The pick is shown immediately (optimistic override over the device
+  /// listing) and cleared once canonical state confirms it, the command
+  /// fails, or the bounded window elapses.
   Future<void> transferTo(String deviceId) {
     _selectedDeviceId = deviceId;
+    _pendingDevice = (id: deviceId, wallMs: _nowMs());
     notifyListeners();
-    return _command(() => api.spotifyTransfer(deviceId));
+    return _command(
+      () => api.spotifyTransfer(deviceId),
+      onCommandFailure: _clearPendingDevice,
+    );
   }
 
   /// Stores (or clears, with null) the explicit device pick. No API call:
-  /// `null` lets the backend resolve the active/default device.
+  /// `null` lets the backend resolve the active/default device and drops any
+  /// in-flight optimistic transfer so Automático wins immediately.
   void selectDevice(String? deviceId) {
     if (deviceId == _selectedDeviceId) return;
     _selectedDeviceId = deviceId;
+    if (deviceId == null) _pendingDevice = null;
     notifyListeners();
   }
 
@@ -384,6 +470,7 @@ class SpotifyPlayerController extends ChangeNotifier {
     _ticker?.cancel();
     _ticker = null;
     _pendingSeek = null;
+    _pendingDevice = null;
     unawaited(_eventsSub?.cancel());
     _eventsSub = null;
   }
@@ -444,8 +531,10 @@ class SpotifyPlayerController extends ChangeNotifier {
   }
 
   /// Merges an SSE `spotify_state_changed` payload over the last player
-  /// response. The event carries no device, so the previous device map is
-  /// preserved; it is proof of a usable account, so auth/error are cleared.
+  /// response. When the event carries the active device name the matching
+  /// listing entry wins, so the real id and capabilities resolve without
+  /// waiting for the next HTTP read; otherwise the previous device map is
+  /// preserved. It is proof of a usable account, so auth/error are cleared.
   void _applyStateEvent(Map<String, dynamic> data) {
     final merged = <String, dynamic>{...?_player};
     final status = data['status'];
@@ -467,8 +556,17 @@ class SpotifyPlayerController extends ChangeNotifier {
     final actions = data['actions'];
     if (actions is List) merged['actions'] = actions;
     if (data.containsKey('is_active')) merged['is_active'] = data['is_active'];
+    if (data['is_active'] == true) {
+      final deviceName = data['device_name']?.toString();
+      if (deviceName != null && deviceName.isNotEmpty) {
+        final entry = _deviceByName(deviceName);
+        if (entry != null) merged['device'] = entry;
+        _clearPendingDeviceIfNamed(deviceName);
+      }
+    }
     merged['has_playback'] = true;
     _player = merged;
+    _settlePendingDeviceByCanonical(merged);
     _needsAuth = false;
     _error = null;
     // Any HTTP player read in flight started before this event is stale now.
