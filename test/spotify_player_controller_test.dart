@@ -52,6 +52,18 @@ class _FakeSpotifyApi extends ApiClient {
   final commandDeviceIds = <String?>[];
   final commandUris = <String?>[];
 
+  /// When set, the next [spotifyPlayer] call awaits this before answering:
+  /// used to hold an HTTP read in flight across an SSE event.
+  Completer<Map<String, dynamic>>? playerCompleter;
+
+  /// When set, the next [spotifyDevices] call awaits this before answering:
+  /// used to hold the tail of a refresh in flight across an SSE event.
+  Completer<Map<String, dynamic>>? devicesCompleter;
+
+  /// When set, [spotifySeek] awaits this before answering: used to observe
+  /// the optimistic preview while the seek request is in flight.
+  Completer<Map<String, dynamic>>? seekCompleter;
+
   /// Queue listing returned by [spotifyPlaybackQueue].
   Map<String, dynamic> queue = {
     'previous': [],
@@ -93,6 +105,8 @@ class _FakeSpotifyApi extends ApiClient {
   Future<Map<String, dynamic>> spotifyPlayer() async {
     playerCalls++;
     if (playerError != null) throw playerError!;
+    final held = playerCompleter;
+    if (held != null) return held.future;
     return player;
   }
 
@@ -100,6 +114,8 @@ class _FakeSpotifyApi extends ApiClient {
   Future<Map<String, dynamic>> spotifyDevices() async {
     deviceCalls++;
     if (devicesError != null) throw devicesError!;
+    final held = devicesCompleter;
+    if (held != null) return held.future;
     return devices;
   }
 
@@ -141,7 +157,11 @@ class _FakeSpotifyApi extends ApiClient {
   Future<Map<String, dynamic>> spotifySeek(
     int positionMs, {
     String? deviceId,
-  }) async => _command('seek:$positionMs', deviceId);
+  }) async {
+    final held = seekCompleter;
+    if (held != null) await held.future;
+    return _command('seek:$positionMs', deviceId);
+  }
 
   @override
   Future<Map<String, dynamic>> spotifyTransfer(String deviceId) async =>
@@ -301,6 +321,228 @@ void main() {
     expect(api.playerCalls, refreshesBefore + 2);
     controller.dispose();
   });
+
+  test(
+    'seek() muestra la posición optimista y avanza con el speed capturado',
+    () async {
+      var now = 1000000;
+      final api = _FakeSpotifyApi();
+      api.player = {
+        ...api.player,
+        'track': {
+          'name': 'Tema',
+          'artist': 'Artista',
+          'image_url': null,
+          'duration_ms': 30000,
+        },
+        'position': {'position_ms': 2000, 'timestamp_ms': 999000, 'speed': 2.0},
+      };
+      final controller = SpotifyPlayerController(api, nowMs: () => now);
+      await controller.refresh();
+
+      // Hold the seek request: the pending preview must be visible anyway.
+      api.seekCompleter = Completer<Map<String, dynamic>>();
+      final future = controller.seek(5000);
+      expect(controller.progressMs, 5000);
+
+      now += 400;
+      expect(controller.progressMs, 5800);
+
+      // Clamped to the canonical duration.
+      now += 60000;
+      expect(controller.progressMs, 30000);
+
+      api.seekCompleter!.complete({'ok': true});
+      await future;
+      controller.dispose();
+    },
+  );
+
+  test('seek() pausado deja el preview fijo en el objetivo', () async {
+    var now = 1000000;
+    final api = _FakeSpotifyApi();
+    api.player = {
+      ...api.player,
+      'is_playing': false,
+      'track': {
+        'name': 'Tema',
+        'artist': 'Artista',
+        'image_url': null,
+        'duration_ms': 30000,
+      },
+    };
+    final controller = SpotifyPlayerController(api, nowMs: () => now);
+    await controller.refresh();
+
+    api.seekCompleter = Completer<Map<String, dynamic>>();
+    final future = controller.seek(7000);
+    expect(controller.progressMs, 7000);
+
+    now += 5000;
+    expect(controller.progressMs, 7000);
+
+    api.seekCompleter!.complete({'ok': true});
+    await future;
+    controller.dispose();
+  });
+
+  test('un anchor canónico más nuevo limpia el pending del seek', () async {
+    var now = 1000000;
+    final api = _FakeSpotifyApi();
+    api.player = {
+      ...api.player,
+      'track': {
+        'name': 'Tema',
+        'artist': 'Artista',
+        'image_url': null,
+        'duration_ms': 30000,
+      },
+    };
+    final controller = SpotifyPlayerController(api, nowMs: () => now);
+    await controller.refresh();
+
+    // The next canonical read carries an anchor measured after the seek.
+    api.player = {
+      ...api.player,
+      'position': {'position_ms': 5200, 'timestamp_ms': now + 1, 'speed': 1.0},
+    };
+    api.seekCompleter = Completer<Map<String, dynamic>>();
+    final future = controller.seek(5000);
+    expect(controller.progressMs, 5000);
+
+    await controller.refresh();
+    now = 1000301;
+    // Acknowledged: interpolation from the canonical anchor (5200 + 300).
+    expect(controller.progressMs, 5500);
+
+    api.seekCompleter!.complete({'ok': true});
+    await future;
+    controller.dispose();
+  });
+
+  test('el pending del seek expira por seguridad a los ~10s', () async {
+    var now = 1000000;
+    final api = _FakeSpotifyApi();
+    final controller = SpotifyPlayerController(api, nowMs: () => now);
+    await controller.refresh();
+
+    api.seekCompleter = Completer<Map<String, dynamic>>();
+    final future = controller.seek(5000);
+    expect(controller.progressMs, 5000);
+
+    now += 10001;
+    // Dropped: no canonical anchor in the fake player, so null.
+    expect(controller.progressMs, isNull);
+
+    api.seekCompleter!.complete({'ok': true});
+    await future;
+    controller.dispose();
+  });
+
+  test('un seek fallido limpia el pending y expone el error', () async {
+    var now = 1000000;
+    final api = _FakeSpotifyApi();
+    final controller = SpotifyPlayerController(api, nowMs: () => now);
+    await controller.refresh();
+
+    api.commandError = ApiException(409, {'detail': 'Sin dispositivo activo.'});
+    api.seekCompleter = Completer<Map<String, dynamic>>();
+    final future = controller.seek(5000);
+    expect(controller.progressMs, 5000);
+    api.seekCompleter!.complete({'ok': true});
+    await future;
+
+    expect(controller.error, 'Sin dispositivo activo.');
+    // Pending dropped: the fake player has no anchor/progress_ms.
+    expect(controller.progressMs, isNull);
+    controller.dispose();
+  });
+
+  test('un refresh con player viejo no pisa un estado SSE más nuevo', () async {
+    final api = _FakeSpotifyApi();
+    final controller = SpotifyPlayerController(api);
+    await controller.refresh();
+    controller.startPolling(interval: const Duration(hours: 1));
+    expect(api.eventsCalls, 1);
+
+    // Hold the next HTTP player read.
+    api.playerCompleter = Completer<Map<String, dynamic>>();
+    final refreshFuture = controller.refresh();
+
+    // A fresher SSE state lands while the HTTP read is in flight.
+    api.emitEvent('spotify_state_changed', {
+      'status': 'paused',
+      'item': {
+        'uri': 'spotify:track:9',
+        'name': 'SSE Tema',
+        'artist': 'SSE Artista',
+        'album': null,
+        'image_url': null,
+      },
+    });
+    await pumpEventQueue();
+    expect(controller.track?['name'], 'SSE Tema');
+
+    // The stale HTTP body must not overwrite the SSE value.
+    api.playerCompleter!.complete({
+      'has_playback': true,
+      'is_playing': true,
+      'track': {
+        'uri': 'spotify:track:1',
+        'name': 'HTTP Tema',
+        'artist': 'Artista',
+        'album': null,
+        'image_url': null,
+      },
+      'device': {'id': 'dev_1', 'name': 'Parlante', 'volume_percent': 70},
+      'shuffle': false,
+      'repeat': 'off',
+      'volume_percent': 70,
+    });
+    await refreshFuture;
+
+    expect(controller.track?['name'], 'SSE Tema');
+    expect(controller.isPlaying, isFalse);
+    controller.dispose();
+    await api.close();
+  });
+
+  test(
+    'un SSE durante devices tampoco deja pisar el estado con el player viejo',
+    () async {
+      final api = _FakeSpotifyApi();
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(hours: 1));
+
+      // The player read resolves first; devices is held while SSE lands.
+      api.devicesCompleter = Completer<Map<String, dynamic>>();
+      final refreshFuture = controller.refresh();
+      await pumpEventQueue();
+
+      api.emitEvent('spotify_state_changed', {
+        'status': 'paused',
+        'item': {
+          'uri': 'spotify:track:9',
+          'name': 'SSE Tema',
+          'artist': 'SSE Artista',
+          'album': null,
+          'image_url': null,
+        },
+      });
+      await pumpEventQueue();
+      expect(controller.track?['name'], 'SSE Tema');
+
+      // The refresh tail completes late: the stale player body must lose.
+      api.devicesCompleter!.complete(api.devices);
+      await refreshFuture;
+
+      expect(controller.track?['name'], 'SSE Tema');
+      expect(controller.isPlaying, isFalse);
+      controller.dispose();
+      await api.close();
+    },
+  );
 
   test('sin selección explícita el backend resuelve el dispositivo', () async {
     final api = _FakeSpotifyApi();

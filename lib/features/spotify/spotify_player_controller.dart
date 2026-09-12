@@ -50,6 +50,9 @@ int _clampPosition(int value, num? durationMs) {
 
 num? _asNum(Object? value) => value is num ? value : null;
 
+/// System wall clock in epoch ms; the controller's default [nowMs] source.
+int _systemNowMs() => DateTime.now().millisecondsSinceEpoch;
+
 /// Shared Spotify playback state for the desktop and wall surfaces.
 ///
 /// Everything rendered from this controller reflects the last canonical
@@ -58,9 +61,14 @@ num? _asNum(Object? value) => value is num ? value : null;
 /// [selectedDeviceId] when the user picked one and `null` otherwise, so the
 /// backend resolves the device.
 class SpotifyPlayerController extends ChangeNotifier {
-  SpotifyPlayerController(this.api);
+  SpotifyPlayerController(this.api, {int Function()? nowMs})
+    : _nowMs = nowMs ?? _systemNowMs;
 
   final ApiClient api;
+
+  /// Wall-clock source in epoch ms; tests inject a deterministic clock to
+  /// exercise the optimistic seek preview without real delays.
+  final int Function() _nowMs;
 
   Map<String, dynamic>? _player;
   List<Map<String, dynamic>> _devices = const [];
@@ -76,6 +84,19 @@ class SpotifyPlayerController extends ChangeNotifier {
   StreamSubscription<Map<String, dynamic>>? _eventsSub;
   bool _live = false;
   bool _disposed = false;
+
+  /// Optimistic seek target while the backend round-trip is in flight: target
+  /// ms, local wall-clock ms when it was issued and the playback speed
+  /// captured at that moment (0 while paused).
+  ({int ms, int wallMs, double speed})? _pendingSeek;
+
+  /// Bumped on every applied SSE state event. An HTTP player read that started
+  /// before a bump is stale and must not overwrite the fresher event.
+  int _stateVersion = 0;
+
+  /// Safety window for a pending seek; after it the preview falls back to the
+  /// canonical state instead of masking a lost acknowledgement forever.
+  static const _pendingSeekTimeoutMs = 10000;
 
   /// Last `GET /spotify/player` body (or SSE merge), or null while unknown.
   Map<String, dynamic>? get player => _player;
@@ -127,10 +148,28 @@ class SpotifyPlayerController extends ChangeNotifier {
   bool get queueLimited => _queue['limited'] == true;
 
   /// Interpolated playback position in ms; null while unknown.
-  int? get progressMs => interpolatedPositionMs(
-    _player,
-    nowMs: DateTime.now().millisecondsSinceEpoch,
-  );
+  ///
+  /// While a seek is in flight the optimistic target wins (advancing at the
+  /// speed captured when it was issued) so the UI never snaps back to the
+  /// pre-seek position during the round-trip. A pending seek older than
+  /// [_pendingSeekTimeoutMs] is dropped silently.
+  int? get progressMs {
+    final pending = _pendingSeek;
+    if (pending != null) {
+      final elapsed = _nowMs() - pending.wallMs;
+      if (elapsed < _pendingSeekTimeoutMs) {
+        final position = pending.ms + (elapsed * pending.speed).round();
+        final duration = durationMs;
+        if (position < 0) return 0;
+        if (duration != null && position > duration) return duration;
+        return position;
+      }
+      // Expired: drop the preview and let the ticker state follow.
+      _pendingSeek = null;
+      _syncTicker();
+    }
+    return interpolatedPositionMs(_player, nowMs: _nowMs());
+  }
 
   /// Current track duration in ms; null while unknown.
   int? get durationMs {
@@ -154,6 +193,7 @@ class SpotifyPlayerController extends ChangeNotifier {
     _loading = true;
     notifyListeners();
 
+    final versionBeforePlayer = _stateVersion;
     Map<String, dynamic>? player;
     Object? playerError;
     try {
@@ -189,7 +229,13 @@ class SpotifyPlayerController extends ChangeNotifier {
       _needsAuth = _isAuthError(playerError);
       _error = _needsAuth ? null : _describe(playerError);
     } else {
-      _player = player;
+      // An SSE state event that landed while this read was in flight is
+      // fresher: keep it instead of overwriting with the stale body.
+      final playerIsStale = versionBeforePlayer != _stateVersion;
+      if (!playerIsStale) {
+        _player = player;
+        _acknowledgePendingSeek(player);
+      }
       _needsAuth = false;
       _error = null;
     }
@@ -226,14 +272,28 @@ class SpotifyPlayerController extends ChangeNotifier {
     () => api.spotifySetVolume(volumePercent, deviceId: _selectedDeviceId),
   );
 
-  /// Seeks to [positionMs] in the current track. Negative values clamp to 0
-  /// so a rounding artifact never sends an invalid backend position.
-  Future<void> seek(int positionMs) => _command(
-    () => api.spotifySeek(
-      positionMs < 0 ? 0 : positionMs,
-      deviceId: _selectedDeviceId,
-    ),
-  );
+  /// Seeks to [positionMs] in the current track. Negative values clamp to 0.
+  ///
+  /// The target is shown immediately (optimistic preview) before the backend
+  /// call, so the scrubber never snaps back while the request runs. The
+  /// preview clears when a fresher canonical anchor arrives, the call fails,
+  /// polling stops, or the safety timeout elapses.
+  Future<void> seek(int positionMs) {
+    final target = positionMs < 0 ? 0 : positionMs;
+    final anchor = _player?['position'];
+    final anchorSpeed = anchor is Map ? _asNum(anchor['speed']) : null;
+    _pendingSeek = (
+      ms: target,
+      wallMs: _nowMs(),
+      speed: anchorSpeed?.toDouble() ?? (isPlaying ? 1.0 : 0.0),
+    );
+    _syncTicker();
+    notifyListeners();
+    return _command(
+      () => api.spotifySeek(target, deviceId: _selectedDeviceId),
+      onCommandFailure: _clearPendingSeek,
+    );
+  }
 
   Future<void> shuffle(bool state) =>
       _command(() => api.spotifyShuffle(state, deviceId: _selectedDeviceId));
@@ -277,6 +337,7 @@ class SpotifyPlayerController extends ChangeNotifier {
     _resubscribeTimer = null;
     _ticker?.cancel();
     _ticker = null;
+    _pendingSeek = null;
     unawaited(_eventsSub?.cancel());
     _eventsSub = null;
   }
@@ -349,6 +410,9 @@ class SpotifyPlayerController extends ChangeNotifier {
     _player = merged;
     _needsAuth = false;
     _error = null;
+    // Any HTTP player read in flight started before this event is stale now.
+    _stateVersion++;
+    _acknowledgePendingSeek(merged);
     _syncTicker();
     notifyListeners();
   }
@@ -370,18 +434,17 @@ class SpotifyPlayerController extends ChangeNotifier {
   }
 
   /// Advances the local progress while playing. Only a live controller with
-  /// an anchor and a non-zero speed ticks; paused playback stays honest and
-  /// zero-interval controllers never start a timer.
+  /// an anchor and a non-zero speed ticks; an in-flight seek also keeps the
+  /// ticker alive so its optimistic preview advances. Paused playback stays
+  /// honest and zero-interval controllers never start a timer.
   void _syncTicker() {
     final anchor = _player?['position'];
     final speed = anchor is Map ? _asNum(anchor['speed']) : null;
     final wanted =
         _live &&
         !_disposed &&
-        isPlaying &&
-        anchor is Map &&
-        speed != null &&
-        speed != 0;
+        (_pendingSeek != null ||
+            (isPlaying && anchor is Map && speed != null && speed != 0));
     if (wanted) {
       _ticker ??= Timer.periodic(const Duration(seconds: 1), (_) {
         if (!_disposed) notifyListeners();
@@ -395,7 +458,12 @@ class SpotifyPlayerController extends ChangeNotifier {
   /// Runs one backend command, then refreshes so the UI converges on the
   /// canonical state. Failures land in [error]/[needsAuth]; they never throw
   /// at the UI. The command failure wins over a successful refresh.
-  Future<void> _command(Future<Map<String, dynamic>> Function() run) async {
+  /// [onCommandFailure] runs as soon as the command itself fails (before the
+  /// convergence refresh), so callers can drop optimistic state immediately.
+  Future<void> _command(
+    Future<Map<String, dynamic>> Function() run, {
+    VoidCallback? onCommandFailure,
+  }) async {
     String? failure;
     var authFailure = false;
     try {
@@ -411,6 +479,10 @@ class SpotifyPlayerController extends ChangeNotifier {
     }
     if (_disposed) return;
 
+    if (failure != null || authFailure) {
+      onCommandFailure?.call();
+    }
+
     await refresh();
     if (_disposed) return;
 
@@ -421,6 +493,25 @@ class SpotifyPlayerController extends ChangeNotifier {
     } else if (failure != null) {
       _error = failure;
       notifyListeners();
+    }
+  }
+
+  /// Drops the optimistic seek target. Safe to call when none is pending.
+  void _clearPendingSeek() {
+    _pendingSeek = null;
+  }
+
+  /// Drops the optimistic seek target once the canonical state proves the
+  /// backend applied it: an anchor measured after the seek was issued.
+  void _acknowledgePendingSeek(Map<String, dynamic>? player) {
+    final pending = _pendingSeek;
+    if (pending == null) return;
+    final position = player?['position'];
+    final timestampMs = position is Map
+        ? _asNum(position['timestamp_ms'])
+        : null;
+    if (timestampMs != null && timestampMs.round() > pending.wallMs) {
+      _pendingSeek = null;
     }
   }
 

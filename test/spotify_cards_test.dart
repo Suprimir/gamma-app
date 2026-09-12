@@ -391,6 +391,38 @@ void main() {
     expect(api.seekPositions.last, lessThanOrEqualTo(3000));
   });
 
+  testWidgets('desktop scrubber keeps the optimistic time while seeking', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi();
+    await pumpDesktop(tester, api);
+
+    final slider = find.byKey(const ValueKey('desktop-spotify-progress'));
+    expect(find.text('00:01 / 00:03'), findsOneWidget);
+
+    // Hold the seek request in flight: the optimistic preview must keep the
+    // label at the drag target instead of snapping back to the stale 00:01.
+    api.seekCompleter = Completer<Map<String, dynamic>>();
+
+    final gesture = await tester.startGesture(tester.getCenter(slider));
+    await tester.pump();
+    await gesture.moveBy(const Offset(120, 0));
+    await tester.pump();
+    await gesture.up();
+    await tester.pump();
+
+    expect(api.seekPositions, hasLength(1));
+    expect(find.text('00:01 / 00:03'), findsNothing);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('00:01 / 00:03'), findsNothing);
+
+    // Complete the request so no future outlives the test.
+    api.seekCompleter!.complete({'ok': true});
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(api.seekPositions, hasLength(1));
+  });
+
   testWidgets('desktop progress falls back to the bar with no active device', (
     tester,
   ) async {
@@ -621,6 +653,10 @@ class _SpotifyCardApi extends ApiClient {
 
   /// Seek positions received by [spotifySeek], in call order.
   final seekPositions = <int>[];
+
+  /// When set, [spotifySeek] awaits this before answering: used to observe
+  /// the card's optimistic preview while the request is in flight.
+  Completer<Map<String, dynamic>>? seekCompleter;
   List<Map<String, dynamic>> playlists = [
     {
       'type': 'playlist',
@@ -788,6 +824,10 @@ class _SpotifyCardApi extends ApiClient {
   }) async {
     seekPositions.add(positionMs);
     commands.add('seek:$positionMs');
+    // Hold the request when a test wants to observe the optimistic preview
+    // while the round-trip is still running.
+    final held = seekCompleter;
+    if (held != null) await held.future;
     return {'ok': true, 'action': 'seek', 'device_id': deviceId};
   }
 
