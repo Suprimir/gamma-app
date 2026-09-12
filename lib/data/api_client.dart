@@ -677,6 +677,24 @@ class ApiClient {
     'nvr_pass': ?nvrPass,
   });
 
+  Future<Map<String, dynamic>> tuyaConfig() => _get('/api/v1/settings/tuya');
+
+  /// Partial Tuya Cloud update: only non-null fields are written. The API
+  /// secret is write-only; an omitted value keeps the stored one.
+  Future<Map<String, dynamic>> updateTuyaConfig({
+    bool? cloudEnabled,
+    String? region,
+    String? accessId,
+    String? apiSecret,
+    String? deviceId,
+  }) => _putJson('/api/v1/settings/tuya', {
+    'cloud_enabled': ?cloudEnabled,
+    'region': ?region,
+    'access_id': ?accessId,
+    'api_secret': ?apiSecret,
+    'device_id': ?deviceId,
+  });
+
   Future<Map<String, dynamic>> _putJson(
     String path,
     Map<String, dynamic> body,

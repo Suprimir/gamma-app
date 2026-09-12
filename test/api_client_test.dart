@@ -1493,6 +1493,68 @@ void main() {
       },
     );
 
+    test('tuyaConfig() hace GET de su sección redactada', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+
+      server.listen((request) async {
+        expect(request.method, 'GET');
+        expect(request.uri.path, '/api/v1/settings/tuya');
+        request.response.write(
+          '{"cloud_enabled":{"value":"true","source":"store"},'
+          '"region":{"value":"us","source":"store"},'
+          '"access_id":{"value":"aid","source":"store"},'
+          '"api_secret":{"configured":true,"source":"store","last4":"9f2a"},'
+          '"device_id":{"value":"dev","source":"store"}}',
+        );
+        await request.response.close();
+      });
+
+      final view = await client.tuyaConfig();
+
+      expect((view['cloud_enabled'] as Map)['value'], 'true');
+      expect((view['region'] as Map)['value'], 'us');
+      expect((view['api_secret'] as Map)['last4'], '9f2a');
+      await server.close(force: true);
+    });
+
+    test(
+      'updateTuyaConfig() envía solo los campos no nulos, incluido false',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+        final bodies = <String>[];
+
+        server.listen((request) async {
+          expect(request.method, 'PUT');
+          expect(request.uri.path, '/api/v1/settings/tuya');
+          bodies.add(await utf8.decoder.bind(request).join());
+          request.response.write(
+            '{"applies":"hot","message":"Credenciales guardadas"}',
+          );
+          await request.response.close();
+        });
+
+        final result = await client.updateTuyaConfig(
+          cloudEnabled: false,
+          region: '',
+          accessId: 'aid',
+          deviceId: 'dev',
+        );
+        await client.updateTuyaConfig(apiSecret: 'secreto');
+
+        expect(jsonDecode(bodies[0]), {
+          'cloud_enabled': false,
+          'region': '',
+          'access_id': 'aid',
+          'device_id': 'dev',
+        });
+        expect(jsonDecode(bodies[1]), {'api_secret': 'secreto'});
+        expect(result['applies'], 'hot');
+        await server.close(force: true);
+      },
+    );
+
     test('un 422 de settings se propaga con el detail del backend', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');

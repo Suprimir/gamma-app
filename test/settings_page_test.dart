@@ -11,6 +11,7 @@ import 'package:gamma_app/features/settings/news_module_screen.dart';
 import 'package:gamma_app/features/settings/settings_page.dart';
 import 'package:gamma_app/features/settings/spotify_module_screen.dart';
 import 'package:gamma_app/features/settings/tts_preview_player.dart';
+import 'package:gamma_app/features/settings/tuya_module_screen.dart';
 
 class _FakeSettingsApi extends ApiClient {
   _FakeSettingsApi({this.healthError, this.previewError})
@@ -84,6 +85,13 @@ class _FakeSettingsApi extends ApiClient {
     'llm': {
       'gemini_api_key': {'configured': false, 'source': 'unset', 'last4': null},
     },
+    'tuya': {
+      'cloud_enabled': {'value': 'true', 'source': 'store'},
+      'region': {'value': 'us', 'source': 'store'},
+      'access_id': {'value': 'aid-123', 'source': 'store'},
+      'api_secret': {'configured': true, 'source': 'store', 'last4': '9f2a'},
+      'device_id': {'value': 'dev-42', 'source': 'store'},
+    },
   };
 
   @override
@@ -137,7 +145,7 @@ Future<void> _pumpSettings(
   WidgetTester tester,
   _FakeSettingsApi api, {
   _FakeTtsPlayer? player,
-  Size size = const Size(600, 1800),
+  Size size = const Size(600, 2200),
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -307,5 +315,32 @@ void main() {
     expect(find.byType(LlmModuleScreen), findsOneWidget);
     expect(find.byKey(const ValueKey('config-llm-api-key')), findsOneWidget);
     expect(find.byKey(const ValueKey('config-llm-save')), findsOneWidget);
+  });
+
+  testWidgets('la tarjeta de Tuya abre la pantalla de credenciales', (
+    tester,
+  ) async {
+    await _pumpSettings(tester, _FakeSettingsApi());
+
+    await tester.scrollUntilVisible(
+      find.text('Dispositivos Tuya'),
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Dispositivos Tuya'), findsOneWidget);
+    expect(
+      find.text(
+        'Credenciales de la nube para descubrir y controlar dispositivos',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.ensureVisible(find.byKey(const ValueKey('open-tuya-config')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-tuya-config')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TuyaModuleScreen), findsOneWidget);
+    expect(find.byKey(const ValueKey('config-tuya-save')), findsOneWidget);
   });
 }

@@ -16,6 +16,7 @@ import 'module_config_widgets.dart';
 import 'news_module_screen.dart';
 import 'spotify_module_screen.dart';
 import 'tts_preview_player.dart';
+import 'tuya_module_screen.dart';
 
 /// System-only Settings page. Module-scoped configuration lives in its own
 /// screens, reached from the gear next to each module switch in Módulos.
@@ -182,6 +183,7 @@ class _SettingsPageState extends State<SettingsPage> {
       'news' => NewsModuleScreen(api: widget.api),
       'llm' => LlmModuleScreen(api: widget.api),
       'cameras' => CamerasModuleScreen(api: widget.api),
+      'tuya' => TuyaModuleScreen(api: widget.api),
       _ => null,
     };
     if (screen == null) return;
@@ -351,6 +353,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   _surfaceModeCard(),
                   const SizedBox(height: 14),
                   _modulesCard(),
+                  const SizedBox(height: 14),
+                  _tuyaCard(),
                   const SizedBox(height: 14),
                   _systemCard(),
                   const SizedBox(height: 14),
@@ -579,6 +583,31 @@ class _SettingsPageState extends State<SettingsPage> {
             color: AppColors.textFaint,
           ),
           onTap: () => _openModuleConfig('llm'),
+        ),
+      ),
+    );
+  }
+
+  /// Compact entry for the Tuya Cloud credentials. Tuya has no backend
+  /// module row either: it lives here, next to Sistema.
+  Widget _tuyaCard() {
+    return SettingsCard(
+      icon: CupertinoIcons.wifi,
+      title: 'Dispositivos Tuya',
+      child: Material(
+        type: MaterialType.transparency,
+        child: ListTile(
+          key: const ValueKey('open-tuya-config'),
+          contentPadding: EdgeInsets.zero,
+          title: const Text(
+            'Credenciales de la nube para descubrir y controlar dispositivos',
+            style: TextStyle(fontSize: 13, color: AppColors.textDim),
+          ),
+          trailing: const Icon(
+            CupertinoIcons.chevron_right,
+            color: AppColors.textFaint,
+          ),
+          onTap: () => _openModuleConfig('tuya'),
         ),
       ),
     );
