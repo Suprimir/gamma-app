@@ -15,7 +15,7 @@ void main() {
   runApp(
     GammaApp(
       api: ApiClient(baseUrl: baseUrl),
-      spotifyPollInterval: const Duration(seconds: 5),
+      spotifyPollInterval: const Duration(seconds: 30),
     ),
   );
 }
@@ -29,7 +29,8 @@ class GammaApp extends StatelessWidget {
 
   final ApiClient api;
 
-  /// Playback polling cadence for the Home surfaces; production passes 5s.
+  /// Fallback playback polling cadence for the Home surfaces; production
+  /// passes 30s and SSE events converge state in between.
   final Duration spotifyPollInterval;
 
   @override

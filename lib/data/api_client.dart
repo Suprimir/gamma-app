@@ -550,6 +550,8 @@ class ApiClient {
     return _decode(resp);
   }
 
+  /// Adds [uri] to the playback queue (POST). See [spotifyPlaybackQueue]
+  /// for the read-only listing of the same route.
   Future<Map<String, dynamic>> spotifyQueue(
     String uri, {
     String? deviceId,
@@ -561,6 +563,12 @@ class ApiClient {
     );
     return _decode(resp);
   }
+
+  /// Read-only playback queue listing:
+  /// `GET /api/v1/spotify/queue?limit=N` →
+  /// `{previous, upcoming, source, limited}`.
+  Future<Map<String, dynamic>> spotifyPlaybackQueue({int limit = 20}) =>
+      _get('/api/v1/spotify/queue?limit=$limit');
 
   Future<Map<String, dynamic>> voiceStatus() => _get('/api/v1/voice/status');
 

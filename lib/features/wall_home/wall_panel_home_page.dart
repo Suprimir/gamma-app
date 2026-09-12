@@ -42,8 +42,9 @@ class AdaptiveHomePage extends StatelessWidget {
 
   final ApiClient api;
 
-  /// Playback polling cadence for the home surface. Production wires 5s
-  /// through [AppShell]; tests stay at zero so no timer outlives them.
+  /// Fallback playback polling cadence for the home surface. Production
+  /// wires 30s; SSE events converge state in between. Tests stay at zero so
+  /// no timer or subscription outlives them.
   final Duration spotifyPollInterval;
 
   @override
@@ -1375,12 +1376,14 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                   ),
                 const SizedBox(height: 10),
                 _nowPlaying(),
+                _progress(),
                 const SizedBox(height: 16),
                 _transport(),
                 const SizedBox(height: 6),
                 _volume(),
                 const SizedBox(height: 4),
                 _deviceButton(),
+                _queue(),
                 if (_spotify.error != null) ...[
                   const SizedBox(height: 8),
                   Text(
@@ -1488,6 +1491,87 @@ class _WallMusicCardState extends State<_WallMusicCard> {
     );
   }
 
+  /// Progress bar + `mm:ss` under the now-playing row. Rendered only when the
+  /// track reports a duration; the position comes from the controller's local
+  /// interpolation (no extra network) and stays honest while paused.
+  Widget _progress() {
+    final duration = _spotify.durationMs;
+    if (_spotify.track == null || duration == null || duration <= 0) {
+      return const SizedBox.shrink();
+    }
+    final position = (_spotify.progressMs ?? 0).clamp(0, duration);
+    const timeStyle = TextStyle(fontSize: 13, color: Colors.white70);
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(5),
+            child: LinearProgressIndicator(
+              value: position / duration,
+              minHeight: 8,
+              backgroundColor: Colors.white24,
+              color: const Color(0xFF4ADE80),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(_formatPlaybackTime(position), style: timeStyle),
+              Text(_formatPlaybackTime(duration), style: timeStyle),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Touch-sized upcoming queue preview ("A continuación"), hidden while
+  /// empty or unknown. Never invents rows.
+  Widget _queue() {
+    final upcoming = _spotify.upcomingQueue.take(3).toList();
+    if (upcoming.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 14),
+        const Text(
+          'A continuación',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
+        ),
+        const SizedBox(height: 8),
+        for (final item in upcoming)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.queue_music_rounded,
+                  size: 20,
+                  color: Colors.white54,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _formatQueueItem(item),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 15, color: Colors.white70),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _transportButton({
     required IconData icon,
     required String tooltip,
@@ -1512,8 +1596,15 @@ class _WallMusicCardState extends State<_WallMusicCard> {
     );
   }
 
+  /// Transport row. When the backend advertises the executable [actions]
+  /// (SSE state), gating follows that list; otherwise it falls back to the
+  /// device check (a command with no active device is a guaranteed 409).
   Widget _transport() {
-    final enabled = _spotify.activeDevice != null;
+    final actions = _spotify.player?['actions'];
+    final gated = actions is List && actions.isNotEmpty;
+    final hasDevice = _spotify.activeDevice != null;
+    bool enabledFor(String action) =>
+        gated ? _spotify.actionEnabled(action) : hasDevice;
     final playing = _spotify.isPlaying;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -1521,14 +1612,14 @@ class _WallMusicCardState extends State<_WallMusicCard> {
         _transportButton(
           icon: Icons.skip_previous_rounded,
           tooltip: 'Anterior',
-          enabled: enabled,
+          enabled: enabledFor('skip_prev'),
           onPressed: _spotify.previous,
         ),
         const SizedBox(width: 12),
         _transportButton(
           icon: playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
           tooltip: playing ? 'Pausar' : 'Reproducir',
-          enabled: enabled,
+          enabled: enabledFor(playing ? 'pause' : 'play'),
           onPressed: playing ? _spotify.pause : _spotify.play,
           primary: true,
         ),
@@ -1536,7 +1627,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
         _transportButton(
           icon: Icons.skip_next_rounded,
           tooltip: 'Siguiente',
-          enabled: enabled,
+          enabled: enabledFor('skip_next'),
           onPressed: _spotify.next,
         ),
       ],
@@ -2766,4 +2857,21 @@ String _sleepDateLabel(DateTime now) {
   final weekday = weekdays[now.weekday - 1];
   final capitalized = weekday[0].toUpperCase() + weekday.substring(1);
   return '$capitalized, ${now.day} de ${months[now.month - 1]}';
+}
+
+/// `mm:ss` for a playback position/duration in milliseconds.
+String _formatPlaybackTime(int milliseconds) {
+  final totalSeconds = (milliseconds / 1000).floor();
+  final minutes = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+  final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
+  return '$minutes:$seconds';
+}
+
+/// `name · artist` for a queue item, degrading to whichever field exists.
+String _formatQueueItem(Map<String, dynamic> item) {
+  final name = item['name']?.toString() ?? '';
+  final artist = item['artist']?.toString() ?? '';
+  if (artist.isEmpty) return name;
+  if (name.isEmpty) return artist;
+  return '$name · $artist';
 }

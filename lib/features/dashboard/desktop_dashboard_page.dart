@@ -42,8 +42,9 @@ class DesktopDashboardPage extends StatefulWidget {
 
   final ApiClient api;
 
-  /// Playback polling cadence for the Spotify card; zero (default, tests)
-  /// keeps polling off. Production wires 5s through AppShell.
+  /// Fallback playback polling cadence for the Spotify card; zero (default,
+  /// tests) keeps polling and SSE off. Production wires 30s through AppShell
+  /// and SSE events converge state in between.
   final Duration spotifyPollInterval;
 
   @override
@@ -1364,10 +1365,12 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
                     ),
                   ),
                 _buildSpotifyNowPlaying(),
+                _buildSpotifyProgress(),
                 const SizedBox(height: 6),
                 _buildSpotifyTransport(),
                 _buildSpotifyVolume(),
                 _buildSpotifyDevicePicker(),
+                _buildSpotifyQueue(),
                 if (_spotify.error != null) ...[
                   const SizedBox(height: 4),
                   Text(
@@ -1462,10 +1465,102 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     );
   }
 
-  /// Transport row. Disabled while no device is available: a command with no
-  /// active device is a guaranteed 409, not something to fake.
+  /// Progress row under the now-playing block. Rendered only when the track
+  /// reports a duration; the position comes from the controller's local
+  /// interpolation, so it advances without extra network traffic and stays
+  /// honest (frozen) while paused.
+  Widget _buildSpotifyProgress() {
+    final duration = _spotify.durationMs;
+    if (_spotify.track == null || duration == null || duration <= 0) {
+      return const SizedBox.shrink();
+    }
+    final position = (_spotify.progressMs ?? 0).clamp(0, duration);
+    const timeStyle = TextStyle(fontSize: 11, color: AppColors.textDim);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(
+              value: position / duration,
+              minHeight: 4,
+              backgroundColor: AppColors.border,
+              color: AppColors.accent,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(_formatPlaybackTime(position), style: timeStyle),
+              Text(_formatPlaybackTime(duration), style: timeStyle),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Upcoming queue preview ("A continuación"), hidden while empty or
+  /// unknown. Never invents rows.
+  Widget _buildSpotifyQueue() {
+    final upcoming = _spotify.upcomingQueue.take(3).toList();
+    if (upcoming.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'A continuación',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: AppColors.text,
+            ),
+          ),
+          const SizedBox(height: 6),
+          for (final item in upcoming)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.queue_music_rounded,
+                    size: 14,
+                    color: AppColors.textDim,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _formatQueueItem(item),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textDim,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Transport row. When the backend advertises the executable [actions]
+  /// (SSE state), gating follows that list; otherwise it falls back to the
+  /// device check: a command with no active device is a guaranteed 409.
   Widget _buildSpotifyTransport() {
-    final enabled = _spotify.activeDevice != null;
+    final actions = _spotify.player?['actions'];
+    final gated = actions is List && actions.isNotEmpty;
+    final hasDevice = _spotify.activeDevice != null;
+    bool enabledFor(String action) =>
+        gated ? _spotify.actionEnabled(action) : hasDevice;
     final playing = _spotify.isPlaying;
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -1473,12 +1568,12 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
         IconButton(
           tooltip: 'Anterior',
           visualDensity: VisualDensity.compact,
-          onPressed: enabled ? _spotify.previous : null,
+          onPressed: enabledFor('skip_prev') ? _spotify.previous : null,
           icon: const Icon(Icons.skip_previous_rounded),
         ),
         IconButton.filled(
           tooltip: playing ? 'Pausar' : 'Reproducir',
-          onPressed: enabled
+          onPressed: enabledFor(playing ? 'pause' : 'play')
               ? (playing ? _spotify.pause : _spotify.play)
               : null,
           icon: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded),
@@ -1486,7 +1581,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
         IconButton(
           tooltip: 'Siguiente',
           visualDensity: VisualDensity.compact,
-          onPressed: enabled ? _spotify.next : null,
+          onPressed: enabledFor('skip_next') ? _spotify.next : null,
           icon: const Icon(Icons.skip_next_rounded),
         ),
       ],
@@ -2913,4 +3008,21 @@ class _ThemePresetTile extends StatelessWidget {
       ),
     );
   }
+}
+
+/// `mm:ss` for a playback position/duration in milliseconds.
+String _formatPlaybackTime(int milliseconds) {
+  final totalSeconds = (milliseconds / 1000).floor();
+  final minutes = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+  final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
+  return '$minutes:$seconds';
+}
+
+/// `name · artist` for a queue item, degrading to whichever field exists.
+String _formatQueueItem(Map<String, dynamic> item) {
+  final name = item['name']?.toString() ?? '';
+  final artist = item['artist']?.toString() ?? '';
+  if (artist.isEmpty) return name;
+  if (name.isEmpty) return artist;
+  return '$name · $artist';
 }

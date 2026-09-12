@@ -4,12 +4,59 @@ import 'package:flutter/foundation.dart';
 
 import '../../data/api_client.dart';
 
+/// Interpolates the current playback position from the backend's position
+/// anchor: `position_ms + (nowMs - timestamp_ms) * speed`, clamped to
+/// `[0, duration_ms]`.
+///
+/// A speed <= 0 (paused) returns `position_ms`; without an anchor the track's
+/// `progress_ms` is used; with no usable data the result is null. Pure so it
+/// is testable without timers or a real clock.
+int? interpolatedPositionMs(
+  Map<String, dynamic>? player, {
+  required int nowMs,
+}) {
+  if (player == null) return null;
+  final track = player['track'];
+  final durationMs = track is Map ? _asNum(track['duration_ms']) : null;
+  final anchor = player['position'];
+  if (anchor is Map) {
+    final positionMs = _asNum(anchor['position_ms']);
+    if (positionMs == null) return _trackProgressMs(player);
+    final timestampMs = _asNum(anchor['timestamp_ms']);
+    final speed = _asNum(anchor['speed']);
+    if (timestampMs == null || speed == null || speed <= 0) {
+      return _clampPosition(positionMs.round(), durationMs);
+    }
+    final elapsed = nowMs - timestampMs.round();
+    return _clampPosition(
+      positionMs.round() + (elapsed * speed).round(),
+      durationMs,
+    );
+  }
+  return _trackProgressMs(player);
+}
+
+int? _trackProgressMs(Map<String, dynamic> player) {
+  final track = player['track'];
+  if (track is! Map) return null;
+  return _asNum(track['progress_ms'])?.round();
+}
+
+int _clampPosition(int value, num? durationMs) {
+  if (value < 0) return 0;
+  if (durationMs != null && value > durationMs) return durationMs.round();
+  return value;
+}
+
+num? _asNum(Object? value) => value is num ? value : null;
+
 /// Shared Spotify playback state for the desktop and wall surfaces.
 ///
 /// Everything rendered from this controller reflects the last canonical
-/// response (or null/empty while unknown) — never a fabricated track/device.
-/// Commands call the backend with the explicit [selectedDeviceId] when the
-/// user picked one and `null` otherwise, so the backend resolves the device.
+/// response or SSE event (or null/empty while unknown) — never a fabricated
+/// track/device. Commands call the backend with the explicit
+/// [selectedDeviceId] when the user picked one and `null` otherwise, so the
+/// backend resolves the device.
 class SpotifyPlayerController extends ChangeNotifier {
   SpotifyPlayerController(this.api);
 
@@ -19,13 +66,18 @@ class SpotifyPlayerController extends ChangeNotifier {
   List<Map<String, dynamic>> _devices = const [];
   String? _defaultDeviceId;
   String? _selectedDeviceId;
+  Map<String, dynamic> _queue = const {};
   bool _loading = false;
   String? _error;
   bool _needsAuth = false;
   Timer? _pollTimer;
+  Timer? _resubscribeTimer;
+  Timer? _ticker;
+  StreamSubscription<Map<String, dynamic>>? _eventsSub;
+  bool _live = false;
   bool _disposed = false;
 
-  /// Last `GET /spotify/player` body, or null while unknown/unavailable.
+  /// Last `GET /spotify/player` body (or SSE merge), or null while unknown.
   Map<String, dynamic>? get player => _player;
 
   /// Last successfully loaded `GET /spotify/devices` list.
@@ -65,8 +117,38 @@ class SpotifyPlayerController extends ChangeNotifier {
     return null;
   }
 
-  /// Loads the player state and the device list. The device call is
-  /// non-fatal: a failed listing keeps the last known devices.
+  /// Upcoming tracks from the last queue event/fetch, empty while unknown.
+  List<Map<String, dynamic>> get upcomingQueue => _queueList('upcoming');
+
+  /// Tracks played before the current one, empty while unknown.
+  List<Map<String, dynamic>> get previousQueue => _queueList('previous');
+
+  /// True when the backend truncated the queue listing.
+  bool get queueLimited => _queue['limited'] == true;
+
+  /// Interpolated playback position in ms; null while unknown.
+  int? get progressMs => interpolatedPositionMs(
+    _player,
+    nowMs: DateTime.now().millisecondsSinceEpoch,
+  );
+
+  /// Current track duration in ms; null while unknown.
+  int? get durationMs {
+    final value = track?['duration_ms'];
+    return value is num ? value.round() : null;
+  }
+
+  /// True when the backend did not advertise an action list (legacy player
+  /// responses keep the previous gating) or when [action] is advertised.
+  bool actionEnabled(String action) {
+    final actions = _player?['actions'];
+    if (actions is! List || actions.isEmpty) return true;
+    return actions.contains(action);
+  }
+
+  /// Loads the player state, the device list and the playback queue. The
+  /// device and queue calls are non-fatal: a failed listing keeps the last
+  /// known data.
   Future<void> refresh() async {
     if (_disposed) return;
     _loading = true;
@@ -93,6 +175,15 @@ class SpotifyPlayerController extends ChangeNotifier {
     }
     if (_disposed) return;
 
+    Map<String, dynamic> queue = _queue;
+    try {
+      final data = await api.spotifyPlaybackQueue(limit: 20);
+      queue = _normalizeQueue(data);
+    } catch (_) {
+      // Non-fatal: a failed queue read keeps the last known queue.
+    }
+    if (_disposed) return;
+
     if (playerError != null) {
       _player = null;
       _needsAuth = _isAuthError(playerError);
@@ -102,11 +193,13 @@ class SpotifyPlayerController extends ChangeNotifier {
       _needsAuth = false;
       _error = null;
     }
-    // Devices apply independently: a failed player call must not erase a
-    // successful device listing (and vice versa).
+    // Devices and queue apply independently: a failed player call must not
+    // erase successful listings (and vice versa).
     _devices = devices;
     _defaultDeviceId = defaultDeviceId;
+    _queue = queue;
     _loading = false;
+    _syncTicker();
     notifyListeners();
   }
 
@@ -154,17 +247,29 @@ class SpotifyPlayerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Starts periodic refreshes. [interval] <= [Duration.zero] disables
-  /// polling (tests mount with zero so no timer outlives the widget tree).
+  /// Starts periodic refreshes plus the SSE stream. [interval] <=
+  /// [Duration.zero] disables everything (tests mount with zero so no timer
+  /// or subscription outlives the widget tree). The interval is the fallback
+  /// cadence; SSE events converge state in between.
   void startPolling({Duration interval = const Duration(seconds: 5)}) {
     stopPolling();
     if (_disposed || interval <= Duration.zero) return;
+    _live = true;
     _pollTimer = Timer.periodic(interval, (_) => unawaited(refresh()));
+    _subscribeEvents();
+    _syncTicker();
   }
 
   void stopPolling() {
+    _live = false;
     _pollTimer?.cancel();
     _pollTimer = null;
+    _resubscribeTimer?.cancel();
+    _resubscribeTimer = null;
+    _ticker?.cancel();
+    _ticker = null;
+    unawaited(_eventsSub?.cancel());
+    _eventsSub = null;
   }
 
   @override
@@ -172,6 +277,110 @@ class SpotifyPlayerController extends ChangeNotifier {
     _disposed = true;
     stopPolling();
     super.dispose();
+  }
+
+  /// Subscribes to the shared event stream. A dropped stream triggers one
+  /// immediate refresh and a resubscribe after ~5s while polling is live.
+  void _subscribeEvents() {
+    unawaited(_eventsSub?.cancel());
+    _eventsSub = api.events().listen(
+      _onEvent,
+      onError: (Object _, StackTrace _) => _handleStreamDown(),
+      onDone: _handleStreamDown,
+    );
+  }
+
+  void _handleStreamDown() {
+    if (_disposed || !_live) return;
+    unawaited(refresh());
+    if (_resubscribeTimer != null) return;
+    _resubscribeTimer = Timer(const Duration(seconds: 5), () {
+      _resubscribeTimer = null;
+      if (_disposed || !_live) return;
+      _subscribeEvents();
+    });
+  }
+
+  void _onEvent(Map<String, dynamic> event) {
+    final data = event['data'];
+    if (data is! Map) return;
+    switch (event['event']) {
+      case 'spotify_state_changed':
+        _applyStateEvent(data.cast<String, dynamic>());
+      case 'spotify_queue_changed':
+        _applyQueueEvent(data.cast<String, dynamic>());
+    }
+  }
+
+  /// Merges an SSE `spotify_state_changed` payload over the last player
+  /// response. The event carries no device, so the previous device map is
+  /// preserved; it is proof of a usable account, so auth/error are cleared.
+  void _applyStateEvent(Map<String, dynamic> data) {
+    final merged = <String, dynamic>{...?_player};
+    final status = data['status'];
+    if (status is String) {
+      merged['is_playing'] = status == 'playing' || status == 'buffering';
+    }
+    if (data.containsKey('item')) {
+      final item = data['item'];
+      merged['track'] = item is Map ? item.cast<String, dynamic>() : null;
+    }
+    final volume = data['volume'];
+    if (volume is num) merged['volume_percent'] = volume.round();
+    if (data.containsKey('shuffle')) merged['shuffle'] = data['shuffle'];
+    if (data.containsKey('repeat')) merged['repeat'] = data['repeat'];
+    final position = data['position'];
+    if (position is Map) {
+      merged['position'] = position.cast<String, dynamic>();
+    }
+    final actions = data['actions'];
+    if (actions is List) merged['actions'] = actions;
+    if (data.containsKey('is_active')) merged['is_active'] = data['is_active'];
+    merged['has_playback'] = true;
+    _player = merged;
+    _needsAuth = false;
+    _error = null;
+    _syncTicker();
+    notifyListeners();
+  }
+
+  void _applyQueueEvent(Map<String, dynamic> data) {
+    _queue = _normalizeQueue(data);
+    notifyListeners();
+  }
+
+  Map<String, dynamic> _normalizeQueue(Map<String, dynamic> data) => {
+    'previous': data['previous'] is List ? data['previous'] : const [],
+    'upcoming': data['upcoming'] is List ? data['upcoming'] : const [],
+    'limited': data['limited'] == true,
+  };
+
+  List<Map<String, dynamic>> _queueList(String key) {
+    final value = _queue[key];
+    return value is List ? value.cast<Map<String, dynamic>>() : const [];
+  }
+
+  /// Advances the local progress while playing. Only a live controller with
+  /// an anchor and a non-zero speed ticks; paused playback stays honest and
+  /// zero-interval controllers never start a timer.
+  void _syncTicker() {
+    final anchor = _player?['position'];
+    final speed = anchor is Map ? _asNum(anchor['speed']) : null;
+    final wanted =
+        _live &&
+        !_disposed &&
+        isPlaying &&
+        anchor is Map &&
+        speed != null &&
+        speed != 0;
+    if (wanted) {
+      _ticker ??= Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!_disposed) notifyListeners();
+      });
+    } else {
+      _ticker?.cancel();
+      _ticker = null;
+    }
   }
 
   /// Runs one backend command, then refreshes so the UI converges on the

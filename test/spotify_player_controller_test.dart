@@ -1,3 +1,4 @@
+import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -41,18 +42,51 @@ class _FakeSpotifyApi extends ApiClient {
 
   Object? playerError;
   Object? devicesError;
+  Object? queueError;
   Object? commandError;
   int playerCalls = 0;
   int deviceCalls = 0;
+  int queueCalls = 0;
+  int eventsCalls = 0;
   final commands = <String>[];
   final commandDeviceIds = <String?>[];
   final commandUris = <String?>[];
+
+  /// Queue listing returned by [spotifyPlaybackQueue].
+  Map<String, dynamic> queue = {
+    'previous': [],
+    'upcoming': [],
+    'limited': false,
+  };
+
+  /// SSE stand-in: the controller subscribes through [events] and tests push
+  /// payloads with [emitEvent]. Never closes on its own, so no resubscribe
+  /// timers fire in tests.
+  final eventsController = StreamController<Map<String, dynamic>>.broadcast();
+
+  void emitEvent(String name, Map<String, dynamic> data) =>
+      eventsController.add({'event': name, 'data': data});
+
+  Future<void> close() => eventsController.close();
 
   Map<String, dynamic> _command(String action, String? deviceId) {
     commands.add(action);
     commandDeviceIds.add(deviceId);
     if (commandError != null) throw commandError!;
     return {'ok': true, 'action': action, 'device_id': deviceId};
+  }
+
+  @override
+  Stream<Map<String, dynamic>> events() {
+    eventsCalls++;
+    return eventsController.stream;
+  }
+
+  @override
+  Future<Map<String, dynamic>> spotifyPlaybackQueue({int limit = 20}) async {
+    queueCalls++;
+    if (queueError != null) throw queueError!;
+    return queue;
   }
 
   @override
@@ -321,6 +355,247 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 40));
 
     expect(api.playerCalls, 0);
+    expect(api.queueCalls, 0);
+    expect(api.eventsCalls, 0);
     controller.dispose();
+  });
+
+  test(
+    'refresh() carga la cola y un fallo de cola conserva la conocida',
+    () async {
+      final api = _FakeSpotifyApi()
+        ..queue = {
+          'previous': [
+            {'uri': 'spotify:track:1', 'name': 'Anterior', 'artist': 'A'},
+          ],
+          'upcoming': [
+            {'uri': 'spotify:track:2', 'name': 'Siguiente', 'artist': 'B'},
+          ],
+          'limited': true,
+        };
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+
+      expect(controller.previousQueue, hasLength(1));
+      expect(controller.upcomingQueue, hasLength(1));
+      expect(controller.upcomingQueue.first['name'], 'Siguiente');
+      expect(controller.queueLimited, isTrue);
+      expect(api.queueCalls, 1);
+
+      api.queueError = ApiException(500, {'detail': 'cola caída'});
+      await controller.refresh();
+
+      expect(controller.error, isNull);
+      expect(controller.upcomingQueue.first['name'], 'Siguiente');
+      controller.dispose();
+    },
+  );
+
+  test('spotify_state_changed mergea el estado sin fabricar device', () async {
+    final api = _FakeSpotifyApi();
+    final controller = SpotifyPlayerController(api);
+    await controller.refresh();
+    controller.startPolling(interval: const Duration(hours: 1));
+    expect(api.eventsCalls, 1);
+
+    api.emitEvent('spotify_state_changed', {
+      'status': 'playing',
+      'is_active': true,
+      'volume': 42,
+      'shuffle': true,
+      'repeat': 'context',
+      'item': {
+        'uri': 'spotify:track:9',
+        'name': 'Nueva',
+        'artist': 'Otra',
+        'album': null,
+        'image_url': null,
+        'duration_ms': 180000,
+      },
+      'position': {'position_ms': 5000, 'timestamp_ms': 1000000, 'speed': 1.0},
+      'actions': ['play', 'pause', 'skip_next', 'skip_prev'],
+    });
+    await pumpEventQueue();
+
+    expect(controller.player?['has_playback'], true);
+    expect(controller.isPlaying, isTrue);
+    expect(controller.track?['name'], 'Nueva');
+    expect(controller.player?['volume_percent'], 42);
+    expect(controller.player?['shuffle'], true);
+    expect(controller.player?['repeat'], 'context');
+    expect(controller.progressMs, isNotNull);
+    expect(controller.actionEnabled('skip_next'), isTrue);
+    expect(controller.actionEnabled('seek'), isFalse);
+    // The event carries no device: the previous player's map is preserved.
+    expect(controller.activeDevice?['name'], 'Parlante');
+
+    // buffering counts as playing for the transport affordance.
+    api.emitEvent('spotify_state_changed', {
+      'status': 'buffering',
+      'item': null,
+      'position': {'position_ms': 0, 'timestamp_ms': 0, 'speed': 0.0},
+    });
+    await pumpEventQueue();
+    expect(controller.isPlaying, isTrue);
+
+    controller.dispose();
+    await api.close();
+  });
+
+  test('spotify_queue_changed guarda previous/upcoming/limited', () async {
+    final api = _FakeSpotifyApi();
+    final controller = SpotifyPlayerController(api);
+    controller.startPolling(interval: const Duration(hours: 1));
+
+    api.emitEvent('spotify_queue_changed', {
+      'previous': [
+        {'uri': 'spotify:track:1', 'name': 'Antes', 'artist': 'A'},
+      ],
+      'upcoming': [
+        {'uri': 'spotify:track:2', 'name': 'Después', 'artist': 'B'},
+      ],
+      'limited': true,
+    });
+    await pumpEventQueue();
+
+    expect(controller.previousQueue, hasLength(1));
+    expect(controller.upcomingQueue.single['name'], 'Después');
+    expect(controller.queueLimited, isTrue);
+    controller.dispose();
+    await api.close();
+  });
+
+  test(
+    'actionEnabled respeta la lista del backend y el fallback vacío',
+    () async {
+      final api = _FakeSpotifyApi();
+      final controller = SpotifyPlayerController(api);
+
+      // No player yet: no advertised list means the legacy gating applies.
+      expect(controller.actionEnabled('skip_next'), isTrue);
+      await controller.refresh();
+      expect(controller.actionEnabled('skip_next'), isTrue);
+
+      api.player = {
+        ...api.player,
+        'actions': ['play', 'skip_next'],
+      };
+      await controller.refresh();
+
+      expect(controller.actionEnabled('skip_next'), isTrue);
+      expect(controller.actionEnabled('skip_prev'), isFalse);
+      expect(controller.actionEnabled('pause'), isFalse);
+      controller.dispose();
+    },
+  );
+
+  group('interpolatedPositionMs', () {
+    test('proyecta el ancla con speed', () {
+      expect(
+        interpolatedPositionMs({
+          'track': {'duration_ms': 30000},
+          'position': {'position_ms': 5000, 'timestamp_ms': 1000, 'speed': 2.0},
+        }, nowMs: 2000),
+        7000,
+      );
+    });
+
+    test('clampa a [0, duration_ms]', () {
+      expect(
+        interpolatedPositionMs({
+          'track': {'duration_ms': 10000},
+          'position': {'position_ms': 9000, 'timestamp_ms': 0, 'speed': 1.0},
+        }, nowMs: 5000),
+        10000,
+      );
+      expect(
+        interpolatedPositionMs({
+          'track': {'duration_ms': 10000},
+          'position': {'position_ms': 1000, 'timestamp_ms': 2000, 'speed': 1.0},
+        }, nowMs: 0),
+        0,
+      );
+    });
+
+    test('speed <= 0 devuelve position_ms sin proyectar', () {
+      expect(
+        interpolatedPositionMs({
+          'track': {'duration_ms': 10000},
+          'position': {'position_ms': 2500, 'timestamp_ms': 0, 'speed': 0.0},
+        }, nowMs: 9000),
+        2500,
+      );
+    });
+
+    test('sin ancla usa track.progress_ms', () {
+      expect(
+        interpolatedPositionMs({
+          'track': {'progress_ms': 1234, 'duration_ms': 10000},
+        }, nowMs: 9999),
+        1234,
+      );
+    });
+
+    test('sin datos devuelve null', () {
+      expect(interpolatedPositionMs(null, nowMs: 0), isNull);
+      expect(interpolatedPositionMs({}, nowMs: 0), isNull);
+      expect(interpolatedPositionMs({'track': {}}, nowMs: 0), isNull);
+    });
+  });
+
+  testWidgets('un error del stream refresca y reprograma la suscripción', (
+    tester,
+  ) async {
+    final api = _FakeSpotifyApi();
+    final controller = SpotifyPlayerController(api);
+    await controller.refresh();
+    final refreshesBefore = api.playerCalls;
+
+    controller.startPolling(interval: const Duration(hours: 1));
+    expect(api.eventsCalls, 1);
+
+    api.eventsController.addError(StateError('stream caído'));
+    await tester.pump();
+    await tester.idle();
+
+    // The drop triggers one immediate refresh without resubscribing yet.
+    expect(api.playerCalls, greaterThan(refreshesBefore));
+    expect(api.eventsCalls, 1);
+
+    await tester.pump(const Duration(seconds: 5));
+    expect(api.eventsCalls, 2);
+
+    controller.dispose();
+    await api.close();
+  });
+
+  testWidgets('el ticker notifica mientras suena y se detiene al pausar', (
+    tester,
+  ) async {
+    final api = _FakeSpotifyApi();
+    api.player = {
+      ...api.player,
+      'position': {'position_ms': 1000, 'timestamp_ms': 0, 'speed': 1.0},
+    };
+    final controller = SpotifyPlayerController(api);
+    await controller.refresh();
+    controller.startPolling(interval: const Duration(hours: 1));
+
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+
+    await tester.pump(const Duration(seconds: 1));
+    expect(notifications, greaterThanOrEqualTo(1));
+
+    // Paused via SSE: the ticker must stop advancing locally.
+    api.emitEvent('spotify_state_changed', {'status': 'paused', 'item': null});
+    await tester.pump();
+    await tester.idle();
+    final afterPause = notifications;
+    await tester.pump(const Duration(seconds: 2));
+    expect(notifications, afterPause);
+
+    controller.dispose();
+    await api.close();
   });
 }

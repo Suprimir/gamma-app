@@ -114,11 +114,13 @@ vez de inventar estado.
 
 **Lado app (2026-09-12):** `ApiClient` expone los 13 métodos;
 `SpotifyPlayerController` (`lib/features/spotify/`) comparte estado entre
-desktop y wall (refresh de player+devices, comandos device-scoped, polling
-de 5s cableado desde `main.dart` → `AppShell`, `needsAuth` en 401/503); la
-tarjeta Spotify del desktop reproduce playlists con `playContext`, muestra
-transporte/volumen/selector de dispositivo; el card de música del wall usa
-los mismos estados con targets táctiles grandes.
+desktop y wall (refresh de player+devices, comandos device-scoped, eventos
+SSE en tiempo real `spotify_state_changed`/`spotify_queue_changed` con poll
+de respaldo cada 30s cableado desde `main.dart` → `AppShell`, `needsAuth`
+en 401/503); la tarjeta Spotify del desktop reproduce playlists con
+`playContext`, muestra transporte/volumen/selector de dispositivo/progreso
+interpolado/cola; el card de música del wall usa los mismos estados con
+targets táctiles grandes.
 
 ## 5. Voz: STT puro para dictado
 
@@ -182,8 +184,11 @@ quiere server-side: endpoint de clima por ubicación configurable.
 - **Dashboards**: sin fallback a mock, cámaras por `/cameras/status`,
   playlists con metadata real, tarjeta de estado sin inventar.
 - **Spotify playback**: controller compartido (desktop + wall) con refresh
-  de player/devices, polling de 5s, transporte, volumen, selector de
-  dispositivo y tap de playlist → `playContext` (context_uri real).
+  de player/devices, **SSE en tiempo real** (poll de respaldo 30s), progreso
+  interpolado en cliente, cola "A continuación", transporte, volumen,
+  selector de dispositivo y tap de playlist → `playContext` (context_uri
+  real). Fuente de estado: Soloist WS (`source: "soloist"`) con fallback al
+  Web API.
 - **Turns** con `session_id` desde chips mobile, acciones desktop y wall.
 - **Rutinas relacionadas** reales (GET /routines filtrado), **TTS preview**,
   **card de Sistema** (health), **bindings reales**, **identify honesto**,

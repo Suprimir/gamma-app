@@ -1149,6 +1149,36 @@ void main() {
       await server.close(force: true);
     });
 
+    test('spotifyPlaybackQueue() lee el listado con limit', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+      String? method;
+      String? limit;
+
+      server.listen((request) async {
+        method = request.method;
+        limit = request.uri.queryParameters['limit'];
+        request.response.write(
+          '{"previous":[{"uri":"spotify:track:1","name":"A","artist":"X",'
+          '"image_url":null,"source":"soloist"}],'
+          '"upcoming":[{"uri":"spotify:track:2","name":"B","artist":"Y",'
+          '"image_url":null,"source":"soloist"}],'
+          '"source":"soloist","limited":false}',
+        );
+        await request.response.close();
+      });
+
+      final queue = await client.spotifyPlaybackQueue(limit: 5);
+
+      expect(method, 'GET');
+      expect(limit, '5');
+      expect(queue['limited'], false);
+      expect(queue['source'], 'soloist');
+      expect((queue['previous'] as List), hasLength(1));
+      expect((queue['upcoming'] as List), hasLength(1));
+      await server.close(force: true);
+    });
+
     test('spotifyPlay() envía exactamente un selector y omite nulos', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');

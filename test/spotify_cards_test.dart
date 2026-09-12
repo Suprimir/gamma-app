@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media_kit/media_kit.dart';
@@ -48,6 +50,66 @@ void main() {
     expect(api.commands, contains('resume'));
   });
 
+  testWidgets('wall music card renders progress and queue when available', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi()
+      ..upcomingQueue = [
+        {'uri': 'spotify:track:2', 'name': 'Tema 2', 'artist': 'Artista 2'},
+        {'uri': 'spotify:track:3', 'name': 'Tema 3', 'artist': 'Artista 3'},
+      ];
+    tester.view.physicalSize = const Size(1280, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: WallPanelHomePage(api: api, idleTimeout: null)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    // Track progress_ms 1000 / duration_ms 3000 from the fake player.
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.text('00:01'), findsOneWidget);
+    expect(find.text('00:03'), findsOneWidget);
+    expect(find.text('A continuación'), findsOneWidget);
+    expect(find.text('Tema 2 · Artista 2'), findsOneWidget);
+    expect(find.text('Tema 3 · Artista 3'), findsOneWidget);
+  });
+
+  testWidgets('wall transport follows the advertised actions list', (
+    tester,
+  ) async {
+    // Playing with pause/next executable but skip_prev not advertised.
+    final api = _SpotifyCardApi()..actions = ['pause', 'skip_next'];
+    tester.view.physicalSize = const Size(1280, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: WallPanelHomePage(api: api, idleTimeout: null)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    final previous = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.skip_previous_rounded),
+    );
+    expect(previous.onPressed, isNull);
+    final next = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.skip_next_rounded),
+    );
+    expect(next.onPressed, isNotNull);
+    final pause = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.pause_rounded),
+    );
+    expect(pause.onPressed, isNotNull);
+  });
+
   testWidgets('desktop playlist tap issues playContext with the real uri', (
     tester,
   ) async {
@@ -67,6 +129,34 @@ void main() {
 
     expect(api.lastPlayUri, 'spotify:playlist:42');
   });
+
+  testWidgets(
+    'desktop Spotify card renders progress and queue when available',
+    (tester) async {
+      final api = _SpotifyCardApi()
+        ..upcomingQueue = [
+          {'uri': 'spotify:track:2', 'name': 'Tema 2', 'artist': 'Artista 2'},
+          {'uri': 'spotify:track:3', 'name': 'Tema 3', 'artist': 'Artista 3'},
+        ];
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        MaterialApp(home: DesktopDashboardPage(api: api)),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1400));
+
+      // Track progress_ms 1000 / duration_ms 3000 from the fake player.
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      expect(find.text('00:01'), findsOneWidget);
+      expect(find.text('00:03'), findsOneWidget);
+      expect(find.text('A continuación'), findsOneWidget);
+      expect(find.text('Tema 2 · Artista 2'), findsOneWidget);
+      expect(find.text('Tema 3 · Artista 3'), findsOneWidget);
+    },
+  );
 
   testWidgets('wall music card is honest with no device: transport disabled', (
     tester,
@@ -252,6 +342,26 @@ class _SpotifyCardApi extends ApiClient {
   int settingsCalls = 0;
   int playlistsCalls = 0;
 
+  /// Queue listing returned by [spotifyPlaybackQueue].
+  List<Map<String, dynamic>> upcomingQueue = [];
+
+  /// When non-null, the player advertises this executable actions list.
+  List<String>? actions;
+
+  /// SSE stand-in: never emits nor completes, so polling tests stay offline
+  /// and no resubscribe timer fires.
+  final _events = StreamController<Map<String, dynamic>>.broadcast();
+
+  @override
+  Stream<Map<String, dynamic>> events() => _events.stream;
+
+  @override
+  Future<Map<String, dynamic>> spotifyPlaybackQueue({int limit = 20}) async => {
+    'previous': [],
+    'upcoming': upcomingQueue,
+    'limited': false,
+  };
+
   @override
   Future<Map<String, dynamic>> deviceInventory({bool pending = false}) async =>
       {'devices': []};
@@ -323,6 +433,7 @@ class _SpotifyCardApi extends ApiClient {
       'shuffle': false,
       'repeat': 'off',
       'volume_percent': 70,
+      if (actions != null) 'actions': actions,
     };
   }
 
