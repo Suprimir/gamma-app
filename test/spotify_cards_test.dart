@@ -299,7 +299,7 @@ void main() {
     final api = _SpotifyCardApi()..hasPlayback = false;
     await pumpWall(tester, api);
 
-    expect(find.text('Conectado'), findsOneWidget);
+    expect(find.text('Conectado'), findsNothing);
     expect(find.text('Sin reproducción'), findsOneWidget);
     // No account line, playlists or player stack in the wall launcher.
     expect(find.text('Luis'), findsNothing);
@@ -328,7 +328,7 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     await tester.pump();
 
-    expect(find.text('Conectado'), findsOneWidget);
+    expect(find.text('Conectado'), findsNothing);
     expect(find.text('Sin reproducción'), findsOneWidget);
     // Header + hint only: the settings read stays one-shot.
     expect(api.settingsCalls, 1);
@@ -611,8 +611,8 @@ void main() {
     expect(find.text('Conectar Spotify'), findsOneWidget);
 
     // Authorization completed from Settings while the dashboard is open: the
-    // player poll converges the card and the one-shot refetch fills the
-    // account name and playlists.
+    // player poll converges the card and the one-shot refetch reloads the
+    // playlists.
     api
       ..authenticated = true
       ..spotifyReady = true
@@ -631,12 +631,13 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     await tester.pump();
 
-    expect(find.text('Conectado'), findsOneWidget);
+    // Connected state shows no status chrome (only the disconnected case).
+    expect(find.text('Conectado'), findsNothing);
     expect(find.text('Sin reproducción'), findsOneWidget);
-    expect(find.text('Conectado como Luis'), findsOneWidget);
+    expect(find.text('Conectado como Luis'), findsNothing);
     expect(find.text('Mi Playlist'), findsOneWidget);
-    // Initial home load plus the one-shot refetch triggered by the player.
-    expect(api.settingsCalls, 2);
+    // Initial home load; the one-shot refetch only reloads playlists.
+    expect(api.settingsCalls, 1);
     expect(api.playlistsCalls, 2);
 
     // Disconnect direction: a 401/503 player response restores the connect

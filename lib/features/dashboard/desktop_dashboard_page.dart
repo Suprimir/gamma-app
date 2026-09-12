@@ -73,7 +73,6 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   List<Map<String, dynamic>> _routines = const [];
   List<Map<String, dynamic>> _playlists = const [];
   bool _spotifyConnected = false;
-  String _spotifyAccount = '';
 
   /// Guards the one-shot settings/playlists refetch that runs once the player
   /// answers: duplicate in-flight reads are skipped and failures keep the
@@ -593,7 +592,6 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
         _spotifyConnected =
             spotifySettings['authenticated'] == true &&
             spotifySettings['client_id_configured'] != false;
-        _spotifyAccount = spotifySettings['account_name']?.toString() ?? '';
         _playlists =
             (playlistsData['playlists'] as List?)
                 ?.cast<Map<String, dynamic>>() ??
@@ -1282,22 +1280,13 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     unawaited(_refreshSpotifyDetails());
   }
 
-  /// One-shot refetch of the Spotify fields loaded in [_loadData]: account
-  /// name and playlists. Never polls: the settings endpoint hits Spotify
-  /// upstream. Each read is independent and failures keep the previous data.
+  /// One-shot refetch of the playlists loaded in [_loadData], triggered once
+  /// the player answers. Never polls: the settings endpoint hits Spotify
+  /// upstream. Failures keep the previous data.
   Future<void> _refreshSpotifyDetails() async {
     if (_spotifyDetailsRefreshInFlight) return;
     _spotifyDetailsRefreshInFlight = true;
     try {
-      try {
-        final settings = await widget.api.spotifySettings();
-        if (!mounted) return;
-        setState(
-          () => _spotifyAccount = settings['account_name']?.toString() ?? '',
-        );
-      } catch (_) {
-        // Keep the previous account name.
-      }
       try {
         final playlistsData = await widget.api.spotifyPlaylists(limit: 6);
         if (!mounted) return;
@@ -1396,8 +1385,10 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
             color: AppColors.text,
           ),
         ),
-        const SizedBox(width: 8),
-        _Pill(text: connected ? 'Conectado' : 'Sin conectar', ok: connected),
+        if (!connected) ...[
+          const SizedBox(width: 8),
+          _Pill(text: 'Sin conectar', ok: false),
+        ],
       ],
     );
   }
@@ -1412,14 +1403,6 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Center(child: _buildSpotifyHeader(connected: true)),
-        if (_spotifyAccount.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text(
-            'Conectado como $_spotifyAccount',
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 12, color: AppColors.textDim),
-          ),
-        ],
         if (pinned) ...[
           const SizedBox(height: 4),
           Center(

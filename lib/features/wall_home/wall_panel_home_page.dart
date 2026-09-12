@@ -1297,26 +1297,25 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                       color: Colors.white,
                     ),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: connected ? Colors.green : Colors.white24,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      _loading
-                          ? '...'
-                          : (connected ? 'Conectado' : 'Sin conectar'),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
+                  if (!_loading && !connected)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        'Sin conectar',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
               const SizedBox(height: 6),
