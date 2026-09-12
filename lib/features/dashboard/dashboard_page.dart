@@ -450,7 +450,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   child: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      const Icon(
+                                      Icon(
                                         Icons.calendar_today_rounded,
                                         size: 12,
                                         color: AppColors.accent,

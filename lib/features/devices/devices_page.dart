@@ -277,7 +277,7 @@ class _DevicesPageState extends State<DevicesPage> {
                         ),
                         child: Text(
                           '${areas.length}',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
                             color: AppColors.accent,
@@ -885,7 +885,7 @@ Future<_QuickAction?> _showDeviceQuickSheet({
             const Divider(height: 1, color: Color(0xFFF1F3F6)),
             ListTile(
               contentPadding: EdgeInsets.zero,
-              leading: const Icon(
+              leading: Icon(
                 CupertinoIcons.antenna_radiowaves_left_right,
                 color: AppColors.accent,
               ),
@@ -898,7 +898,7 @@ Future<_QuickAction?> _showDeviceQuickSheet({
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,
-              leading: const Icon(
+              leading: Icon(
                 CupertinoIcons.slider_horizontal_3,
                 color: AppColors.accent,
               ),
@@ -928,7 +928,7 @@ class _DashboardToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const blue = AppColors.accent;
+    final blue = AppColors.accent;
     const trackOff = Color(0xFFE5E7EB);
     return Semantics(
       label: isOn ? 'Encendido' : 'Apagado',
@@ -1050,7 +1050,7 @@ class _NavigationRow extends StatelessWidget {
     required this.subtitle,
     required this.badge,
     required this.onTap,
-    this.badgeColor = AppColors.accentStrong,
+    this.badgeColor,
   });
 
   final IconData icon;
@@ -1058,10 +1058,11 @@ class _NavigationRow extends StatelessWidget {
   final String subtitle;
   final String badge;
   final VoidCallback onTap;
-  final Color badgeColor;
+  final Color? badgeColor;
 
   @override
   Widget build(BuildContext context) {
+    final badgeColor = this.badgeColor ?? AppColors.accentStrong;
     return Material(
       color: AppColors.surface,
       borderRadius: BorderRadius.circular(18),
@@ -2465,7 +2466,7 @@ class _DeviceHero extends StatelessWidget {
                       IconButton(
                         tooltip: 'Cambiar nombre',
                         onPressed: onRename,
-                        icon: const Icon(
+                        icon: Icon(
                           CupertinoIcons.pencil_outline,
                           size: 18,
                           color: AppColors.accent,
@@ -2646,7 +2647,7 @@ class _EndpointEditor extends StatelessWidget {
                         );
                       }
                     : onRename,
-                icon: const Icon(
+                icon: Icon(
                   CupertinoIcons.pencil_outline,
                   size: 18,
                   color: AppColors.accent,
@@ -3017,7 +3018,7 @@ class _GatewaysPage extends StatelessWidget {
                     color: AppColors.accentTint,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     CupertinoIcons.personalhotspot,
                     color: AppColors.accent,
                   ),

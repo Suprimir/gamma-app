@@ -10,6 +10,8 @@ import '../../adaptive/adaptive_scope.dart';
 import '../../adaptive/adaptive_surface_preferences.dart';
 import '../../data/api_client.dart';
 import '../../ui/app_colors.dart';
+import '../dashboard/home_theme.dart';
+import '../dashboard/home_theme_controller.dart';
 import '../modules/modules_section.dart';
 import '../../ui/shared_widgets.dart';
 
@@ -380,6 +382,8 @@ class _SettingsPageState extends State<SettingsPage> {
               padding: const EdgeInsets.all(20),
               sliver: SliverList.list(
                 children: [
+                  _appearanceCard(),
+                  const SizedBox(height: 14),
                   _voiceCard(),
                   const SizedBox(height: 14),
                   _spotifyCard(),
@@ -443,6 +447,55 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 18),
           child,
         ],
+      ),
+    );
+  }
+
+  Widget _appearanceCard() {
+    return _settingsCard(
+      icon: Icons.palette_outlined,
+      title: 'Apariencia',
+      child: ListenableBuilder(
+        listenable: HomeThemeController.instance.presetIdNotifier,
+        builder: (context, _) {
+          final selectedId =
+              HomeThemeController.instance.presetIdNotifier.value;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Tema',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textDim,
+                ),
+              ),
+              const SizedBox(height: 12),
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate:
+                    const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      mainAxisExtent: 78,
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 12,
+                    ),
+                itemCount: HomeThemePreset.allPresets.length,
+                itemBuilder: (context, i) {
+                  final preset = HomeThemePreset.allPresets[i];
+                  return _ThemePresetCard(
+                    key: ValueKey('theme-card-${preset.id}'),
+                    preset: preset,
+                    selected: preset.id == selectedId,
+                    onTap: () => HomeThemeController.instance.save(preset.id),
+                  );
+                },
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -702,7 +755,131 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: AppColors.accent, width: 1.4),
+        borderSide: BorderSide(color: AppColors.accent, width: 1.4),
+      ),
+    );
+  }
+}
+
+/// Selectable appearance card shown in the Apariencia section. Shows the
+/// preset's swatches, label and selection state; tapping applies it globally.
+class _ThemePresetCard extends StatelessWidget {
+  const _ThemePresetCard({
+    super.key,
+    required this.preset,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final HomeThemePreset preset;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = preset.accent;
+    const radius = 16.0;
+    return Material(
+      color: selected
+          ? accent.withValues(alpha: 0.10)
+          : AppColors.surfaceRaised,
+      borderRadius: BorderRadius.circular(radius),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(radius),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(radius),
+            border: Border.all(
+              color: selected ? accent : AppColors.border,
+              width: selected ? 1.8 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              _SwatchStack(
+                colors: preset.swatchColors,
+                diameter: 18,
+                overlap: 9,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      preset.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.text,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      preset.description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        height: 1.25,
+                        color: AppColors.textDim,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (selected) ...[
+                const SizedBox(width: 6),
+                Icon(Icons.check_circle, size: 20, color: accent),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Three overlapping swatch circles representing a theme's palette.
+class _SwatchStack extends StatelessWidget {
+  const _SwatchStack({
+    required this.colors,
+    required this.diameter,
+    required this.overlap,
+  });
+
+  final List<Color> colors;
+  final double diameter;
+  final double overlap;
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = colors.take(3).toList();
+    final width = diameter + (shown.length - 1) * overlap;
+    return SizedBox(
+      width: width,
+      height: diameter,
+      child: Stack(
+        children: [
+          for (var i = 0; i < shown.length; i++)
+            Positioned(
+              left: i * overlap,
+              child: Container(
+                width: diameter,
+                height: diameter,
+                decoration: BoxDecoration(
+                  color: shown[i],
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 1.5),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

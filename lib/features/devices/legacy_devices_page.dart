@@ -592,7 +592,7 @@ class _DeviceCardState extends State<_DeviceCard>
           color: isOn ? AppColors.accentTintActive : AppColors.border,
         ),
         boxShadow: isOn
-            ? const [
+            ? [
                 BoxShadow(
                   color: AppColors.accentTintHover,
                   blurRadius: 20,
