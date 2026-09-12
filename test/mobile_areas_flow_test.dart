@@ -97,9 +97,8 @@ void main() {
     expect(find.text('ENDPOINTS / CANALES'), findsOneWidget);
   });
 
-  testWidgets('offline device reports no-connection instead of off', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('offline device leaves the area grid and reports no-connection '
+      'under Desconectados', (WidgetTester tester) async {
     final repository = MockDeviceInventoryRepository();
 
     await tester.pumpWidget(
@@ -114,7 +113,31 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 150));
 
+    // Enchufe TV está offline: la grilla del área solo muestra dispositivos
+    // activos, así que queda fuera de Sala.
     await tester.tap(find.text('Sala'));
+    await tester.pumpAndSettle();
+    expect(find.text('Enchufe TV'), findsNothing);
+    expect(find.text('No hay dispositivos asignados a Sala.'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    // La fila Desconectados lo lista con el conteo real (1 dispositivo).
+    await tester.scrollUntilVisible(
+      find.text('Desconectados'),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    final desconectadosRow = find
+        .ancestor(of: find.text('Desconectados'), matching: find.byType(Row))
+        .first;
+    expect(
+      find.descendant(of: desconectadosRow, matching: find.text('1')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Desconectados'));
     await tester.pumpAndSettle();
 
     // Enchufe TV está offline: se muestra sin conexión, nunca como apagado.
@@ -188,14 +211,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Plafón cocina'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('Enchufe TV'),
-      500,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Enchufe TV'), findsOneWidget);
-    expect(find.text('Sin conexión'), findsOneWidget);
+    // Enchufe TV está offline: fuera del inventario completo, vive en
+    // Desconectados.
+    expect(find.text('Enchufe TV'), findsNothing);
 
     // Sin on_off (sensor online) el tap abre el detalle directamente.
     await tester.scrollUntilVisible(

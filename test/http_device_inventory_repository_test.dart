@@ -670,6 +670,62 @@ void main() {
     );
   });
 
+  group('final gate — device online tri-state', () {
+    test('online true parses as health online and reachable', () async {
+      final fake = FakeApiClient(
+        inventoryData: inventoryWith(
+          deviceMap(id: 'device_x', fields: {'online': true}),
+        ),
+      );
+
+      final snapshot = await HttpDeviceInventoryRepository(fake).load();
+
+      final device = snapshot.devices.single;
+      expect(device.health, DeviceHealthState.online);
+      expect(device.online, isTrue);
+    });
+
+    test('online false parses as health offline and not reachable', () async {
+      final fake = FakeApiClient(
+        inventoryData: inventoryWith(
+          deviceMap(id: 'device_x', fields: {'online': false}),
+        ),
+      );
+
+      final snapshot = await HttpDeviceInventoryRepository(fake).load();
+
+      final device = snapshot.devices.single;
+      expect(device.health, DeviceHealthState.offline);
+      expect(device.online, isFalse);
+    });
+
+    test('online null stays unknown instead of collapsing to offline', () async {
+      final fake = FakeApiClient(
+        inventoryData: inventoryWith(
+          deviceMap(id: 'device_x', fields: {'online': null}),
+        ),
+      );
+
+      final snapshot = await HttpDeviceInventoryRepository(fake).load();
+
+      final device = snapshot.devices.single;
+      expect(device.health, DeviceHealthState.unknown);
+      expect(device.online, isFalse);
+    });
+
+    test('absent online stays unknown for backward compatibility', () async {
+      final fake = FakeApiClient(
+        inventoryData: inventoryWith(deviceMap(id: 'device_x')),
+      );
+
+      final snapshot = await HttpDeviceInventoryRepository(fake).load();
+
+      final device = snapshot.devices.single;
+      expect(device.health, DeviceHealthState.unknown);
+      expect(device.online, isFalse);
+    });
+  });
+
   group('final gate — Cloud-only and resolved partition', () {
     test('cloud-only 6 records partition into 5 users + 1 gateway', () async {
       final fake = FakeApiClient(

@@ -422,6 +422,14 @@ PhysicalDevice parsePhysicalDevice(
 
   final provisioningState = parseProvisioningState(json['provisioning_state']);
 
+  // Tri-state availability: true/false come from the provider, null/absent
+  // means "unknown" and must not collapse to offline. The bool field keeps
+  // its historical semantics (only true is reachable).
+  final onlineValue = json['online']; // bool | null | absent
+  final health = onlineValue is bool
+      ? (onlineValue ? DeviceHealthState.online : DeviceHealthState.offline)
+      : DeviceHealthState.unknown;
+
   List rawEndpoints;
   final endpointsValue = json['endpoints'];
   if (endpointsValue == null) {
@@ -463,8 +471,8 @@ PhysicalDevice parsePhysicalDevice(
         ? json['physical_area_id'] as String
         : null,
     provisioningState: provisioningState,
-    health: DeviceHealthState.unknown,
-    online: false,
+    health: health,
+    online: onlineValue == true,
     isSubdevice: isSubdevice,
     isGateway: isGateway,
     parentDeviceId: parentDeviceId,

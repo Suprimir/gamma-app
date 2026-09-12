@@ -688,6 +688,18 @@ class DeviceInventorySnapshot {
   List<PhysicalDevice> get unassigned =>
       userDevices.where((d) => d.needsConfiguration).toList();
 
+  /// True when the device is known to be not reachable right now.
+  static bool isOfflineDevice(PhysicalDevice device) =>
+      device.health == DeviceHealthState.offline ||
+      device.health == DeviceHealthState.unreachable ||
+      device.health == DeviceHealthState.authError;
+
+  List<PhysicalDevice> get offlineDevices =>
+      userDevices.where(isOfflineDevice).toList();
+
+  List<PhysicalDevice> get activeDevices =>
+      userDevices.where((d) => !isOfflineDevice(d)).toList();
+
   List<PhysicalDevice> devicesInArea(String areaId) => devices
       .where(
         (device) =>

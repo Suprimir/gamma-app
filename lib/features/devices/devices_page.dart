@@ -169,20 +169,22 @@ class _DevicesPageState extends State<DevicesPage> {
     // casa; al seleccionar una se accede a sus dispositivos con tarjetas de
     // acción rápida. Mismo lenguaje visual del dashboard (search pill, botón
     // + azul, tarjetas blancas, toggle y badge de conteo).
-    final devices = snapshot.userDevices;
+    // Main lists are active-only: devices known to be unreachable live in the
+    // Desconectados section instead of diluting the working surfaces.
+    final devices = snapshot.activeDevices;
     final query = _query.trim().toLowerCase();
     final areas = snapshot.areas
         .where(
           (area) => query.isEmpty || area.name.toLowerCase().contains(query),
         )
         .toList();
-    final unassigned = snapshot.unassigned;
+    final unassigned = devices
+        .where((device) => device.needsConfiguration)
+        .toList();
     final noAreaDevices = devices
         .where((device) => device.physicalAreaId == null)
         .toList();
-    final offlineDevices = devices
-        .where((device) => device.health == DeviceHealthState.offline)
-        .toList();
+    final offlineDevices = snapshot.offlineDevices;
 
     return Container(
       color: AppColors.bg,
@@ -316,7 +318,15 @@ class _DevicesPageState extends State<DevicesPage> {
                       final area = areas[index];
                       return _AreaCard(
                         area: area,
-                        count: snapshot.devicesInArea(area.id).length,
+                        count: snapshot
+                            .devicesInArea(area.id)
+                            .where(
+                              (device) =>
+                                  !DeviceInventorySnapshot.isOfflineDevice(
+                                    device,
+                                  ),
+                            )
+                            .length,
                         onTap: () => _open(
                           _MobileDeviceGridPage.forArea(
                             area: area,
@@ -1207,7 +1217,10 @@ class _MobileDeviceGridPage extends StatefulWidget {
     return _MobileDeviceGridPage(
       title: area.name,
       subtitle: 'Dispositivos de ${area.name}, con acción rápida.',
-      devices: snapshot.devicesInArea(area.id),
+      devices: snapshot
+          .devicesInArea(area.id)
+          .where((device) => !DeviceInventorySnapshot.isOfflineDevice(device))
+          .toList(),
       areas: snapshot.areas,
       gateways: snapshot.gateways,
       repository: repository,
@@ -1228,7 +1241,7 @@ class _MobileDeviceGridPage extends StatefulWidget {
     return _MobileDeviceGridPage(
       title: 'Todos los dispositivos',
       subtitle: 'Todo el inventario de la casa, con acción rápida.',
-      devices: snapshot.userDevices,
+      devices: snapshot.activeDevices,
       areas: snapshot.areas,
       gateways: snapshot.gateways,
       repository: repository,
@@ -1514,7 +1527,9 @@ class _PendingDevicesPage extends StatelessWidget {
       title: 'Nuevos dispositivos',
       subtitle:
           'Todavía no forman parte de la estructura semántica de la casa.',
-      devices: snapshot.unassigned,
+      devices: snapshot.activeDevices
+          .where((device) => device.needsConfiguration)
+          .toList(),
       snapshot: snapshot,
       repository: repository,
       emptyMessage: 'No hay dispositivos nuevos.',
@@ -1584,7 +1599,9 @@ class _DeviceListScaffoldState extends State<_DeviceListScaffold> {
         .where((device) => ids.contains(device.id))
         .toList();
     if (widget.pendingOnly) {
-      refreshed = latest.unassigned;
+      refreshed = latest.activeDevices
+          .where((device) => device.needsConfiguration)
+          .toList();
     }
     setState(() => _devices = refreshed);
   }

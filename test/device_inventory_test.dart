@@ -287,6 +287,80 @@ void main() {
       health: DeviceHealthState.online,
       endpoints: [],
     );
+    const offlineOutlet = PhysicalDevice(
+      id: 'dev_offline',
+      name: 'Enchufe',
+      kind: DeviceKind.outlet,
+      provider: 'Test',
+      providerDeviceId: 'off-1',
+      model: 'OFF',
+      physicalAreaId: 'sala',
+      provisioningState: DeviceProvisioningState.configured,
+      online: false,
+      health: DeviceHealthState.offline,
+      endpoints: [],
+    );
+    const unreachableSensor = PhysicalDevice(
+      id: 'dev_unreachable',
+      name: 'Sensor lejano',
+      kind: DeviceKind.sensor,
+      provider: 'Test',
+      providerDeviceId: 'un-1',
+      model: 'UN',
+      provisioningState: DeviceProvisioningState.configured,
+      online: false,
+      health: DeviceHealthState.unreachable,
+      endpoints: [],
+    );
+    const authErrorLight = PhysicalDevice(
+      id: 'dev_auth_error',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      provider: 'Test',
+      providerDeviceId: 'ae-1',
+      model: 'AE',
+      provisioningState: DeviceProvisioningState.configured,
+      online: false,
+      health: DeviceHealthState.authError,
+      endpoints: [],
+    );
+    const sleepingLight = PhysicalDevice(
+      id: 'dev_sleeping',
+      name: 'Luz dormida',
+      kind: DeviceKind.light,
+      provider: 'Test',
+      providerDeviceId: 'sl-1',
+      model: 'SL',
+      provisioningState: DeviceProvisioningState.configured,
+      online: true,
+      health: DeviceHealthState.sleeping,
+      endpoints: [],
+    );
+    const unknownHealthLight = PhysicalDevice(
+      id: 'dev_unknown',
+      name: 'Luz sin datos',
+      kind: DeviceKind.light,
+      provider: 'Test',
+      providerDeviceId: 'uk-1',
+      model: 'UK',
+      provisioningState: DeviceProvisioningState.configured,
+      online: false,
+      health: DeviceHealthState.unknown,
+      endpoints: [],
+    );
+    const offlineGateway = PhysicalDevice(
+      id: 'dev_gw_offline',
+      name: 'Gateway apagado',
+      kind: DeviceKind.gateway,
+      provider: 'Test',
+      providerDeviceId: 'gwo-1',
+      model: 'GW',
+      provisioningState: DeviceProvisioningState.configured,
+      online: false,
+      health: DeviceHealthState.offline,
+      isGateway: true,
+      endpoints: [],
+    );
 
     test('unassigned excludes gateway and configured devices', () {
       final snapshot = DeviceInventorySnapshot(
@@ -327,6 +401,71 @@ void main() {
           .map((d) => d.id)
           .toList();
       expect(pasillo, ['dev_sensor']);
+    });
+
+    test('isOfflineDevice only flags known connectivity trouble', () {
+      expect(DeviceInventorySnapshot.isOfflineDevice(offlineOutlet), isTrue);
+      expect(
+        DeviceInventorySnapshot.isOfflineDevice(unreachableSensor),
+        isTrue,
+      );
+      expect(DeviceInventorySnapshot.isOfflineDevice(authErrorLight), isTrue);
+      expect(DeviceInventorySnapshot.isOfflineDevice(sensor), isFalse);
+      expect(DeviceInventorySnapshot.isOfflineDevice(sleepingLight), isFalse);
+      expect(
+        DeviceInventorySnapshot.isOfflineDevice(unknownHealthLight),
+        isFalse,
+      );
+    });
+
+    test('offlineDevices partitions user devices with trouble', () {
+      final snapshot = DeviceInventorySnapshot(
+        areas: const [],
+        devices: const [
+          gateway,
+          switchController,
+          sensor,
+          offlineOutlet,
+          unreachableSensor,
+          authErrorLight,
+          sleepingLight,
+          unknownHealthLight,
+          offlineGateway,
+        ],
+        gateways: const [],
+        lastDiscoveryLabel: 'Ahora',
+      );
+
+      final ids = snapshot.offlineDevices.map((d) => d.id).toList();
+      expect(ids, ['dev_offline', 'dev_unreachable', 'dev_auth_error']);
+      expect(ids, isNot(contains('dev_gw_offline')));
+    });
+
+    test('activeDevices is the complement within userDevices', () {
+      final snapshot = DeviceInventorySnapshot(
+        areas: const [],
+        devices: const [
+          gateway,
+          switchController,
+          sensor,
+          offlineOutlet,
+          unreachableSensor,
+          authErrorLight,
+          sleepingLight,
+          unknownHealthLight,
+          offlineGateway,
+        ],
+        gateways: const [],
+        lastDiscoveryLabel: 'Ahora',
+      );
+
+      expect(snapshot.activeDevices.map((d) => d.id), [
+        'dev_sw',
+        'dev_sensor',
+        'dev_sleeping',
+        'dev_unknown',
+      ]);
+      expect(snapshot.activeDevices, hasLength(snapshot.userDevices.length - 3));
     });
   });
 
