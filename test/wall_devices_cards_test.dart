@@ -5,6 +5,7 @@ import 'package:gamma_app/adaptive/adaptive_feature_controller.dart';
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/data/device_inventory.dart';
 import 'package:gamma_app/features/devices/wall_devices_page.dart';
+import 'package:gamma_app/features/wall_home/wall_area_editor.dart';
 import 'package:gamma_app/features/wall_home/wall_panel_home_page.dart';
 
 import 'fixtures/command_device_fake_repo.dart';
@@ -351,6 +352,131 @@ void main() {
       findsOneWidget,
     );
   });
+
+  group('wall offline devices', () {
+    testWidgets('offline devices stay out of the main list', (tester) async {
+      final repo = _WallFakeRepo(
+        devices: const [_wallTriple, _wallFan, _wallOfflinePlug],
+      );
+      await pumpWall(tester, repo);
+
+      expect(
+        find.byKey(const ValueKey('wall-device-dev_triple_01')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('wall-device-dev_fan_01')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('wall-device-dev_offline_01')),
+        findsNothing,
+      );
+      expect(find.text('Enchufe taller'), findsNothing);
+    });
+
+    testWidgets('header count only counts active devices', (tester) async {
+      final repo = _WallFakeRepo(
+        devices: const [_wallTriple, _wallFan, _wallOfflinePlug],
+      );
+      await pumpWall(tester, repo);
+
+      final headerRow = find.ancestor(
+        of: find.text('Dispositivos'),
+        matching: find.byType(Row),
+      );
+      expect(
+        find.descendant(of: headerRow, matching: find.text('2')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: headerRow, matching: find.text('3')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('offline button shown when offline devices exist', (
+      tester,
+    ) async {
+      final repo = _WallFakeRepo(
+        devices: const [_wallTriple, _wallOfflinePlug],
+      );
+      await pumpWall(tester, repo);
+
+      expect(find.byKey(const ValueKey('wall-offline-button')), findsOneWidget);
+    });
+
+    testWidgets('offline button hidden when every device is active', (
+      tester,
+    ) async {
+      final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
+      await pumpWall(tester, repo);
+
+      expect(find.byKey(const ValueKey('wall-offline-button')), findsNothing);
+    });
+
+    testWidgets('Sin acceso dialog lists offline devices', (tester) async {
+      final repo = _WallFakeRepo(
+        devices: const [_wallTriple, _wallFan, _wallOfflinePlug],
+      );
+      await pumpWall(tester, repo);
+
+      await tester.tap(find.byKey(const ValueKey('wall-offline-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Sin acceso'), findsOneWidget);
+      expect(find.text('Enchufe taller'), findsOneWidget);
+      expect(find.text('Pasillo'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('wall-offline-device-dev_offline_01')),
+        findsOneWidget,
+      );
+      // Active devices never leak into the offline dialog.
+      expect(
+        find.descendant(
+          of: find.byType(WallCenterDialog),
+          matching: find.text('Interruptor triple'),
+        ),
+        findsNothing,
+      );
+    });
+
+    testWidgets('offline row opens the device detail', (tester) async {
+      final repo = _WallFakeRepo(devices: const [_wallOfflinePlug]);
+      await pumpWall(tester, repo);
+
+      await tester.tap(find.byKey(const ValueKey('wall-offline-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('wall-offline-device-dev_offline_01')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Sin acceso'), findsNothing);
+      expect(find.text('Configurar dispositivo'), findsOneWidget);
+    });
+
+    testWidgets('only offline devices shows the no-active copy', (
+      tester,
+    ) async {
+      final repo = _WallFakeRepo(devices: const [_wallOfflinePlug]);
+      await pumpWall(tester, repo);
+
+      expect(find.text('No hay dispositivos activos.'), findsOneWidget);
+      expect(find.text('Todavía no hay dispositivos.'), findsNothing);
+    });
+
+    testWidgets('truly empty inventory keeps the original copy', (
+      tester,
+    ) async {
+      final repo = _WallFakeRepo();
+      await pumpWall(tester, repo);
+
+      expect(find.text('Todavía no hay dispositivos.'), findsOneWidget);
+      expect(find.text('No hay dispositivos activos.'), findsNothing);
+      expect(find.byKey(const ValueKey('wall-offline-button')), findsNothing);
+    });
+  });
 }
 
 Future<void> pumpWall(
@@ -439,6 +565,29 @@ const _wallFan = PhysicalDevice(
       name: 'Ventilador',
       kind: DeviceKind.outlet,
       controlledAreaId: 'pasillo',
+      capabilities: {'on_off'},
+    ),
+  ],
+);
+
+/// Offline outlet: excluded from the main wall list and reachable through
+/// the 'Sin acceso' dialog.
+const _wallOfflinePlug = PhysicalDevice(
+  id: 'dev_offline_01',
+  name: 'Enchufe taller',
+  kind: DeviceKind.outlet,
+  provider: 'Tuya',
+  providerDeviceId: 'tuya-c3f1••••',
+  model: 'TS011F',
+  provisioningState: DeviceProvisioningState.configured,
+  online: false,
+  health: DeviceHealthState.offline,
+  physicalAreaId: 'pasillo',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'outlet',
+      name: 'Enchufe',
+      kind: DeviceKind.outlet,
       capabilities: {'on_off'},
     ),
   ],

@@ -100,6 +100,44 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
     await _controller.loadDevices();
   }
 
+  /// Opens the 'Sin acceso' overlay: offline devices are excluded from the
+  /// main list, so this dialog keeps them reachable. Rows open the same wall
+  /// detail as a card tap.
+  Future<void> _showOfflineDevices() async {
+    final snapshot = _controller.snapshot;
+    if (snapshot == null) return;
+    final offline = List<PhysicalDevice>.unmodifiable(snapshot.offlineDevices);
+    final selected = await showWallCenterDialog<PhysicalDevice>(
+      context: context,
+      builder: (dialogContext) => WallCenterDialog(
+        title: 'Sin acceso',
+        children: [
+          if (offline.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Text(
+                'No hay dispositivos sin acceso.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.textDim, fontSize: 15),
+              ),
+            )
+          else
+            for (final device in offline) ...[
+              _WallOfflineDeviceRow(
+                key: ValueKey('wall-offline-device-${device.id}'),
+                device: device,
+                areaName: _roomName(snapshot.areas, device.physicalAreaId),
+                onTap: () => Navigator.of(dialogContext).pop(device),
+              ),
+              const SizedBox(height: 10),
+            ],
+        ],
+      ),
+    );
+    if (!mounted || selected == null) return;
+    await _openDevice(selected);
+  }
+
   /// Wall parity with Habitaciones: creates a new area with the same dialog
   /// style, then reloads so the filter chips converge without leaving
   /// this page.
@@ -304,7 +342,11 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
                   .contains(query);
           final matchesLocation =
               _locationId == null || device.physicalAreaId == _locationId;
-          return matchesQuery && matchesLocation;
+          // Offline devices leave the main list; they stay reachable through
+          // the 'Sin acceso' dialog in the header.
+          return matchesQuery &&
+              matchesLocation &&
+              !DeviceInventorySnapshot.isOfflineDevice(device);
         }).toList();
         final filtering = query.isNotEmpty || _locationId != null;
         // Material host: TextField/ChoiceChip/FilledButton below need a
@@ -326,7 +368,11 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
                         const WallBackButton(),
                         const SizedBox(height: 6),
                       ],
-                      _WallDevicesHeader(count: devices.length),
+                      _WallDevicesHeader(
+                        count: devices.length,
+                        offlineCount: snapshot.offlineDevices.length,
+                        onShowOffline: _showOfflineDevices,
+                      ),
                       const SizedBox(height: 18),
                       _WallSearchField(
                         query: _query,
@@ -355,6 +401,8 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
                           child: Text(
                             filtering
                                 ? 'Sin resultados'
+                                : snapshot.offlineDevices.isNotEmpty
+                                ? 'No hay dispositivos activos.'
                                 : 'Todavía no hay dispositivos.',
                             textAlign: TextAlign.center,
                             style: const TextStyle(
@@ -392,9 +440,15 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
 }
 
 class _WallDevicesHeader extends StatelessWidget {
-  const _WallDevicesHeader({required this.count});
+  const _WallDevicesHeader({
+    required this.count,
+    required this.offlineCount,
+    required this.onShowOffline,
+  });
 
   final int count;
+  final int offlineCount;
+  final VoidCallback onShowOffline;
 
   @override
   Widget build(BuildContext context) {
@@ -410,6 +464,23 @@ class _WallDevicesHeader extends StatelessWidget {
             ),
           ),
         ),
+        // Icon-only entry to the offline devices overlay; hidden when every
+        // device is active.
+        if (offlineCount > 0) ...[
+          IconButton(
+            key: const ValueKey('wall-offline-button'),
+            tooltip: 'Dispositivos sin acceso',
+            constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+            padding: EdgeInsets.zero,
+            onPressed: onShowOffline,
+            icon: const Icon(
+              Icons.wifi_off_rounded,
+              size: 24,
+              color: AppColors.textDim,
+            ),
+          ),
+          const SizedBox(width: 4),
+        ],
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
@@ -426,6 +497,72 @@ class _WallDevicesHeader extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Offline device row for the 'Sin acceso' dialog: household name plus area
+/// on one tappable surface, matching [WallSheetOption]'s wall language.
+class _WallOfflineDeviceRow extends StatelessWidget {
+  const _WallOfflineDeviceRow({
+    super.key,
+    required this.device,
+    required this.areaName,
+    required this.onTap,
+  });
+
+  final PhysicalDevice device;
+  final String areaName;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.surfaceRaised,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.wifi_off_rounded,
+                size: 26,
+                color: AppColors.textDim,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      device.userName ?? device.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      areaName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.textDim,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
