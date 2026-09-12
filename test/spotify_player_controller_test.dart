@@ -922,4 +922,106 @@ void main() {
     controller.dispose();
     await api.close();
   });
+
+  group('targetSupportsVolume', () {
+    test('resolves by id and reflects listing updates after refresh', () async {
+      final api = _FakeSpotifyApi();
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+
+      // The listing carries no flag yet: unknown.
+      expect(controller.activeDevice?['id'], 'dev_1');
+      expect(controller.targetSupportsVolume, isNull);
+
+      api.devices = {
+        'devices': [
+          {'id': 'dev_1', 'name': 'Parlante', 'supports_volume': false},
+        ],
+        'default_device_id': 'dev_1',
+      };
+      await controller.refresh();
+      expect(controller.targetSupportsVolume, isFalse);
+
+      api.devices = {
+        'devices': [
+          {'id': 'dev_1', 'name': 'Parlante', 'supports_volume': true},
+        ],
+        'default_device_id': 'dev_1',
+      };
+      await controller.refresh();
+      expect(controller.targetSupportsVolume, isTrue);
+
+      controller.dispose();
+      await api.close();
+    });
+
+    test('falls back to matching by name for synthetic device ids', () async {
+      final api = _FakeSpotifyApi();
+      api.player = {
+        ...api.player,
+        'device': {'id': 'soloist', 'name': 'Soloist', 'volume_percent': 20},
+      };
+      api.devices = {
+        'devices': [
+          {'id': 'real-1', 'name': 'Soloist', 'supports_volume': false},
+        ],
+        'default_device_id': null,
+      };
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+
+      expect(controller.activeDevice?['id'], 'soloist');
+      expect(controller.targetSupportsVolume, isFalse);
+
+      controller.dispose();
+      await api.close();
+    });
+
+    test('returns null when unresolvable or the flag is not a bool', () async {
+      final api = _FakeSpotifyApi();
+      api.player = {
+        ...api.player,
+        'device': {'id': 'ghost', 'name': 'Fantasma'},
+      };
+      api.devices = {'devices': [], 'default_device_id': null};
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+      expect(controller.targetSupportsVolume, isNull);
+
+      api.devices = {
+        'devices': [
+          {'id': 'ghost', 'name': 'Fantasma', 'supports_volume': 'yes'},
+        ],
+        'default_device_id': null,
+      };
+      await controller.refresh();
+      expect(controller.targetSupportsVolume, isNull);
+
+      controller.dispose();
+      await api.close();
+    });
+
+    test('the explicit pick resolves its own capability', () async {
+      final api = _FakeSpotifyApi();
+      // No player-reported device: the explicit pick decides.
+      api.player = {...api.player}..remove('device');
+      api.devices = {
+        'devices': [
+          {'id': 'dev_1', 'name': 'Parlante', 'supports_volume': true},
+          {'id': 'dev_2', 'name': 'Cocina', 'supports_volume': false},
+        ],
+        'default_device_id': 'dev_1',
+      };
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+      expect(controller.targetSupportsVolume, isTrue);
+
+      controller.selectDevice('dev_2');
+      expect(controller.activeDevice?['id'], 'dev_2');
+      expect(controller.targetSupportsVolume, isFalse);
+
+      controller.dispose();
+      await api.close();
+    });
+  });
 }

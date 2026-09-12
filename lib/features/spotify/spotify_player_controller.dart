@@ -53,6 +53,11 @@ num? _asNum(Object? value) => value is num ? value : null;
 /// System wall clock in epoch ms; the controller's default [nowMs] source.
 int _systemNowMs() => DateTime.now().millisecondsSinceEpoch;
 
+/// Hint shown when the target device explicitly reports
+/// `supports_volume == false`: GAMMA cannot control its volume via the API.
+const spotifyVolumeUnsupportedHint =
+    'Este dispositivo no permite controlar el volumen desde GAMMA';
+
 /// Shared Spotify playback state for the desktop and wall surfaces.
 ///
 /// Everything rendered from this controller reflects the last canonical
@@ -136,6 +141,42 @@ class SpotifyPlayerController extends ChangeNotifier {
       if (device['id'] == wanted) return device;
     }
     return null;
+  }
+
+  /// Whether the resolved target device can be volume-controlled via the API.
+  ///
+  /// Resolution: [activeDevice], then its entry in the device listing by `id`,
+  /// with a fallback match by `name` for synthetic ids (e.g. the
+  /// Soloist-served player reports `soloist`, which never appears in the
+  /// Spotify listing). Returns the listed `supports_volume` when it is a bool,
+  /// otherwise null (unknown) so callers keep the legacy behavior.
+  bool? get targetSupportsVolume {
+    final target = activeDevice;
+    if (target == null) return null;
+
+    Map<String, dynamic>? entry;
+    final id = target['id']?.toString();
+    if (id != null && id.isNotEmpty) {
+      for (final device in _devices) {
+        if (device['id']?.toString() == id) {
+          entry = device;
+          break;
+        }
+      }
+    }
+    if (entry == null) {
+      final name = target['name']?.toString();
+      if (name != null && name.isNotEmpty) {
+        for (final device in _devices) {
+          if (device['name']?.toString() == name) {
+            entry = device;
+            break;
+          }
+        }
+      }
+    }
+    final value = entry?['supports_volume'];
+    return value is bool ? value : null;
   }
 
   /// Upcoming tracks from the last queue event/fetch, empty while unknown.

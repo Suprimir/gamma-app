@@ -1774,9 +1774,13 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   }
 
   Widget _buildSpotifyVolumeSlider() {
+    // Explicit `supports_volume == false` disables the slider; the row stays
+    // visible read-only with a hint. Unknown/null keeps the legacy behavior.
+    final volumeUnsupported = _spotify.targetSupportsVolume == false;
     return _SpotifyVolumeSlider(
       value: _spotifyVolume(),
-      enabled: _spotify.activeDevice != null,
+      enabled: _spotify.activeDevice != null && !volumeUnsupported,
+      hint: volumeUnsupported ? spotifyVolumeUnsupportedHint : null,
       onCommit: _spotify.setVolume,
     );
   }
@@ -2888,17 +2892,20 @@ class _SpotifyArtwork extends StatelessWidget {
 }
 
 /// Light-theme volume slider. Drag value is local so a polling refresh never
-/// fights the finger; only the drag end commits to the backend.
+/// fights the finger; only the drag end commits to the backend. A non-null
+/// [hint] renders under the row when the device cannot be volume-controlled.
 class _SpotifyVolumeSlider extends StatefulWidget {
   const _SpotifyVolumeSlider({
     required this.value,
     required this.enabled,
     required this.onCommit,
+    this.hint,
   });
 
   final int? value;
   final bool enabled;
   final ValueChanged<int> onCommit;
+  final String? hint;
 
   @override
   State<_SpotifyVolumeSlider> createState() => _SpotifyVolumeSliderState();
@@ -2912,37 +2919,57 @@ class _SpotifyVolumeSliderState extends State<_SpotifyVolumeSlider> {
     final value = (_drag ?? widget.value?.toDouble() ?? 0).clamp(0.0, 100.0);
     return SizedBox(
       width: 200,
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
-            Icons.volume_down_rounded,
-            size: 18,
-            color: AppColors.textDim,
+          Row(
+            children: [
+              const Icon(
+                Icons.volume_down_rounded,
+                size: 18,
+                color: AppColors.textDim,
+              ),
+              Expanded(
+                child: Slider(
+                  key: const ValueKey('desktop-spotify-volume-slider'),
+                  value: value,
+                  max: 100,
+                  onChanged: widget.enabled
+                      ? (v) => setState(() => _drag = v)
+                      : null,
+                  onChangeEnd: widget.enabled
+                      ? (v) {
+                          setState(() => _drag = null);
+                          widget.onCommit(v.round());
+                        }
+                      : null,
+                ),
+              ),
+              SizedBox(
+                width: 32,
+                child: Text(
+                  '${value.round()}%',
+                  textAlign: TextAlign.end,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textDim,
+                  ),
+                ),
+              ),
+            ],
           ),
-          Expanded(
-            child: Slider(
-              key: const ValueKey('desktop-spotify-volume-slider'),
-              value: value,
-              max: 100,
-              onChanged: widget.enabled
-                  ? (v) => setState(() => _drag = v)
-                  : null,
-              onChangeEnd: widget.enabled
-                  ? (v) {
-                      setState(() => _drag = null);
-                      widget.onCommit(v.round());
-                    }
-                  : null,
+          if (widget.hint != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              widget.hint!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 11,
+                height: 1.3,
+                color: AppColors.textDim,
+              ),
             ),
-          ),
-          SizedBox(
-            width: 32,
-            child: Text(
-              '${value.round()}%',
-              textAlign: TextAlign.end,
-              style: const TextStyle(fontSize: 11, color: AppColors.textDim),
-            ),
-          ),
+          ],
         ],
       ),
     );

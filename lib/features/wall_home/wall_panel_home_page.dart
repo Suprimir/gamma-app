@@ -1684,9 +1684,13 @@ class _WallMusicCardState extends State<_WallMusicCard> {
   }
 
   Widget _volume() {
+    // Explicit `supports_volume == false` disables the slider; the row stays
+    // visible read-only with a hint. Unknown/null keeps the legacy behavior.
+    final volumeUnsupported = _spotify.targetSupportsVolume == false;
     return _WallVolumeSlider(
       value: _spotifyVolume(),
-      enabled: _spotify.activeDevice != null,
+      enabled: _spotify.activeDevice != null && !volumeUnsupported,
+      hint: volumeUnsupported ? spotifyVolumeUnsupportedHint : null,
       onCommit: _spotify.setVolume,
     );
   }
@@ -1907,17 +1911,20 @@ class _WallMusicCardState extends State<_WallMusicCard> {
 }
 
 /// Touch-sized volume slider. Drag value is local so a polling refresh never
-/// fights the finger; only the drag end commits to the backend.
+/// fights the finger; only the drag end commits to the backend. A non-null
+/// [hint] renders under the row when the device cannot be volume-controlled.
 class _WallVolumeSlider extends StatefulWidget {
   const _WallVolumeSlider({
     required this.value,
     required this.enabled,
     required this.onCommit,
+    this.hint,
   });
 
   final int? value;
   final bool enabled;
   final ValueChanged<int> onCommit;
+  final String? hint;
 
   @override
   State<_WallVolumeSlider> createState() => _WallVolumeSliderState();
@@ -1929,33 +1936,52 @@ class _WallVolumeSliderState extends State<_WallVolumeSlider> {
   @override
   Widget build(BuildContext context) {
     final value = (_drag ?? widget.value?.toDouble() ?? 0).clamp(0.0, 100.0);
-    return Row(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.volume_down_rounded, color: Colors.white70),
-        Expanded(
-          child: Slider(
-            key: const ValueKey('wall-spotify-volume-slider'),
-            value: value,
-            max: 100,
-            activeColor: const Color(0xFF4ADE80),
-            inactiveColor: Colors.white24,
-            onChanged: widget.enabled ? (v) => setState(() => _drag = v) : null,
-            onChangeEnd: widget.enabled
-                ? (v) {
-                    setState(() => _drag = null);
-                    widget.onCommit(v.round());
-                  }
-                : null,
-          ),
+        Row(
+          children: [
+            const Icon(Icons.volume_down_rounded, color: Colors.white70),
+            Expanded(
+              child: Slider(
+                key: const ValueKey('wall-spotify-volume-slider'),
+                value: value,
+                max: 100,
+                activeColor: const Color(0xFF4ADE80),
+                inactiveColor: Colors.white24,
+                onChanged: widget.enabled
+                    ? (v) => setState(() => _drag = v)
+                    : null,
+                onChangeEnd: widget.enabled
+                    ? (v) {
+                        setState(() => _drag = null);
+                        widget.onCommit(v.round());
+                      }
+                    : null,
+              ),
+            ),
+            SizedBox(
+              width: 40,
+              child: Text(
+                '${value.round()}%',
+                textAlign: TextAlign.end,
+                style: const TextStyle(fontSize: 13, color: Colors.white70),
+              ),
+            ),
+          ],
         ),
-        SizedBox(
-          width: 40,
-          child: Text(
-            '${value.round()}%',
-            textAlign: TextAlign.end,
-            style: const TextStyle(fontSize: 13, color: Colors.white70),
+        if (widget.hint != null) ...[
+          const SizedBox(height: 10),
+          Text(
+            widget.hint!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 13,
+              height: 1.3,
+              color: Colors.white70,
+            ),
           ),
-        ),
+        ],
       ],
     );
   }

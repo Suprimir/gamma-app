@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/features/dashboard/desktop_dashboard_page.dart';
+import 'package:gamma_app/features/spotify/spotify_player_controller.dart';
 import 'package:gamma_app/features/wall_home/wall_panel_home_page.dart';
 import 'package:gamma_app/ui/spotify_logo.dart';
 
@@ -242,6 +243,40 @@ void main() {
       api.commands.any((command) => command.startsWith('volume:')),
       isTrue,
     );
+  });
+
+  testWidgets('wall volume is disabled with a hint when unsupported', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi()..supportsVolume = false;
+    await pumpWall(tester, api);
+
+    await tester.tap(find.byTooltip('Volumen'));
+    await settleSurface(tester);
+
+    final slider = tester.widget<Slider>(
+      find.byKey(const ValueKey('wall-spotify-volume-slider')),
+    );
+    expect(slider.onChanged, isNull);
+    expect(find.text(spotifyVolumeUnsupportedHint), findsOneWidget);
+    // The current value stays visible read-only next to the disabled slider.
+    expect(find.text('70%'), findsOneWidget);
+  });
+
+  testWidgets('wall volume stays enabled when the device supports it', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi()..supportsVolume = true;
+    await pumpWall(tester, api);
+
+    await tester.tap(find.byTooltip('Volumen'));
+    await settleSurface(tester);
+
+    final slider = tester.widget<Slider>(
+      find.byKey(const ValueKey('wall-spotify-volume-slider')),
+    );
+    expect(slider.onChanged, isNotNull);
+    expect(find.text(spotifyVolumeUnsupportedHint), findsNothing);
   });
 
   testWidgets('wall queue sheet adds the previous section when available', (
@@ -495,6 +530,40 @@ void main() {
     );
   });
 
+  testWidgets('desktop volume is disabled with a hint when unsupported', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi()..supportsVolume = false;
+    await pumpDesktop(tester, api);
+
+    await tester.tap(find.byTooltip('Volumen'));
+    await settleSurface(tester);
+
+    final slider = tester.widget<Slider>(
+      find.byKey(const ValueKey('desktop-spotify-volume-slider')),
+    );
+    expect(slider.onChanged, isNull);
+    expect(find.text(spotifyVolumeUnsupportedHint), findsOneWidget);
+    // The current value stays visible read-only next to the disabled slider.
+    expect(find.text('70%'), findsOneWidget);
+  });
+
+  testWidgets('desktop volume stays enabled when the device supports it', (
+    tester,
+  ) async {
+    final api = _SpotifyCardApi()..supportsVolume = true;
+    await pumpDesktop(tester, api);
+
+    await tester.tap(find.byTooltip('Volumen'));
+    await settleSurface(tester);
+
+    final slider = tester.widget<Slider>(
+      find.byKey(const ValueKey('desktop-spotify-volume-slider')),
+    );
+    expect(slider.onChanged, isNotNull);
+    expect(find.text(spotifyVolumeUnsupportedHint), findsNothing);
+  });
+
   testWidgets('desktop transport follows the advertised actions list', (
     tester,
   ) async {
@@ -668,6 +737,10 @@ class _SpotifyCardApi extends ApiClient {
   final commands = <String>[];
   String? lastPlayUri;
 
+  /// Value reported by the target device in `GET /spotify/devices`. Null
+  /// omits the field (unknown), mirroring the contract `bool | null`.
+  bool? supportsVolume;
+
   /// Settings/player switches: flip both together to simulate the account
   /// becoming authorized while a card is already mounted.
   bool authenticated = true;
@@ -822,6 +895,7 @@ class _SpotifyCardApi extends ApiClient {
               'is_active': true,
               'is_default': true,
               'volume_percent': 70,
+              'supports_volume': ?supportsVolume,
             },
           ]
         : [],
