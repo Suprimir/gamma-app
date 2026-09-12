@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/features/dashboard/desktop_dashboard_page.dart';
 import 'package:gamma_app/features/wall_home/wall_panel_home_page.dart';
+import 'package:gamma_app/ui/spotify_logo.dart';
 
 /// Widget coverage for the progressively disclosed Spotify cards: the player
 /// state shows hero + progress + one up-next line with the queue/volume/device
@@ -107,6 +108,8 @@ void main() {
     await settleSurface(tester);
 
     expect(find.text('OJALA'), findsOneWidget);
+    // The small Spotify glyph marks the service beside the track info.
+    expect(find.byType(SpotifyLogo), findsOneWidget);
 
     // Dispose so the SSE ticker/subscription do not outlive the tree.
     await tester.pumpWidget(const SizedBox());
@@ -295,10 +298,13 @@ void main() {
     expect(next.onPressed, isNull);
   });
 
-  testWidgets('wall launcher shows header + hint only', (tester) async {
+  testWidgets('wall launcher shows the hint only (no brand header)', (
+    tester,
+  ) async {
     final api = _SpotifyCardApi()..hasPlayback = false;
     await pumpWall(tester, api);
 
+    expect(find.text('Spotify'), findsNothing);
     expect(find.text('Conectado'), findsNothing);
     expect(find.text('Sin reproducción'), findsOneWidget);
     // No account line, playlists or player stack in the wall launcher.
