@@ -1204,4 +1204,220 @@ void main() {
       await api.close();
     });
   });
+
+  group('reactive device refresh', () {
+    // Shown device: the Soloist-served player; the listing also knows the
+    // phone that becomes active when the adapter deactivates the Soloist.
+    _FakeSpotifyApi soloistApi() {
+      final api = _FakeSpotifyApi();
+      api.player = {
+        ...api.player,
+        'device': {'id': 'soloist', 'name': 'Soloist', 'volume_percent': 20},
+      };
+      api.devices = {
+        'devices': [
+          {'id': 'phone-1', 'name': 'Pixel 7 Pro', 'supports_volume': false},
+          {'id': 'soloist', 'name': 'Soloist', 'supports_volume': true},
+        ],
+        'default_device_id': 'phone-1',
+      };
+      return api;
+    }
+
+    test('an is_active false event for the shown device refreshes', () async {
+      final api = soloistApi();
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+      expect(controller.activeDevice?['name'], 'Soloist');
+      controller.startPolling(interval: const Duration(hours: 1));
+      final callsBefore = api.playerCalls;
+
+      // The core now serves the phone; the adapter reports the Soloist
+      // losing active status.
+      api.player = {
+        ...api.player,
+        'device': {
+          'id': 'phone-1',
+          'name': 'Pixel 7 Pro',
+          'volume_percent': 40,
+        },
+      };
+      api.emitEvent('spotify_state_changed', {
+        'status': 'playing',
+        'is_active': false,
+        'device_name': 'Soloist',
+      });
+      await pumpEventQueue();
+
+      expect(api.playerCalls, callsBefore + 1);
+      expect(controller.activeDevice?['id'], 'phone-1');
+      expect(controller.activeDevice?['name'], 'Pixel 7 Pro');
+
+      controller.dispose();
+      await api.close();
+    });
+
+    test('rapid false events issue a single reactive refresh', () async {
+      final api = soloistApi();
+      final controller = SpotifyPlayerController(api, nowMs: () => 0);
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(hours: 1));
+      final callsBefore = api.playerCalls;
+
+      for (var i = 0; i < 4; i++) {
+        api.emitEvent('spotify_state_changed', {
+          'status': 'playing',
+          'is_active': false,
+          'device_name': 'Soloist',
+        });
+      }
+      await pumpEventQueue();
+
+      expect(api.playerCalls, callsBefore + 1);
+
+      controller.dispose();
+      await api.close();
+    });
+
+    test('a false event for another device does not refresh', () async {
+      final api = soloistApi();
+      // The shown device is already the phone.
+      api.player = {
+        ...api.player,
+        'device': {
+          'id': 'phone-1',
+          'name': 'Pixel 7 Pro',
+          'volume_percent': 40,
+        },
+      };
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+      expect(controller.activeDevice?['name'], 'Pixel 7 Pro');
+      controller.startPolling(interval: const Duration(hours: 1));
+      final callsBefore = api.playerCalls;
+
+      api.emitEvent('spotify_state_changed', {
+        'status': 'playing',
+        'is_active': false,
+        'device_name': 'Soloist',
+      });
+      await pumpEventQueue();
+
+      expect(api.playerCalls, callsBefore);
+      controller.dispose();
+      await api.close();
+    });
+
+    test('an is_active true event with an unknown name refreshes', () async {
+      final api = _FakeSpotifyApi();
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(hours: 1));
+      final callsBefore = api.playerCalls;
+
+      api.emitEvent('spotify_state_changed', {
+        'status': 'playing',
+        'is_active': true,
+        'device_name': 'Fantasma',
+      });
+      await pumpEventQueue();
+
+      expect(api.playerCalls, callsBefore + 1);
+      controller.dispose();
+      await api.close();
+    });
+
+    testWidgets('a stale deactivation schedules exactly one follow-up', (
+      tester,
+    ) async {
+      final api = soloistApi();
+      final controller = SpotifyPlayerController(api, nowMs: () => 0);
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(hours: 1));
+      final callsBefore = api.playerCalls;
+
+      api.emitEvent('spotify_state_changed', {
+        'status': 'playing',
+        'is_active': false,
+        'device_name': 'Soloist',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(api.playerCalls, callsBefore + 1);
+
+      // Canonical state still shows the Soloist: one bounded follow-up.
+      await tester.pump(const Duration(milliseconds: 1600));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(api.playerCalls, callsBefore + 2);
+
+      // And no further retries.
+      await tester.pump(const Duration(milliseconds: 1600));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(api.playerCalls, callsBefore + 2);
+
+      controller.dispose();
+      await api.close();
+    });
+
+    testWidgets('the follow-up is skipped when canonical state settled', (
+      tester,
+    ) async {
+      final api = soloistApi();
+      final controller = SpotifyPlayerController(api, nowMs: () => 0);
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(hours: 1));
+      final callsBefore = api.playerCalls;
+
+      api.emitEvent('spotify_state_changed', {
+        'status': 'playing',
+        'is_active': false,
+        'device_name': 'Soloist',
+      });
+      // The core catches up before the reactive refresh reads it.
+      api.player = {
+        ...api.player,
+        'device': {
+          'id': 'phone-1',
+          'name': 'Pixel 7 Pro',
+          'volume_percent': 40,
+        },
+      };
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(api.playerCalls, callsBefore + 1);
+      expect(controller.activeDevice?['name'], 'Pixel 7 Pro');
+
+      await tester.pump(const Duration(milliseconds: 1600));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(api.playerCalls, callsBefore + 1);
+
+      controller.dispose();
+      await api.close();
+    });
+
+    testWidgets('stopPolling cancels the pending follow-up', (tester) async {
+      final api = soloistApi();
+      final controller = SpotifyPlayerController(api, nowMs: () => 0);
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(hours: 1));
+      final callsBefore = api.playerCalls;
+
+      api.emitEvent('spotify_state_changed', {
+        'status': 'playing',
+        'is_active': false,
+        'device_name': 'Soloist',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(api.playerCalls, callsBefore + 1);
+
+      controller.stopPolling();
+      await tester.pump(const Duration(milliseconds: 1600));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(api.playerCalls, callsBefore + 1);
+
+      controller.dispose();
+      await api.close();
+    });
+  });
 }

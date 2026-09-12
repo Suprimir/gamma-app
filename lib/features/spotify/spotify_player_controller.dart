@@ -109,6 +109,14 @@ class SpotifyPlayerController extends ChangeNotifier {
   /// before a bump is stale and must not overwrite the fresher event.
   int _stateVersion = 0;
 
+  /// Last reactive refresh issued from an SSE device signal; guards the
+  /// debounce so a burst of events cannot hammer the backend.
+  int? _lastReactiveRefreshMs;
+
+  /// One-shot follow-up scheduled after a deactivation whose canonical state
+  /// was still stale; bounded so no refresh loop can form.
+  Timer? _reactiveRetryTimer;
+
   /// Safety window for a pending seek; after it the preview falls back to the
   /// canonical state instead of masking a lost acknowledgement forever.
   static const _pendingSeekTimeoutMs = 10000;
@@ -116,6 +124,12 @@ class SpotifyPlayerController extends ChangeNotifier {
   /// Safety window for the optimistic transfer target; after it the card falls
   /// back to canonical state instead of masking a lost switch forever.
   static const _pendingDeviceTimeoutMs = 12000;
+
+  /// At most one reactive refresh per window, driven by SSE device signals.
+  static const _reactiveRefreshDebounceMs = 2000;
+
+  /// Delay before the single bounded follow-up refresh.
+  static const _reactiveRetryDelay = Duration(milliseconds: 1500);
 
   /// Last `GET /spotify/player` body (or SSE merge), or null while unknown.
   Map<String, dynamic>? get player => _player;
@@ -469,6 +483,9 @@ class SpotifyPlayerController extends ChangeNotifier {
     _resubscribeTimer = null;
     _ticker?.cancel();
     _ticker = null;
+    _reactiveRetryTimer?.cancel();
+    _reactiveRetryTimer = null;
+    _lastReactiveRefreshMs = null;
     _pendingSeek = null;
     _pendingDevice = null;
     unawaited(_eventsSub?.cancel());
@@ -534,7 +551,10 @@ class SpotifyPlayerController extends ChangeNotifier {
   /// response. When the event carries the active device name the matching
   /// listing entry wins, so the real id and capabilities resolve without
   /// waiting for the next HTTP read; otherwise the previous device map is
-  /// preserved. It is proof of a usable account, so auth/error are cleared.
+  /// preserved. Device signals the merge alone cannot resolve (deactivation
+  /// of the shown device, or an active name missing from a stale listing)
+  /// trigger a debounced canonical read. It is proof of a usable account, so
+  /// auth/error are cleared.
   void _applyStateEvent(Map<String, dynamic> data) {
     final merged = <String, dynamic>{...?_player};
     final status = data['status'];
@@ -556,13 +576,18 @@ class SpotifyPlayerController extends ChangeNotifier {
     final actions = data['actions'];
     if (actions is List) merged['actions'] = actions;
     if (data.containsKey('is_active')) merged['is_active'] = data['is_active'];
-    if (data['is_active'] == true) {
-      final deviceName = data['device_name']?.toString();
-      if (deviceName != null && deviceName.isNotEmpty) {
-        final entry = _deviceByName(deviceName);
-        if (entry != null) merged['device'] = entry;
-        _clearPendingDeviceIfNamed(deviceName);
+    final isActive = data['is_active'];
+    final deviceName = data['device_name']?.toString();
+    var unresolvedActiveDevice = false;
+    if (isActive == true && deviceName != null && deviceName.isNotEmpty) {
+      final entry = _deviceByName(deviceName);
+      if (entry != null) {
+        merged['device'] = entry;
+      } else {
+        // Stale listing: the active device is unknown here.
+        unresolvedActiveDevice = true;
       }
+      _clearPendingDeviceIfNamed(deviceName);
     }
     merged['has_playback'] = true;
     _player = merged;
@@ -574,6 +599,46 @@ class SpotifyPlayerController extends ChangeNotifier {
     _acknowledgePendingSeek(merged);
     _syncTicker();
     notifyListeners();
+
+    // Reactive convergence: a device signal the merge cannot fully resolve
+    // needs a canonical read (debounced). The deactivation of the shown
+    // device gets one bounded follow-up, because the core may still serve the
+    // old device for a moment.
+    if (isActive == false && deviceName != null && deviceName.isNotEmpty) {
+      final shownName = activeDevice?['name']?.toString();
+      if (shownName != null &&
+          shownName.isNotEmpty &&
+          shownName.toLowerCase() == deviceName.toLowerCase()) {
+        _scheduleReactiveRefresh(retryWhileShowing: shownName);
+      }
+    } else if (unresolvedActiveDevice) {
+      _scheduleReactiveRefresh();
+    }
+  }
+
+  /// Issues one canonical read at most every [_reactiveRefreshDebounceMs]
+  /// after an SSE device signal. [retryWhileShowing] schedules exactly one
+  /// bounded follow-up when the shown device still matches after
+  /// [_reactiveRetryDelay] (the adapter may need a moment to catch up);
+  /// the follow-up respects stop/dispose semantics and never loops.
+  void _scheduleReactiveRefresh({String? retryWhileShowing}) {
+    if (_disposed || !_live) return;
+    final now = _nowMs();
+    final last = _lastReactiveRefreshMs;
+    if (last != null && now - last < _reactiveRefreshDebounceMs) return;
+    _lastReactiveRefreshMs = now;
+    unawaited(refresh());
+    if (retryWhileShowing == null) return;
+
+    _reactiveRetryTimer?.cancel();
+    _reactiveRetryTimer = Timer(_reactiveRetryDelay, () {
+      _reactiveRetryTimer = null;
+      if (_disposed || !_live) return;
+      final shownName = activeDevice?['name']?.toString();
+      if (shownName == null || shownName.isEmpty) return;
+      if (shownName.toLowerCase() != retryWhileShowing.toLowerCase()) return;
+      unawaited(refresh());
+    });
   }
 
   void _applyQueueEvent(Map<String, dynamic> data) {
