@@ -51,8 +51,10 @@ class _DesktopAreasPageState extends State<DesktopAreasPage> {
           );
         }
         final areas = controller.areas!;
+        // Transparent root: pushed under the theme backdrop wrapper; a solid
+        // fill here would hide the selected appearance.
         return Material(
-          color: AppColors.bg,
+          color: Colors.transparent,
           child: LayoutBuilder(
             builder: (context, constraints) {
               if (constraints.maxWidth < _narrowBreakpoint) {

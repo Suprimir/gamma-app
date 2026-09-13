@@ -15,6 +15,7 @@ import '../../ui/shared_widgets.dart';
 import '../routines/related_routines.dart';
 import '../routines/routines_page.dart';
 import '../areas/area_editor.dart';
+import '../dashboard/home_theme_background.dart';
 import '../wall_home/wall_area_editor.dart';
 
 /// Which dashboard the wall Devices page is showing: the device list
@@ -101,14 +102,18 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
     if (snapshot == null) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => _WallDeviceDetailPage(
-          device: device,
-          areas: snapshot.areas,
-          gateways: snapshot.gateways,
-          repository: _controller.repository,
-          api: widget.api,
-          onCanonicalDeviceChanged: _controller.applyCanonicalDevice,
-          onDelete: () => _controller.removeLocalDevice(device.id),
+        // Theme-aware route: pushed pages live outside the shell's
+        // backdrop, so they carry it explicitly.
+        builder: (_) => HomeThemeBackground(
+          child: _WallDeviceDetailPage(
+            device: device,
+            areas: snapshot.areas,
+            gateways: snapshot.gateways,
+            repository: _controller.repository,
+            api: widget.api,
+            onCanonicalDeviceChanged: _controller.applyCanonicalDevice,
+            onDelete: () => _controller.removeLocalDevice(device.id),
+          ),
         ),
       ),
     );
@@ -538,8 +543,11 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
         // Material host: TextField/ChoiceChip/FilledButton below need a
         // Material ancestor even when this page is pushed as a bare route
         // (e.g. from the wall home attention entry, with no Scaffold above).
+        // Transparent root: the wall shell paints the theme backdrop
+        // (HomeThemeBackground) behind every panel page; a solid fill here
+        // would hide the selected appearance.
         return Material(
-          color: AppColors.bg,
+          color: Colors.transparent,
           child: SafeArea(
             child: Center(
               child: ConstrainedBox(
@@ -2489,9 +2497,11 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
         }
       },
       child: Scaffold(
-        backgroundColor: AppColors.bg,
+        // The route wraps this page in HomeThemeBackground: keep the
+        // scaffold transparent so the theme backdrop shows through.
+        backgroundColor: Colors.transparent,
         appBar: AppBar(
-          backgroundColor: AppColors.bg,
+          backgroundColor: Colors.transparent,
           surfaceTintColor: Colors.transparent,
           title: const Text('Configurar dispositivo'),
         ),

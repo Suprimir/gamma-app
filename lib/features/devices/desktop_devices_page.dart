@@ -6,6 +6,7 @@ import '../../ui/app_colors.dart';
 import '../../ui/device_status.dart';
 import '../areas/area_editor.dart';
 import '../areas/desktop_areas_page.dart';
+import '../dashboard/home_theme_background.dart';
 import '../../data/device_inventory.dart';
 import 'desktop_device_detail_pane.dart';
 import 'desktop_master_pane.dart';
@@ -59,8 +60,11 @@ class _DesktopDevicesPageState extends State<DesktopDevicesPage> {
           );
         }
         final snapshot = controller.snapshot!;
+        // Transparent root: the desktop shell paints the theme backdrop
+        // (HomeThemeBackground) behind every workspace; a solid fill here
+        // would hide the selected appearance.
         return Material(
-          color: AppColors.bg,
+          color: Colors.transparent,
           child: LayoutBuilder(
             builder: (context, constraints) {
               if (constraints.maxWidth < _narrowBreakpoint) {
@@ -94,7 +98,11 @@ class _DesktopDevicesPageState extends State<DesktopDevicesPage> {
     if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => DesktopAreasPage(controller: widget.controller),
+        // Theme-aware route: pushed pages live outside the shell's
+        // backdrop, so they carry it explicitly.
+        builder: (_) => HomeThemeBackground(
+          child: DesktopAreasPage(controller: widget.controller),
+        ),
       ),
     );
     await widget.controller.loadDevices();
@@ -108,19 +116,23 @@ class _DesktopDevicesPageState extends State<DesktopDevicesPage> {
   ) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => Scaffold(
-          backgroundColor: AppColors.bg,
-          appBar: AppBar(
-            backgroundColor: AppColors.bg,
-            surfaceTintColor: Colors.transparent,
-            title: const Text('Configurar dispositivo'),
-          ),
-          body: DeviceDetailView(
-            device: device,
-            areas: snapshot.areas,
-            gateways: snapshot.gateways,
-            repository: widget.controller.repository,
-            onCanonicalDeviceChanged: widget.controller.applyCanonicalDevice,
+        // Theme-aware route: pushed pages live outside the shell's
+        // backdrop, so they carry it explicitly.
+        builder: (_) => HomeThemeBackground(
+          child: Scaffold(
+            backgroundColor: Colors.transparent,
+            appBar: AppBar(
+              backgroundColor: Colors.transparent,
+              surfaceTintColor: Colors.transparent,
+              title: const Text('Configurar dispositivo'),
+            ),
+            body: DeviceDetailView(
+              device: device,
+              areas: snapshot.areas,
+              gateways: snapshot.gateways,
+              repository: widget.controller.repository,
+              onCanonicalDeviceChanged: widget.controller.applyCanonicalDevice,
+            ),
           ),
         ),
       ),
