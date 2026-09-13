@@ -194,6 +194,70 @@ void main() {
     expect(find.text('Interruptor triple'), findsOneWidget);
   });
 
+  testWidgets('wall home attention switches tabs instead of pushing', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
+    final selected = <int>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: WallPanelHomePage(
+          api: ApiClient(baseUrl: 'http://127.0.0.1:8420'),
+          repository: repo,
+          onSelectDestination: selected.add,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    await tester.tap(find.text('Necesita atención'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    // Same destination as the dock entry: tab switch, no pushed route.
+    expect(selected, [1]);
+    expect(find.byType(WallDevicesPage), findsNothing);
+  });
+
+  testWidgets('wall home refreshes when its tab becomes visible again', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _TickerToggle(
+          child: WallPanelHomePage(
+            api: ApiClient(baseUrl: 'http://127.0.0.1:8420'),
+            repository: repo,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(repo.loadCount, 1);
+
+    // Tab hidden (another destination selected) then visible again: the
+    // snapshot reloads so the pending attention count is never stale.
+    tester.state<_TickerToggleState>(find.byType(_TickerToggle))
+        .setActive(false);
+    await tester.pump();
+    tester.state<_TickerToggleState>(find.byType(_TickerToggle))
+        .setActive(true);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(repo.loadCount, 2);
+  });
+
   testWidgets('wall power command reaches the repository honestly', (
     tester,
   ) async {
@@ -1351,6 +1415,9 @@ class _WallFakeRepo implements DeviceInventoryRepository {
   List<PhysicalDevice> devices;
   final roleWrites = <(String, String, String?)>[];
 
+  /// Completed inventory loads; the home refreshes when its tab reactivates.
+  int loadCount = 0;
+
   @override
   bool get supportsIdentify => false;
 
@@ -1358,7 +1425,10 @@ class _WallFakeRepo implements DeviceInventoryRepository {
   bool get supportsSemanticRole => true;
 
   @override
-  Future<DeviceInventorySnapshot> load() async => _snapshot();
+  Future<DeviceInventorySnapshot> load() async {
+    loadCount += 1;
+    return _snapshot();
+  }
 
   @override
   Future<DeviceInventorySnapshot> discover() async => _snapshot();
@@ -1530,3 +1600,24 @@ const _wallNamedTriple = PhysicalDevice(
     ),
   ],
 );
+
+/// Test harness that toggles [TickerMode] to simulate the shell hiding and
+/// re-showing a destination tab.
+class _TickerToggle extends StatefulWidget {
+  const _TickerToggle({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_TickerToggle> createState() => _TickerToggleState();
+}
+
+class _TickerToggleState extends State<_TickerToggle> {
+  bool _active = true;
+
+  void setActive(bool value) => setState(() => _active = value);
+
+  @override
+  Widget build(BuildContext context) =>
+      TickerMode(enabled: _active, child: widget.child);
+}

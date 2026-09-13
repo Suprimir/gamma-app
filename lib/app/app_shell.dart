@@ -91,7 +91,11 @@ class _AppShellState extends State<AppShell> {
           index: _index,
           builders: [
             for (final d in appDestinations)
-              () => d.buildPage(widget.api, widget.spotifyPollInterval),
+              () => d.buildPage(
+                widget.api,
+                widget.spotifyPollInterval,
+                _select,
+              ),
           ],
         );
 

@@ -40,6 +40,7 @@ class AdaptiveHomePage extends StatelessWidget {
     super.key,
     required this.api,
     this.spotifyPollInterval = Duration.zero,
+    this.onSelectDestination,
   });
 
   final ApiClient api;
@@ -48,6 +49,10 @@ class AdaptiveHomePage extends StatelessWidget {
   /// wires 30s; SSE events converge state in between. Tests stay at zero so
   /// no timer or subscription outlives them.
   final Duration spotifyPollInterval;
+
+  /// Shell tab switch (same contract as the dock): deep links from the home
+  /// move to the destination tab instead of pushing a dock-less route.
+  final ValueChanged<int>? onSelectDestination;
 
   @override
   Widget build(BuildContext context) {
@@ -60,6 +65,7 @@ class AdaptiveHomePage extends StatelessWidget {
         api: api,
         idleTimeout: const Duration(seconds: 60),
         spotifyPollInterval: spotifyPollInterval,
+        onSelectDestination: onSelectDestination,
       );
     }
     if (scope.isDesktopSurface) {
@@ -84,6 +90,7 @@ class WallPanelHomePage extends StatefulWidget {
     DeviceInventoryRepository? repository,
     this.idleTimeout,
     this.spotifyPollInterval = Duration.zero,
+    this.onSelectDestination,
   }) : repository = repository ?? HttpDeviceInventoryRepository(api);
 
   final ApiClient api;
@@ -96,6 +103,11 @@ class WallPanelHomePage extends StatefulWidget {
   /// Playback polling cadence for the music card; zero disables polling
   /// (default so direct-construction tests stay timer-free).
   final Duration spotifyPollInterval;
+
+  /// Shell tab switch supplied by the app shell. When present, home deep
+  /// links (e.g. the attention card) move to that tab so the dock follows;
+  /// standalone/test builds without it keep the pushed-route fallback.
+  final ValueChanged<int>? onSelectDestination;
 
   @override
   State<WallPanelHomePage> createState() => _WallPanelHomePageState();
@@ -206,13 +218,24 @@ class _WallPanelHomePageState extends State<WallPanelHomePage>
     WallActivityBus.holds.addListener(_onBusHolds);
   }
 
+  /// Last TickerMode visibility seen; re-activation refreshes the snapshot.
+  bool _wasActive = false;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_loadStarted && TickerMode.valuesOf(context).enabled) {
+    final active = TickerMode.valuesOf(context).enabled;
+    if (!_loadStarted && active) {
       _loadStarted = true;
       _load();
+    } else if (_loadStarted && active && !_wasActive) {
+      // The tab became visible again: refresh so configuration changes made
+      // in the Dispositivos tab (areas/roles/bindings) land in the pending
+      // attention count. With a snapshot present `_load` never shows the
+      // full-screen spinner.
+      _load();
     }
+    _wasActive = active;
   }
 
   Future<void> _load() async {
@@ -718,8 +741,14 @@ class _WallPanelHomePageState extends State<WallPanelHomePage>
   }
 
   void _openAttention() {
-    // Configuration attention routes to the touch-first wall Devices flow,
-    // which surfaces the pending-device configuration.
+    // Configuration attention routes to the wall Devices tab: same
+    // destination as the dock entry, so the dock stays visible and back is
+    // never needed. Standalone builds without a shell keep the push fallback.
+    final select = widget.onSelectDestination;
+    if (select != null) {
+      select(1); // Dispositivos destination (appDestinations order)
+      return;
+    }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         // Theme-aware route: pushed pages live outside the shell's backdrop,
