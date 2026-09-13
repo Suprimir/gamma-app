@@ -40,10 +40,10 @@ físicas **bloqueadas por diseño** (`GAMMA_PHYSICAL_EXECUTION_ENABLED=false`).
 ## 3. Pendientes y decisiones
 
 ### A. Prender/apagar por canal (control real) — DECISIÓN PENDIENTE
-- Hoy no hay toggles por canal: el toggle rápido de la tarjeta comanda el
-  primer canal y las escrituras están bloqueadas por el gate global.
-- Plan: switches por canal en las pantallas de detalle (estado + acción), con
-  aviso honesto "Escritura deshabilitada" mientras el gate esté cerrado.
+- ✅ Switches por canal disponibles en los detalles (mobile, panel y desktop):
+  cada canal tiene su switch, ejecuta su acción canónica y muestra el resultado
+  honesto. Con el gate cerrado responde "Escritura deshabilitada en el modo
+  actual" (sin inventar estado).
 - Para una prueba real: habilitar el gate de forma **explícita y temporal**
   (idealmente con alguien presente). Sugerido: "Sala Comedor" (3 relays) en una
   ventana corta.
@@ -70,6 +70,7 @@ físicas **bloqueadas por diseño** (`GAMMA_PHYSICAL_EXECUTION_ENABLED=false`).
 ## 4. Fases sugeridas
 
 1. ✅ Auto-configuración de vínculos canónicos (backend `dd1a93f`).
-2. Switches por canal en detalle (sin abrir el gate; mensaje honesto). Bajo riesgo.
+2. ✅ Switches por canal en los detalles (app `bdb4ba9`); con el gate cerrado
+   cada acción responde honestamente "Escritura deshabilitada en el modo actual".
 3. Ventana de prueba de control real por canal (gate ON temporal).
 4. QoL: nombres de canal en tarjetas + feedback de guardado en mobile.
