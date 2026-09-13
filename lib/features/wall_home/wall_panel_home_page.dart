@@ -22,6 +22,7 @@ import '../spotify/spotify_player_controller.dart';
 import 'wall_activity_bus.dart';
 import 'wall_voice_controller.dart';
 import '../devices/wall_devices_page.dart';
+import '../dashboard/home_theme_background.dart';
 import '../cameras/cameras_page.dart';
 import '../cameras/cameras_player_page.dart';
 import 'wall_home_projection.dart';
@@ -638,11 +639,15 @@ class _WallPanelHomePageState extends State<WallPanelHomePage>
   void _openAreaDevices(WallAreaSummary area) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => WallDevicesPage(
-          api: widget.api,
-          repository: widget.repository,
-          initialLocationId: area.areaId,
-          showBackButton: true,
+        // Theme-aware route: pushed pages live outside the shell's backdrop,
+        // so they carry it explicitly (the devices page root is transparent).
+        builder: (_) => HomeThemeBackground(
+          child: WallDevicesPage(
+            api: widget.api,
+            repository: widget.repository,
+            initialLocationId: area.areaId,
+            showBackButton: true,
+          ),
         ),
       ),
     );
@@ -717,10 +722,14 @@ class _WallPanelHomePageState extends State<WallPanelHomePage>
     // which surfaces the pending-device configuration.
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => WallDevicesPage(
-          api: widget.api,
-          repository: widget.repository,
-          showBackButton: true,
+        // Theme-aware route: pushed pages live outside the shell's backdrop,
+        // so they carry it explicitly (the devices page root is transparent).
+        builder: (_) => HomeThemeBackground(
+          child: WallDevicesPage(
+            api: widget.api,
+            repository: widget.repository,
+            showBackButton: true,
+          ),
         ),
       ),
     );

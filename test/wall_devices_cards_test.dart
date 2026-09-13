@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gamma_app/adaptive/adaptive_feature_controller.dart';
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/data/device_inventory.dart';
+import 'package:gamma_app/features/dashboard/home_theme_background.dart';
 import 'package:gamma_app/features/devices/wall_devices_page.dart';
 import 'package:gamma_app/features/wall_home/wall_area_editor.dart';
 import 'package:gamma_app/features/wall_home/wall_panel_home_page.dart';
@@ -178,6 +179,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(WallDevicesPage), findsOneWidget);
+    // The pushed route carries the theme backdrop: the devices page root is
+    // transparent, so without it the whole screen renders black.
+    expect(find.byType(HomeThemeBackground), findsOneWidget);
     // Controles is the default wall view; the attention flow keeps working
     // and the device list stays one tap away.
     expect(find.byKey(const ValueKey('wall-devices-button')), findsOneWidget);

@@ -14,6 +14,7 @@ import '../../data/http_device_inventory_repository.dart';
 import '../../ui/app_colors.dart';
 import '../../ui/assistant_orb.dart';
 import '../../ui/audio_waves.dart';
+import 'home_theme_background.dart';
 import '../../ui/shared_widgets.dart';
 import '../../ui/spotify_logo.dart';
 import '../areas/area_editor.dart';
@@ -1000,8 +1001,13 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   void _openAllAreas() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) =>
-            AreasPage(repository: HttpDeviceInventoryRepository(widget.api)),
+        // Theme-aware route: pushed pages live outside the shell's backdrop,
+        // and the desktop areas workspace root is transparent.
+        builder: (_) => HomeThemeBackground(
+          child: AreasPage(
+            repository: HttpDeviceInventoryRepository(widget.api),
+          ),
+        ),
       ),
     );
   }
@@ -1016,17 +1022,21 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     unawaited(controller.loadDevices());
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => Scaffold(
-          backgroundColor: AppColors.bg,
-          appBar: AppBar(
-            backgroundColor: AppColors.bg,
-            surfaceTintColor: Colors.transparent,
-            title: Text(area.name),
-          ),
-          body: DesktopDevicesPage(
-            controller: controller,
-            api: widget.api,
-            initialLocationId: area.areaId,
+        // Theme-aware route: pushed pages live outside the shell's backdrop,
+        // so they carry it explicitly.
+        builder: (_) => HomeThemeBackground(
+          child: Scaffold(
+            backgroundColor: Colors.transparent,
+            appBar: AppBar(
+              backgroundColor: Colors.transparent,
+              surfaceTintColor: Colors.transparent,
+              title: Text(area.name),
+            ),
+            body: DesktopDevicesPage(
+              controller: controller,
+              api: widget.api,
+              initialLocationId: area.areaId,
+            ),
           ),
         ),
       ),
