@@ -36,7 +36,6 @@ class FloatingDock extends StatelessWidget {
   final double? maxWidth;
 
   static const _radius = 32.0;
-  static const _dockColor = Color(0xFF1C1F2B);
 
   @override
   Widget build(BuildContext context) {
@@ -52,18 +51,21 @@ class FloatingDock extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
-                color: _dockColor,
+                // Light card matching the app surfaces; the active pill uses
+                // the runtime-themable accent.
+                color: AppColors.surface,
                 borderRadius: BorderRadius.circular(_radius),
+                border: Border.all(color: AppColors.border),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.3),
-                    blurRadius: 28,
-                    offset: const Offset(0, 12),
+                    color: AppColors.shadowStrong,
+                    blurRadius: 24,
+                    offset: const Offset(0, 10),
                   ),
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.15),
+                    color: AppColors.shadow,
                     blurRadius: 8,
-                    offset: const Offset(0, 4),
+                    offset: const Offset(0, 3),
                   ),
                 ],
               ),
@@ -99,8 +101,6 @@ class _DockItem extends StatelessWidget {
   final bool active;
   final VoidCallback onTap;
   final double iconSize;
-
-  static const _inactiveColor = Color(0xFF9AA0B2);
 
   @override
   Widget build(BuildContext context) {
@@ -146,7 +146,7 @@ class _DockItem extends StatelessWidget {
                         ),
                       ],
                     )
-                  : Icon(destination.icon, size: 22, color: _inactiveColor),
+                  : Icon(destination.icon, size: 22, color: AppColors.textDim),
             ),
           ),
         ),

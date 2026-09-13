@@ -86,8 +86,6 @@ class _WallSideRail extends StatelessWidget {
   final int currentIndex;
   final ValueChanged<int> onSelected;
 
-  static const _railColor = Color(0xFF1C1F2B);
-
   @override
   Widget build(BuildContext context) {
     return RepaintBoundary(
@@ -96,18 +94,21 @@ class _WallSideRail extends StatelessWidget {
         margin: const EdgeInsets.only(left: 12),
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
         decoration: BoxDecoration(
-          color: _railColor,
+          // Light card matching the app surfaces; the active pill uses the
+          // runtime-themable accent.
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: AppColors.border),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.3),
-              blurRadius: 28,
-              offset: const Offset(0, 12),
+              color: AppColors.shadowStrong,
+              blurRadius: 24,
+              offset: const Offset(0, 10),
             ),
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.15),
+              color: AppColors.shadow,
               blurRadius: 8,
-              offset: const Offset(0, 4),
+              offset: const Offset(0, 3),
             ),
           ],
         ),
@@ -144,8 +145,6 @@ class _RailItem extends StatelessWidget {
   final bool active;
   final VoidCallback onTap;
 
-  static const _inactiveColor = Color(0xFF9AA0B2);
-
   @override
   Widget build(BuildContext context) {
     return MergeSemantics(
@@ -174,7 +173,7 @@ class _RailItem extends StatelessWidget {
                   Icon(
                     active ? icons.selectedIcon : icons.icon,
                     size: 28,
-                    color: active ? Colors.white : _inactiveColor,
+                    color: active ? Colors.white : AppColors.textDim,
                   ),
                   const SizedBox(height: 6),
                   Text(
@@ -185,7 +184,7 @@ class _RailItem extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 11.5,
                       height: 1.15,
-                      color: active ? Colors.white : _inactiveColor,
+                      color: active ? Colors.white : AppColors.textDim,
                       fontWeight: active ? FontWeight.w700 : FontWeight.w500,
                       letterSpacing: 0.2,
                     ),
