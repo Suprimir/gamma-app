@@ -335,7 +335,11 @@ void main() {
 
       expect(repo.refreshCount, 2);
       expect(repo.loadCount, loadsBeforeGesture + 1);
-      expect(find.text('Tus ubicaciones'), findsOneWidget);
+      // The controls landing survives the refresh sweep.
+      expect(
+        find.byKey(const ValueKey('mobile-channel-dev_triple_01-relay_1')),
+        findsOneWidget,
+      );
     });
   });
 }
@@ -408,6 +412,9 @@ Future<void> pumpWall(
     ),
   );
   await tester.pump(const Duration(milliseconds: 150));
+  // Controles is the wall default; this helper serves list/detail tests.
+  await tester.tap(find.byKey(const ValueKey('wall-devices-button')));
+  await tester.pumpAndSettle();
 }
 
 const _lcTriple = PhysicalDevice(

@@ -295,6 +295,10 @@ Future<void> _pumpWall(WidgetTester tester, _BlocksFakeRepo repo) async {
     ),
   );
   await tester.pump(const Duration(milliseconds: 150));
+  // Controles is the wall default; these tests cover the device list/detail,
+  // so switch to Dispositivos right away.
+  await tester.tap(find.byKey(const ValueKey('wall-devices-button')));
+  await tester.pumpAndSettle();
 }
 
 const _tripleDevice = PhysicalDevice(

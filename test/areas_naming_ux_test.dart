@@ -317,12 +317,9 @@ Future<void> _pumpDetail(WidgetTester tester, _FakeRepo repo) async {
     ),
   );
   await tester.pumpAndSettle();
-  // The detail is reached through the ESPACIOS grid: tap the area card,
-  // then the device row.
-  final areaName = repo.areas
-      .firstWhere((a) => a.id == repo.devices.first.physicalAreaId)
-      .name;
-  await tester.tap(find.text(areaName));
+  // The detail is reached through the landing's devices button and the flat
+  // device list.
+  await tester.tap(find.byKey(const ValueKey('open-devices-list')));
   await tester.pumpAndSettle();
   final device = repo.devices.first;
   await tester.tap(find.text(device.name));

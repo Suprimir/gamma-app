@@ -68,12 +68,22 @@ void main() {
   });
 
   testWidgets('labels not clipped at large scale', (tester) async {
+    final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
+    // pumpWall ends on the Dispositivos list; go back to the default
+    // Controles surface so the tile layout is exercised at 2x too.
+    await pumpWall(tester, repo);
+    await tester.tap(find.byKey(const ValueKey('wall-controls-button')));
+    await tester.pumpAndSettle();
     tester.platformDispatcher.textScaleFactorTestValue = 2.0;
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.pumpAndSettle();
 
-    final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
-    await pumpWall(tester, repo);
+    // The Controles tiles size themselves for the active text scale: no
+    // clipping at 2x on the default surface.
+    expect(tester.takeException(), isNull);
 
+    await tester.tap(find.byKey(const ValueKey('wall-devices-button')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Interruptor triple'));
     await tester.pumpAndSettle();
 
@@ -132,6 +142,10 @@ Future<void> pumpWall(
     ),
   );
   await tester.pump(const Duration(milliseconds: 150));
+  // Controles is the wall default; this suite covers the device detail, so
+  // switch to the Dispositivos list right away.
+  await tester.tap(find.byKey(const ValueKey('wall-devices-button')));
+  await tester.pumpAndSettle();
 }
 
 const _wallTriple = PhysicalDevice(

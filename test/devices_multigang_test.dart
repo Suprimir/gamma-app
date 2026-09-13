@@ -50,13 +50,10 @@ void main() {
     final repo = _MultiGangFakeRepo(devices: const [_triple, _fan]);
     await pumpMobileDevices(tester, repo);
 
-    // Sequential mobile flow: area card -> device list -> detail.
-    await tester.tap(find.text('Sala'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Interruptor triple'));
-    await tester.pumpAndSettle();
+    // Sequential mobile flow: landing devices button -> flat list -> detail.
+    await openMobileDetail(tester, deviceName: 'Interruptor triple');
     expect(find.text('Configurar dispositivo'), findsOneWidget);
-    expect(find.text('ENDPOINTS / CANALES'), findsOneWidget);
+    expect(find.text('CONTROLES'), findsOneWidget);
 
     // relay_1 semantic role changes; siblings stay untouched (model).
     await repo.assignEndpointSemanticRole('dev_triple_01', 'relay_1', 'fan');
@@ -274,27 +271,27 @@ void main() {
     );
     await pumpMobileDevicesWide(tester, repo);
 
-    await tester.tap(find.text('Sala'));
-    await tester.pumpAndSettle();
-
-    // No confirmed observation: the card is honest, never a fake "Apagado".
-    // The area 'Controles' tile carries the same state, so scope to the card.
+    // The landing control tile is honest: no confirmed observation, never a
+    // fake "Apagado".
+    final tile = find.byKey(
+      const ValueKey('mobile-channel-dev_power_01-light'),
+    );
     expect(
-      find.descendant(
-        of: mobileDeviceCard('Luz sala'),
-        matching: find.text('Sin datos'),
-      ),
+      find.descendant(of: tile, matching: find.text('Sin datos')),
       findsOneWidget,
     );
 
-    await tester.tap(find.text('Luz sala'));
+    await tester.tap(tile);
     await tester.pump();
 
     expect(repo.powerCalls, [('dev_power_01', 'light', true)]);
-    expect(find.text('Luz sala — Encendido'), findsOneWidget);
+    expect(find.text('Luz — Encendido'), findsOneWidget);
 
     await tester.pumpAndSettle();
-    expect(find.text('Encendido'), findsWidgets);
+    expect(
+      find.descendant(of: tile, matching: find.text('Encendido')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('mobile unknown health with commands powers on', (tester) async {
@@ -304,45 +301,43 @@ void main() {
     );
     await pumpMobileDevicesWide(tester, repo);
 
-    await tester.tap(find.text('Sala'));
-    await tester.pumpAndSettle();
-
-    // Health is unvalidated but the device is commandable: honest 'Sin datos',
-    // not a dead 'Estado desconocido'. The area 'Controles' tile carries the
-    // same state, so scope to the card.
+    // Health is unvalidated but the device is commandable: the landing tile
+    // stays honest ('Sin datos'), never a dead 'Estado desconocido'.
+    final tile = find.byKey(
+      const ValueKey('mobile-channel-dev_unknown_01-light'),
+    );
     expect(find.text('Estado desconocido'), findsNothing);
     expect(
-      find.descendant(
-        of: mobileDeviceCard('Luz sin validar'),
-        matching: find.text('Sin datos'),
-      ),
+      find.descendant(of: tile, matching: find.text('Sin datos')),
       findsOneWidget,
     );
 
-    await tester.tap(find.text('Luz sin validar'));
+    await tester.tap(tile);
     await tester.pump();
 
     // Unknown power resolves to power-on, never off.
     expect(repo.powerCalls, [('dev_unknown_01', 'light', true)]);
-    expect(find.text('Luz sin validar — Encendido'), findsOneWidget);
+    expect(find.text('Luz — Encendido'), findsOneWidget);
   });
 
-  testWidgets('mobile unknown health without commands stays unknowable', (
+  testWidgets('mobile detail without commands keeps the channel unknowable', (
     tester,
   ) async {
     final repo = _MultiGangFakeRepo(devices: const [_legacyUnknownLight]);
     await pumpMobileDevicesWide(tester, repo);
 
-    await tester.tap(find.text('Sala'));
-    await tester.pumpAndSettle();
+    await openMobileDetail(tester, deviceName: 'Luz sin validar');
 
-    // Plain fakes keep the exact old behavior: not controllable.
-    expect(find.text('Estado desconocido'), findsOneWidget);
-    expect(find.text('Sin datos'), findsNothing);
-
-    await tester.tap(find.text('Luz sin validar'));
-    await tester.pump();
-    expect(find.text('Luz sin validar — Estado desconocido'), findsOneWidget);
+    // Plain fakes keep the honest detail: no confirmed observation and no
+    // command layer, so the channel shows no confident state and no switch.
+    expect(
+      find.descendant(
+        of: mobileChannelControl('light'),
+        matching: find.text('Sin datos'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byType(Switch), findsNothing);
   });
 
   testWidgets('wall card aggregates multi-gang power state', (tester) async {
@@ -360,19 +355,6 @@ void main() {
     );
   });
 
-  testWidgets('mobile card reports the multi-gang aggregate', (tester) async {
-    final repo = CommandDeviceFakeRepo(
-      devices: const [_observedTriple],
-      areas: const [HomeArea(id: 'pasillo', name: 'Pasillo')],
-    );
-    await pumpMobileDevicesWide(tester, repo);
-
-    await tester.tap(find.text('Pasillo'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('1 de 3 encendidos · 1 sin datos'), findsOneWidget);
-  });
-
   testWidgets('mobile detail shows each control state', (tester) async {
     final repo = CommandDeviceFakeRepo(
       devices: const [_observedTriple],
@@ -385,11 +367,7 @@ void main() {
     );
     await pumpMobileDevicesWide(tester, repo);
 
-    await openMobileDetail(
-      tester,
-      areaName: 'Pasillo',
-      deviceName: 'Interruptor triple observado',
-    );
+    await openMobileDetail(tester, deviceName: 'Interruptor triple observado');
 
     expect(
       find.descendant(
@@ -428,11 +406,7 @@ void main() {
     );
     await pumpMobileDevicesWide(tester, repo);
 
-    await openMobileDetail(
-      tester,
-      areaName: 'Pasillo',
-      deviceName: 'Interruptor triple observado',
-    );
+    await openMobileDetail(tester, deviceName: 'Interruptor triple observado');
 
     final relay2 = mobileChannelControl('relay_2');
     final switchFinder = find.descendant(
@@ -493,7 +467,6 @@ void main() {
 
       await openMobileDetail(
         tester,
-        areaName: 'Pasillo',
         deviceName: 'Interruptor triple observado',
       );
 
@@ -529,11 +502,7 @@ void main() {
     );
     await pumpMobileDevicesWide(tester, repo);
 
-    await openMobileDetail(
-      tester,
-      areaName: 'Sala',
-      deviceName: 'Luz sin credenciales',
-    );
+    await openMobileDetail(tester, deviceName: 'Luz sin credenciales');
 
     expect(find.text('Sin credenciales'), findsOneWidget);
   });
@@ -547,42 +516,27 @@ void main() {
     );
     await pumpMobileDevicesWide(tester, repo);
 
-    await openMobileDetail(
-      tester,
-      areaName: 'Sala',
-      deviceName: 'Luz con credenciales',
-    );
+    await openMobileDetail(tester, deviceName: 'Luz con credenciales');
 
     expect(find.text('Sin credenciales'), findsNothing);
   });
 }
 
-/// Opens the mobile standard detail for [deviceName] inside [areaName]:
-/// area card -> device grid -> long-press quick sheet -> Configurar.
+/// Opens the mobile standard detail for [deviceName]: landing devices button
+/// -> flat device list -> device row.
 Future<void> openMobileDetail(
   WidgetTester tester, {
-  required String areaName,
   required String deviceName,
 }) async {
-  await tester.tap(find.text(areaName));
+  await tester.tap(find.byKey(const ValueKey('open-devices-list')));
   await tester.pumpAndSettle();
-  await tester.longPress(find.text(deviceName));
-  await tester.pumpAndSettle();
-  await tester.tap(find.text('Configurar dispositivo'));
+  await tester.tap(find.text(deviceName));
   await tester.pumpAndSettle();
 }
 
 /// The mobile per-channel control row that owns [endpointId].
 Finder mobileChannelControl(String endpointId) =>
     find.byKey(ValueKey('channel-control-$endpointId'));
-
-/// The mobile device card (identity surface) that owns [deviceName].
-Finder mobileDeviceCard(String deviceName) => find.ancestor(
-  of: find.text(deviceName),
-  matching: find.byWidgetPredicate(
-    (widget) => widget.runtimeType.toString() == '_DashboardDeviceCard',
-  ),
-);
 
 Future<AdaptiveFeatureController> pumpDesktop(
   WidgetTester tester,
@@ -627,9 +581,8 @@ Future<void> pumpMobileDevices(
   await tester.pump(const Duration(milliseconds: 150));
 }
 
-/// Mobile-area-first pump at 520 dp: the pre-existing home header overflow at
-/// 390 dp (known failing `mobile endpoint independence`) is unrelated to the
-/// power flow and would fail any test that navigates the grid at that width.
+/// Mobile pump at 520 dp: the pre-existing home header overflow at 390 dp
+/// is unrelated to the power flow and would fail any test at that width.
 Future<void> pumpMobileDevicesWide(
   WidgetTester tester,
   DeviceInventoryRepository repo,
@@ -668,6 +621,9 @@ Future<void> pumpWall(
     ),
   );
   await tester.pump(const Duration(milliseconds: 150));
+  // Controles is the wall default; these tests cover the device list/detail.
+  await tester.tap(find.byKey(const ValueKey('wall-devices-button')));
+  await tester.pumpAndSettle();
 }
 
 AdaptiveFeatureController _wallController(WidgetTester tester) {

@@ -63,8 +63,9 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
   String _query = '';
   String? _locationId;
 
-  /// Which dashboard is rendered; the devices list keeps its exact behavior.
-  _WallDevicesView _view = _WallDevicesView.devices;
+  /// Which dashboard is rendered. Controles is the default surface; the
+  /// device list (management) stays one tap away through the header button.
+  _WallDevicesView _view = _WallDevicesView.controls;
 
   /// In-flight channel toggles, keyed by device/endpoint.
   final Set<String> _channelBusy = {};
@@ -324,6 +325,14 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
     );
   }
 
+  void _switchView() {
+    setState(() {
+      _view = _view == _WallDevicesView.controls
+          ? _WallDevicesView.devices
+          : _WallDevicesView.controls;
+    });
+  }
+
   bool get _commandsAvailable => _controller.supportsEndpointCommands;
 
   String _channelKey(PhysicalDevice device, DeviceEndpoint endpoint) =>
@@ -450,9 +459,11 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
         GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          // The tile is sized for the household glance at 1x text; large
+          // accessibility scales get extra vertical room instead of clipping.
+          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
             maxCrossAxisExtent: 420,
-            mainAxisExtent: 148,
+            mainAxisExtent: 148 + (MediaQuery.textScalerOf(context).scale(1) - 1) * 110,
             mainAxisSpacing: 18,
             crossAxisSpacing: 18,
           ),
@@ -547,13 +558,10 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
                         count: devices.length,
                         offlineCount: snapshot.offlineDevices.length,
                         onShowOffline: _showOfflineDevices,
+                        view: _view,
+                        onSwitchView: _switchView,
                       ),
                       const SizedBox(height: 18),
-                      _WallViewToggle(
-                        view: _view,
-                        onChanged: (value) => setState(() => _view = value),
-                      ),
-                      const SizedBox(height: 14),
                       _WallSearchField(
                         query: _query,
                         api: widget.api,
@@ -568,13 +576,18 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
                         onDeleteArea: _deleteFilterArea,
                       ),
                       const SizedBox(height: 14),
-                      _WallListActions(
-                        discovering: _controller.discovering,
-                        onAdd: _showAddDeviceDialog,
-                        onDiscover: _discover,
-                        onAddArea: _showAddAreaDialog,
-                      ),
-                      const SizedBox(height: 18),
+                      // Device management (add/discover/add area) belongs to
+                      // the Dispositivos view only: the Controles surface
+                      // stays a control surface.
+                      if (_view == _WallDevicesView.devices) ...[
+                        _WallListActions(
+                          discovering: _controller.discovering,
+                          onAdd: _showAddDeviceDialog,
+                          onDiscover: _discover,
+                          onAddArea: _showAddAreaDialog,
+                        ),
+                        const SizedBox(height: 18),
+                      ],
                       if (_view == _WallDevicesView.controls)
                         ..._wallControlsChildren(
                           groups: controlGroups,
@@ -629,14 +642,19 @@ class _WallDevicesHeader extends StatelessWidget {
     required this.count,
     required this.offlineCount,
     required this.onShowOffline,
+    required this.view,
+    required this.onSwitchView,
   });
 
   final int count;
   final int offlineCount;
   final VoidCallback onShowOffline;
+  final _WallDevicesView view;
+  final VoidCallback onSwitchView;
 
   @override
   Widget build(BuildContext context) {
+    final showingControls = view == _WallDevicesView.controls;
     return Row(
       children: [
         const Expanded(
@@ -649,9 +667,26 @@ class _WallDevicesHeader extends StatelessWidget {
             ),
           ),
         ),
+        // One-tap switch between the default Controles surface and the
+        // device list; >= 48dp target, same as the offline entry.
+        IconButton(
+          key: ValueKey(
+            showingControls ? 'wall-devices-button' : 'wall-controls-button',
+          ),
+          tooltip: showingControls ? 'Ver dispositivos' : 'Ver controles',
+          constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+          padding: EdgeInsets.zero,
+          onPressed: onSwitchView,
+          icon: Icon(
+            showingControls ? Icons.devices_outlined : Icons.tune,
+            size: 24,
+            color: AppColors.textDim,
+          ),
+        ),
         // Icon-only entry to the offline devices overlay; hidden when every
         // device is active.
         if (offlineCount > 0) ...[
+          const SizedBox(width: 4),
           IconButton(
             key: const ValueKey('wall-offline-button'),
             tooltip: 'Dispositivos sin acceso',
@@ -664,8 +699,8 @@ class _WallDevicesHeader extends StatelessWidget {
               color: AppColors.textDim,
             ),
           ),
-          const SizedBox(width: 4),
         ],
+        const SizedBox(width: 4),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
@@ -682,48 +717,6 @@ class _WallDevicesHeader extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// Touch-first view switch between the device list and the channel-tile
-/// 'Controles' dashboard. >= 56dp tall; always visible so both surfaces are
-/// one tap away.
-class _WallViewToggle extends StatelessWidget {
-  const _WallViewToggle({required this.view, required this.onChanged});
-
-  final _WallDevicesView view;
-  final ValueChanged<_WallDevicesView> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return SegmentedButton<_WallDevicesView>(
-      key: const ValueKey('wall-devices-view'),
-      segments: const [
-        ButtonSegment(
-          value: _WallDevicesView.devices,
-          icon: Icon(Icons.devices_outlined, size: 22),
-          label: Text('Dispositivos'),
-        ),
-        ButtonSegment(
-          value: _WallDevicesView.controls,
-          icon: Icon(Icons.tune, size: 22),
-          label: Text('Controles'),
-        ),
-      ],
-      selected: {view},
-      showSelectedIcon: false,
-      onSelectionChanged: (selection) => onChanged(selection.first),
-      style: ButtonStyle(
-        minimumSize: const WidgetStatePropertyAll(Size(0, 56)),
-        textStyle: const WidgetStatePropertyAll(
-          TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-        ),
-        side: WidgetStatePropertyAll(BorderSide(color: AppColors.border)),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        ),
-      ),
     );
   }
 }

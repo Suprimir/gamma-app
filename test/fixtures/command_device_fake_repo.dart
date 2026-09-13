@@ -24,6 +24,9 @@ class CommandDeviceFakeRepo
   List<PhysicalDevice> devices;
   List<HomeArea> areas;
 
+  /// Number of [discover] invocations (surface wiring assertions).
+  int discoverCount = 0;
+
   /// Result returned by [setEndpointPower]. When null, a confirmed echo of
   /// the requested value is returned.
   EndpointPowerResult? powerResult;
@@ -80,7 +83,10 @@ class CommandDeviceFakeRepo
   );
 
   @override
-  Future<DeviceInventorySnapshot> discover() async => load();
+  Future<DeviceInventorySnapshot> discover() async {
+    discoverCount++;
+    return load();
+  }
 
   @override
   Future<EndpointPowerResult> setEndpointPower(

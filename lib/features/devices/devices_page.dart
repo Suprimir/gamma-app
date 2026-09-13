@@ -34,7 +34,6 @@ class _DevicesPageState extends State<DevicesPage> {
     widget.repository,
   );
   bool _loadStarted = false;
-  String _query = '';
 
   @override
   void initState() {
@@ -67,80 +66,112 @@ class _DevicesPageState extends State<DevicesPage> {
 
   Future<void> _load() => _controller.loadDevices();
 
-  Future<void> _showAddDeviceDialog() async {
-    final snapshot = _controller.snapshot;
-    final areas = snapshot?.areas ?? const <HomeArea>[];
-    final result = await showDialog<_DashboardAddResult>(
-      context: context,
-      builder: (_) => _DashboardAddDialog(areas: areas, initialAreaId: null),
-    );
-    if (result == null || !mounted) return;
-    final id = 'dev_manual_${DateTime.now().millisecondsSinceEpoch}';
-    final kind = switch (result.type) {
-      'Luz' => DeviceKind.light,
-      'Enchufe' => DeviceKind.outlet,
-      'Sensor' => DeviceKind.sensor,
-      'Interruptor' => DeviceKind.switchController,
-      _ => DeviceKind.unknown,
-    };
-    final endpoint = switch (result.type) {
-      'Luz' => const DeviceEndpoint(
-        id: 'light',
-        name: 'Luz',
-        kind: DeviceKind.light,
-        capabilities: {'on_off', 'brightness'},
-      ),
-      'Enchufe' => const DeviceEndpoint(
-        id: 'outlet',
-        name: 'Enchufe',
-        kind: DeviceKind.outlet,
-        capabilities: {'on_off'},
-      ),
-      'Sensor' => const DeviceEndpoint(
-        id: 'sensor',
-        name: 'Sensor',
-        kind: DeviceKind.sensor,
-        capabilities: {'motion'},
-      ),
-      'Interruptor' => const DeviceEndpoint(
-        id: 'switch',
-        name: 'Interruptor',
-        kind: DeviceKind.switchController,
-        capabilities: {'on_off'},
-      ),
-      _ => const DeviceEndpoint(
-        id: 'channel',
-        name: 'Canal',
-        kind: DeviceKind.unknown,
-        capabilities: {'on_off'},
-      ),
-    };
-    final device = PhysicalDevice(
-      id: id,
-      name: result.name,
-      kind: kind,
-      provider: 'Manual',
-      providerDeviceId: '',
-      model: 'Manual',
-      manufacturer: 'Manual',
-      physicalAreaId: result.areaId,
-      provisioningState: DeviceProvisioningState.configured,
-      online: true,
-      health: DeviceHealthState.online,
-      endpoints: [endpoint],
-    );
-    _controller.addLocalDevice(device);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Dispositivo "${result.name}" agregado')),
-    );
-  }
-
   Future<void> _open(Widget page) async {
     await Navigator.of(
       context,
     ).push(MaterialPageRoute<void>(builder: (_) => page));
     await _controller.loadDevices();
+  }
+
+  /// Offline devices leave the controls landing: this keeps them reachable
+  /// through the header icon button, with the existing no-connection copy.
+  Future<void> _openOfflineList(DeviceInventorySnapshot snapshot) {
+    return _open(
+      _MobileDeviceGridPage(
+        title: 'Desconectados',
+        subtitle: 'Dispositivos sin conexión, con acción rápida.',
+        devices: snapshot.offlineDevices,
+        areas: snapshot.areas,
+        gateways: snapshot.gateways,
+        repository: widget.repository,
+        controller: _controller,
+        emptyMessage: 'No hay dispositivos desconectados.',
+        onCanonicalDeviceChanged: _controller.applyCanonicalDevice,
+      ),
+    );
+  }
+
+  /// Grouped control slivers shared by the landing: every power channel of
+  /// the active inventory, grouped by effective area (same contract as the
+  /// old full-screen Controles page). The honest empty state points to the
+  /// devices list for discovery/configuration.
+  List<Widget> _controlSlivers(DeviceInventorySnapshot snapshot) {
+    final channels = powerChannelsOf(snapshot.activeDevices);
+    final groups = groupPowerChannels(channels, snapshot.areas);
+    if (channels.isEmpty) {
+      return const [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 48),
+            child: Column(
+              children: [
+                Text(
+                  'Todavía no hay controles.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppColors.textDim, fontSize: 15),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'Abrí Dispositivos para buscar y configurar tus equipos.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppColors.textFaint, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ];
+    }
+    return [
+      for (final group in groups) ...[
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    group.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.text,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '${group.channels.length}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.accent,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        _ChannelTileGrid(
+          channels: group.channels,
+          repository: widget.repository,
+          controller: _controller,
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: 12)),
+      ],
+      const SliverToBoxAdapter(child: SizedBox(height: 16)),
+    ];
   }
 
   @override
@@ -165,28 +196,11 @@ class _DevicesPageState extends State<DevicesPage> {
     }
 
     final snapshot = _controller.snapshot!;
-    // Móvil area-first: la pantalla principal muestra las ubicaciones de la
-    // casa; al seleccionar una se accede a sus dispositivos con tarjetas de
-    // acción rápida. Mismo lenguaje visual del dashboard (search pill, botón
-    // + azul, tarjetas blancas, toggle y badge de conteo).
-    // Main lists are active-only: devices known to be unreachable live in the
-    // Desconectados section instead of diluting the working surfaces.
-    final devices = snapshot.activeDevices;
-    final query = _query.trim().toLowerCase();
-    final areas = snapshot.areas
-        .where(
-          (area) => query.isEmpty || area.name.toLowerCase().contains(query),
-        )
-        .toList();
-    final unassigned = devices
-        .where((device) => device.needsConfiguration)
-        .toList();
-    final noAreaDevices = devices
-        .where((device) => device.physicalAreaId == null)
-        .toList();
-    final offlineDevices = snapshot.offlineDevices;
-    final controlsCount = powerChannelsOf(devices).length;
-
+    final offlineCount = snapshot.offlineDevices.length;
+    // CONTROLES is the mobile landing: every power channel of the active
+    // inventory, grouped by effective area. Device management (flat list,
+    // pending devices, gateways, discovery, manual add) lives behind the
+    // header icon buttons so the default surface stays a control surface.
     return Container(
       color: AppColors.bg,
       child: SafeArea(
@@ -196,290 +210,97 @@ class _DevicesPageState extends State<DevicesPage> {
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
-              // ── Búsqueda de ubicaciones (mismo Search pill) ──
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
-                  child: TextField(
-                    key: const Key('mobile-device-search'),
-                    onChanged: (value) => setState(() => _query = value),
-                    decoration: InputDecoration(
-                      hintText: 'Buscar ubicaciones',
-                      prefixIcon: const Icon(CupertinoIcons.search, size: 18),
-                      isDense: true,
-                      filled: true,
-                      fillColor: Colors.white,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 12,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              // ── + agregar + encabezado "Tus ubicaciones" ──
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                   child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      Semantics(
-                        button: true,
-                        label: 'Agregar dispositivo',
-                        child: GestureDetector(
-                          onTap: _showAddDeviceDialog,
-                          child: Container(
-                            width: 56,
-                            height: 56,
-                            decoration: BoxDecoration(
-                              color: AppColors.accent,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: AppColors.accent),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.04),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: const Icon(
-                              CupertinoIcons.add,
-                              size: 24,
-                              color: Colors.white,
-                            ),
+                      _HeaderIconButton(
+                        key: const ValueKey('open-devices-list'),
+                        tooltip: 'Dispositivos',
+                        icon: Icons.devices_other,
+                        onTap: () => _open(
+                          _MobileDevicesListPage(
+                            snapshot: snapshot,
+                            repository: widget.repository,
+                            controller: _controller,
                           ),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      const Text(
-                        'Tus ubicaciones',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.text,
-                          letterSpacing: -0.01,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFEFF6FF),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          '${areas.length}',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.accent,
-                          ),
-                        ),
+                      const SizedBox(width: 4),
+                      _HeaderIconButton(
+                        key: const ValueKey('open-offline-list'),
+                        tooltip: 'Dispositivos sin acceso',
+                        icon: Icons.wifi_off_rounded,
+                        badge: offlineCount == 0 ? null : '$offlineCount',
+                        onTap: () => _openOfflineList(snapshot),
                       ),
                     ],
                   ),
                 ),
               ),
-              // ── Grid 2 columnas de ubicaciones ──
-              if (areas.isEmpty)
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 32),
-                    child: Text(
-                      'No hay ubicaciones que mostrar.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.textDim),
-                    ),
-                  ),
-                )
-              else
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                  sliver: SliverGrid(
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                          childAspectRatio: 0.95,
-                        ),
-                    delegate: SliverChildBuilderDelegate((context, index) {
-                      final area = areas[index];
-                      return _AreaCard(
-                        area: area,
-                        count: snapshot
-                            .devicesInArea(area.id)
-                            .where(
-                              (device) =>
-                                  !DeviceInventorySnapshot.isOfflineDevice(
-                                    device,
-                                  ),
-                            )
-                            .length,
-                        onTap: () => _open(
-                          _MobileDeviceGridPage.forArea(
-                            area: area,
-                            snapshot: snapshot,
-                            repository: widget.repository,
-                            controller: _controller,
-                            onCanonicalDeviceChanged:
-                                _controller.applyCanonicalDevice,
-                          ),
-                        ),
-                      );
-                    }, childCount: areas.length),
-                  ),
-                ),
-              // ── Explorar: accesos al resto del inventario ──
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  child: Text(
-                    'EXPLORAR',
-                    style: const TextStyle(
-                      color: AppColors.textDim,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 10,
-                      letterSpacing: 1.25,
-                    ),
-                  ),
-                ),
-              ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
-                  child: Column(
-                    children: [
-                      _NavigationRow(
-                        key: const ValueKey('controls-row'),
-                        icon: CupertinoIcons.slider_horizontal_3,
-                        title: 'Controles',
-                        subtitle:
-                            '$controlsCount ${controlsCount == 1 ? 'control' : 'controles'} en casa',
-                        badge: '$controlsCount',
-                        onTap: () => _open(
-                          _MobileControlsPage(
-                            snapshot: snapshot,
-                            repository: widget.repository,
-                            controller: _controller,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      _NavigationRow(
-                        icon: CupertinoIcons.square_stack,
-                        title: 'Todos los dispositivos',
-                        subtitle:
-                            '${devices.length} en casa · acción rápida incluida',
-                        badge: '${devices.length}',
-                        onTap: () => _open(
-                          _MobileDeviceGridPage.all(
-                            snapshot: snapshot,
-                            repository: widget.repository,
-                            controller: _controller,
-                            onCanonicalDeviceChanged:
-                                _controller.applyCanonicalDevice,
-                          ),
-                        ),
-                      ),
-                      if (noAreaDevices.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        _NavigationRow(
-                          icon: CupertinoIcons.question_circle,
-                          title: 'Sin ubicación',
-                          subtitle: 'Sin área asignada',
-                          badge: '${noAreaDevices.length}',
-                          onTap: () => _open(
-                            _MobileDeviceGridPage(
-                              title: 'Sin ubicación',
-                              subtitle:
-                                  'Dispositivos sin área asignada, con acción rápida.',
-                              devices: noAreaDevices,
-                              areas: snapshot.areas,
-                              gateways: snapshot.gateways,
-                              repository: widget.repository,
-                              controller: _controller,
-                              emptyMessage:
-                                  'No hay dispositivos sin ubicación.',
-                              onCanonicalDeviceChanged:
-                                  _controller.applyCanonicalDevice,
-                            ),
-                          ),
-                        ),
-                      ],
-                      if (unassigned.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        _NavigationRow(
-                          icon: CupertinoIcons.sparkles,
-                          title: 'Nuevos dispositivos',
-                          subtitle: 'Pendientes de configurar',
-                          badge: '${unassigned.length}',
-                          onTap: () => _open(
-                            _PendingDevicesPage(
-                              repository: widget.repository,
-                              snapshot: snapshot,
-                              onCanonicalDeviceChanged:
-                                  _controller.applyCanonicalDevice,
-                            ),
-                          ),
-                        ),
-                      ],
-                      if (offlineDevices.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        _NavigationRow(
-                          icon: CupertinoIcons.wifi_slash,
-                          title: 'Desconectados',
-                          subtitle: 'Requieren revisión',
-                          badge: '${offlineDevices.length}',
-                          badgeColor: AppColors.red,
-                          onTap: () => _open(
-                            _MobileDeviceGridPage(
-                              title: 'Desconectados',
-                              subtitle:
-                                  'Dispositivos sin conexión, con acción rápida.',
-                              devices: offlineDevices,
-                              areas: snapshot.areas,
-                              gateways: snapshot.gateways,
-                              repository: widget.repository,
-                              controller: _controller,
-                              emptyMessage:
-                                  'No hay dispositivos desconectados.',
-                              onCanonicalDeviceChanged:
-                                  _controller.applyCanonicalDevice,
-                            ),
-                          ),
-                        ),
-                      ],
-                      if (snapshot.gateways.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        _NavigationRow(
-                          icon: CupertinoIcons.personalhotspot,
-                          title: 'Gateways',
-                          subtitle: 'Infraestructura de la casa',
-                          badge: '${snapshot.gateways.length}',
-                          onTap: () => _open(_GatewaysPage(snapshot: snapshot)),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
+              ..._controlSlivers(snapshot),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Compact 48dp icon-only action for the mobile landing header, with an
+/// optional small count badge (offline devices).
+class _HeaderIconButton extends StatelessWidget {
+  const _HeaderIconButton({
+    super.key,
+    required this.tooltip,
+    required this.icon,
+    required this.onTap,
+    this.badge,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onTap;
+  final String? badge;
+
+  @override
+  Widget build(BuildContext context) {
+    final badgeText = badge;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(
+          tooltip: tooltip,
+          constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+          padding: EdgeInsets.zero,
+          onPressed: onTap,
+          icon: Icon(icon, size: 22, color: AppColors.textDim),
+        ),
+        if (badgeText != null)
+          Positioned(
+            top: 4,
+            right: 2,
+            child: Container(
+              constraints: const BoxConstraints(minWidth: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: AppColors.red,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                badgeText,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -1104,167 +925,6 @@ class _DashboardToggle extends StatelessWidget {
   }
 }
 
-class _AreaCard extends StatelessWidget {
-  const _AreaCard({
-    required this.area,
-    required this.count,
-    required this.onTap,
-  });
-
-  final HomeArea area;
-  final int count;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.surface,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Ink(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            border: Border.all(color: AppColors.border),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      color: AppColors.accentTint,
-                      borderRadius: BorderRadius.circular(13),
-                    ),
-                    child: Icon(
-                      iosLocationIcon(area.id),
-                      color: AppColors.accent,
-                    ),
-                  ),
-                  const Spacer(),
-                  const Icon(
-                    CupertinoIcons.chevron_right,
-                    color: AppColors.textFaint,
-                  ),
-                ],
-              ),
-              const Spacer(),
-              Text(
-                area.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                '$count ${count == 1 ? 'elemento' : 'elementos'}',
-                style: const TextStyle(
-                  color: AppColors.textDim,
-                  fontSize: 11.5,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _NavigationRow extends StatelessWidget {
-  const _NavigationRow({
-    super.key,
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.badge,
-    required this.onTap,
-    this.badgeColor,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final String badge;
-  final VoidCallback onTap;
-  final Color? badgeColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final badgeColor = this.badgeColor ?? AppColors.accentStrong;
-    return Material(
-      color: AppColors.surface,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Ink(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            border: Border.all(color: AppColors.border),
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: Row(
-            children: [
-              Icon(icon, color: AppColors.textDim),
-              const SizedBox(width: 13),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        color: AppColors.textDim,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                constraints: const BoxConstraints(minWidth: 28),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: badgeColor.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  badge,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: badgeColor,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 11,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              const Icon(
-                CupertinoIcons.chevron_right,
-                color: AppColors.textFaint,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _MobileDeviceGridPage extends StatefulWidget {
   const _MobileDeviceGridPage({
     required this.title,
@@ -1275,57 +935,14 @@ class _MobileDeviceGridPage extends StatefulWidget {
     required this.repository,
     required this.controller,
     required this.emptyMessage,
+    // Area-scoped grids are not navigable from mobile anymore, but the
+    // per-area 'Controles' section below is kept for the area pages contract.
+    // ignore: unused_element_parameter
     this.hideAreaName = false,
+    // ignore: unused_element_parameter
     this.areaId,
     this.onCanonicalDeviceChanged,
   });
-
-  /// Grid de una ubicación: filtra por área y oculta el subtítulo de área
-  /// porque todas las tarjetas pertenecen a la misma ubicación.
-  factory _MobileDeviceGridPage.forArea({
-    required HomeArea area,
-    required DeviceInventorySnapshot snapshot,
-    required DeviceInventoryRepository repository,
-    required AdaptiveFeatureController controller,
-    ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged,
-  }) {
-    return _MobileDeviceGridPage(
-      title: area.name,
-      subtitle: 'Dispositivos de ${area.name}, con acción rápida.',
-      devices: snapshot
-          .devicesInArea(area.id)
-          .where((device) => !DeviceInventorySnapshot.isOfflineDevice(device))
-          .toList(),
-      areas: snapshot.areas,
-      gateways: snapshot.gateways,
-      repository: repository,
-      controller: controller,
-      emptyMessage: 'No hay dispositivos asignados a ${area.name}.',
-      hideAreaName: true,
-      areaId: area.id,
-      onCanonicalDeviceChanged: onCanonicalDeviceChanged,
-    );
-  }
-
-  /// Grid con todo el inventario de usuario.
-  factory _MobileDeviceGridPage.all({
-    required DeviceInventorySnapshot snapshot,
-    required DeviceInventoryRepository repository,
-    required AdaptiveFeatureController controller,
-    ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged,
-  }) {
-    return _MobileDeviceGridPage(
-      title: 'Todos los dispositivos',
-      subtitle: 'Todo el inventario de la casa, con acción rápida.',
-      devices: snapshot.activeDevices,
-      areas: snapshot.areas,
-      gateways: snapshot.gateways,
-      repository: repository,
-      controller: controller,
-      emptyMessage: 'No hay dispositivos configurados.',
-      onCanonicalDeviceChanged: onCanonicalDeviceChanged,
-    );
-  }
 
   final String title;
   final String subtitle;
@@ -1337,7 +954,7 @@ class _MobileDeviceGridPage extends StatefulWidget {
   final String emptyMessage;
   final bool hideAreaName;
 
-  /// Effective area this grid is showing (only set by [forArea]): the
+  /// Effective area this grid is showing, when it is an area-scoped grid: the
   /// 'Controles' section renders the channels that command this room.
   final String? areaId;
   final ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged;
@@ -1647,102 +1264,6 @@ class _MobileDeviceGridPageState extends State<_MobileDeviceGridPage> {
 /// grouped by effective area. Tapping a tile toggles exactly that channel;
 /// long-press opens the channel actions. Tiles are additive to the device
 /// cards — the device stays the identity surface.
-class _MobileControlsPage extends StatelessWidget {
-  const _MobileControlsPage({
-    required this.snapshot,
-    required this.repository,
-    required this.controller,
-  });
-
-  final DeviceInventorySnapshot snapshot;
-  final DeviceInventoryRepository repository;
-  final AdaptiveFeatureController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final current = controller.snapshot ?? snapshot;
-    final channels = powerChannelsOf(current.activeDevices);
-    final groups = groupPowerChannels(channels, current.areas);
-    return Scaffold(
-      backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        backgroundColor: AppColors.bg,
-        surfaceTintColor: Colors.transparent,
-        title: const Text('Controles'),
-      ),
-      body: SafeArea(
-        top: false,
-        child: channels.isEmpty
-            ? const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text(
-                    'Todavía no hay controles.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: AppColors.textDim),
-                  ),
-                ),
-              )
-            : CustomScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
-                  for (final group in groups) ...[
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                group.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 13.5,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.text,
-                                ),
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFEFF6FF),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text(
-                                '${group.channels.length}',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.accent,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    _ChannelTileGrid(
-                      channels: group.channels,
-                      repository: repository,
-                      controller: controller,
-                    ),
-                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
-                  ],
-                  const SliverToBoxAdapter(child: SizedBox(height: 16)),
-                ],
-              ),
-      ),
-    );
-  }
-}
-
-/// Sliver grid of compact channel tiles sharing one per-channel busy/override
-/// state. Used by the area-view section and the full 'Controles' page.
 class _ChannelTileGrid extends StatefulWidget {
   const _ChannelTileGrid({
     required this.channels,
@@ -2255,146 +1776,6 @@ class _MobileChannelTile extends StatelessWidget {
   }
 }
 
-class _PendingDevicesPage extends StatelessWidget {
-  const _PendingDevicesPage({
-    required this.repository,
-    required this.snapshot,
-    this.onCanonicalDeviceChanged,
-  });
-
-  final DeviceInventoryRepository repository;
-  final DeviceInventorySnapshot snapshot;
-  final ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return _DeviceListScaffold(
-      title: 'Nuevos dispositivos',
-      subtitle:
-          'Todavía no forman parte de la estructura semántica de la casa.',
-      devices: snapshot.activeDevices
-          .where((device) => device.needsConfiguration)
-          .toList(),
-      snapshot: snapshot,
-      repository: repository,
-      emptyMessage: 'No hay dispositivos nuevos.',
-      pendingOnly: true,
-      onCanonicalDeviceChanged: onCanonicalDeviceChanged,
-    );
-  }
-}
-
-class _DeviceListScaffold extends StatefulWidget {
-  const _DeviceListScaffold({
-    required this.title,
-    required this.subtitle,
-    required this.devices,
-    required this.snapshot,
-    required this.repository,
-    required this.emptyMessage,
-    this.pendingOnly = false,
-    this.onCanonicalDeviceChanged,
-  });
-
-  final String title;
-  final String subtitle;
-  final List<PhysicalDevice> devices;
-  final DeviceInventorySnapshot snapshot;
-  final DeviceInventoryRepository repository;
-  final String emptyMessage;
-  final bool pendingOnly;
-  final ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged;
-
-  @override
-  State<_DeviceListScaffold> createState() => _DeviceListScaffoldState();
-}
-
-class _DeviceListScaffoldState extends State<_DeviceListScaffold> {
-  late List<PhysicalDevice> _devices;
-
-  @override
-  void initState() {
-    super.initState();
-    _devices = List.of(widget.devices);
-  }
-
-  Future<void> _openDevice(PhysicalDevice device) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => _DeviceDetailPage(
-          device: device,
-          areas: widget.snapshot.areas,
-          gateways: widget.snapshot.gateways,
-          repository: widget.repository,
-          onCanonicalDeviceChanged: widget.onCanonicalDeviceChanged,
-        ),
-      ),
-    );
-    DeviceInventorySnapshot latest;
-    try {
-      latest = await widget.repository.load();
-    } catch (_) {
-      // Refrescar tras volver del detalle no debe romper la vista si el
-      // backend no responde; la lista conserva el último estado canónico.
-      return;
-    }
-    if (!mounted) return;
-    final ids = _devices.map((device) => device.id).toSet();
-    var refreshed = latest.devices
-        .where((device) => ids.contains(device.id))
-        .toList();
-    if (widget.pendingOnly) {
-      refreshed = latest.activeDevices
-          .where((device) => device.needsConfiguration)
-          .toList();
-    }
-    setState(() => _devices = refreshed);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        backgroundColor: AppColors.bg,
-        surfaceTintColor: Colors.transparent,
-        title: Text(widget.title),
-      ),
-      body: SafeArea(
-        top: false,
-        child: _devices.isEmpty
-            ? Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(widget.emptyMessage, textAlign: TextAlign.center),
-                ),
-              )
-            : ListView(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
-                children: [
-                  Text(
-                    widget.subtitle,
-                    style: const TextStyle(
-                      color: AppColors.textDim,
-                      fontSize: 13,
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  for (final device in _devices) ...[
-                    _DeviceRow(
-                      device: device,
-                      areas: widget.snapshot.areas,
-                      onTap: () => _openDevice(device),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                ],
-              ),
-      ),
-    );
-  }
-}
-
 class _DeviceRow extends StatelessWidget {
   const _DeviceRow({
     required this.device,
@@ -2484,6 +1865,374 @@ class _DeviceRow extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Filters of the flat mobile devices list. Gateways are infrastructure:
+/// they only render under their own chip, never mixed into the device list.
+enum _MobileDevicesFilter { all, unconfigured, unassigned, gateways }
+
+/// Flat device management behind the landing's devices button: search, filter
+/// chips (Todos / Sin configurar / Sin ubicación / Gateways), discovery and
+/// manual add. Every row opens the existing device detail.
+class _MobileDevicesListPage extends StatefulWidget {
+  const _MobileDevicesListPage({
+    required this.snapshot,
+    required this.repository,
+    required this.controller,
+  });
+
+  final DeviceInventorySnapshot snapshot;
+  final DeviceInventoryRepository repository;
+  final AdaptiveFeatureController controller;
+
+  @override
+  State<_MobileDevicesListPage> createState() => _MobileDevicesListPageState();
+}
+
+class _MobileDevicesListPageState extends State<_MobileDevicesListPage> {
+  _MobileDevicesFilter _filter = _MobileDevicesFilter.all;
+  String _query = '';
+
+  /// Newest canonical snapshot so discovery/renames converge without leaving
+  /// the page (the controller is shared with the landing).
+  DeviceInventorySnapshot get _snapshot =>
+      widget.controller.snapshot ?? widget.snapshot;
+
+  Future<void> _showAddDeviceDialog() async {
+    final areas = _snapshot.areas;
+    final result = await showDialog<_DashboardAddResult>(
+      context: context,
+      builder: (_) => _DashboardAddDialog(areas: areas, initialAreaId: null),
+    );
+    if (result == null || !mounted) return;
+    final id = 'dev_manual_${DateTime.now().millisecondsSinceEpoch}';
+    final kind = switch (result.type) {
+      'Luz' => DeviceKind.light,
+      'Enchufe' => DeviceKind.outlet,
+      'Sensor' => DeviceKind.sensor,
+      'Interruptor' => DeviceKind.switchController,
+      _ => DeviceKind.unknown,
+    };
+    final endpoint = switch (result.type) {
+      'Luz' => const DeviceEndpoint(
+        id: 'light',
+        name: 'Luz',
+        kind: DeviceKind.light,
+        capabilities: {'on_off', 'brightness'},
+      ),
+      'Enchufe' => const DeviceEndpoint(
+        id: 'outlet',
+        name: 'Enchufe',
+        kind: DeviceKind.outlet,
+        capabilities: {'on_off'},
+      ),
+      'Sensor' => const DeviceEndpoint(
+        id: 'sensor',
+        name: 'Sensor',
+        kind: DeviceKind.sensor,
+        capabilities: {'motion'},
+      ),
+      'Interruptor' => const DeviceEndpoint(
+        id: 'switch',
+        name: 'Interruptor',
+        kind: DeviceKind.switchController,
+        capabilities: {'on_off'},
+      ),
+      _ => const DeviceEndpoint(
+        id: 'channel',
+        name: 'Canal',
+        kind: DeviceKind.unknown,
+        capabilities: {'on_off'},
+      ),
+    };
+    final device = PhysicalDevice(
+      id: id,
+      name: result.name,
+      kind: kind,
+      provider: 'Manual',
+      providerDeviceId: '',
+      model: 'Manual',
+      manufacturer: 'Manual',
+      physicalAreaId: result.areaId,
+      provisioningState: DeviceProvisioningState.configured,
+      online: true,
+      health: DeviceHealthState.online,
+      endpoints: [endpoint],
+    );
+    widget.controller.addLocalDevice(device);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Dispositivo "${result.name}" agregado')),
+    );
+  }
+
+  Future<void> _discover() async {
+    if (widget.controller.discovering) return;
+    try {
+      final ok = await widget.controller.discover();
+      if (!ok || !mounted) return;
+      final pending = _snapshot.unassigned.length;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            pending == 0
+                ? 'No se encontraron dispositivos pendientes.'
+                : '$pending dispositivos pendientes de configurar.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo buscar dispositivos: $error')),
+      );
+    }
+  }
+
+  Future<void> _openDetail(PhysicalDevice device) async {
+    final snapshot = _snapshot;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _DeviceDetailPage(
+          device: device,
+          areas: snapshot.areas,
+          gateways: snapshot.gateways,
+          repository: widget.repository,
+          onCanonicalDeviceChanged: widget.controller.applyCanonicalDevice,
+        ),
+      ),
+    );
+    await widget.controller.loadDevices();
+  }
+
+  /// Search covers the display name, the user name and every channel name
+  /// (user names included), matching the rows the user actually sees.
+  bool _matchesQuery(PhysicalDevice device, String query) {
+    if (query.isEmpty) return true;
+    if (device.name.toLowerCase().contains(query)) return true;
+    if ((device.userName ?? '').toLowerCase().contains(query)) return true;
+    return device.endpoints.any(
+      (endpoint) => endpointChannelName(endpoint).toLowerCase().contains(query),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final snapshot = _snapshot;
+    final query = _query.trim().toLowerCase();
+    final showGateways = _filter == _MobileDevicesFilter.gateways;
+    final devices = showGateways
+        ? const <PhysicalDevice>[]
+        : snapshot.userDevices.where((device) {
+            if (!_matchesQuery(device, query)) return false;
+            return switch (_filter) {
+              _MobileDevicesFilter.all => true,
+              _MobileDevicesFilter.unconfigured => device.needsConfiguration,
+              _MobileDevicesFilter.unassigned => device.physicalAreaId == null,
+              _MobileDevicesFilter.gateways => false,
+            };
+          }).toList();
+    final gateways = showGateways
+        ? snapshot.gateways
+              .where(
+                (gateway) =>
+                    query.isEmpty || gateway.name.toLowerCase().contains(query),
+              )
+              .toList()
+        : const <GatewayInfo>[];
+    final discovering = widget.controller.discovering;
+
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      appBar: AppBar(
+        backgroundColor: AppColors.bg,
+        surfaceTintColor: Colors.transparent,
+        title: const Text('Dispositivos'),
+      ),
+      body: SafeArea(
+        top: false,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
+          children: [
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _MobileFilterChip(
+                    key: const ValueKey('mobile-devices-chip-all'),
+                    label: 'Todos',
+                    selected: _filter == _MobileDevicesFilter.all,
+                    onSelected: () =>
+                        setState(() => _filter = _MobileDevicesFilter.all),
+                  ),
+                  _MobileFilterChip(
+                    key: const ValueKey('mobile-devices-chip-unconfigured'),
+                    label: 'Sin configurar',
+                    selected: _filter == _MobileDevicesFilter.unconfigured,
+                    onSelected: () => setState(
+                      () => _filter = _MobileDevicesFilter.unconfigured,
+                    ),
+                  ),
+                  _MobileFilterChip(
+                    key: const ValueKey('mobile-devices-chip-unassigned'),
+                    label: 'Sin ubicación',
+                    selected: _filter == _MobileDevicesFilter.unassigned,
+                    onSelected: () => setState(
+                      () => _filter = _MobileDevicesFilter.unassigned,
+                    ),
+                  ),
+                  _MobileFilterChip(
+                    key: const ValueKey('mobile-devices-chip-gateways'),
+                    label: 'Gateways',
+                    selected: _filter == _MobileDevicesFilter.gateways,
+                    onSelected: () =>
+                        setState(() => _filter = _MobileDevicesFilter.gateways),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const Key('mobile-devices-search'),
+              onChanged: (value) => setState(() => _query = value),
+              decoration: InputDecoration(
+                hintText: 'Buscar por nombre o canal',
+                prefixIcon: const Icon(CupertinoIcons.search, size: 18),
+                isDense: true,
+                filled: true,
+                fillColor: Colors.white,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              key: const ValueKey('mobile-devices-discover'),
+              onPressed: discovering ? null : _discover,
+              icon: discovering
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.radar_outlined, size: 20),
+              label: Text(discovering ? 'Buscando…' : 'Buscar dispositivos'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.accentStrong,
+                minimumSize: const Size.fromHeight(48),
+                side: BorderSide(color: AppColors.accentTintActive),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              key: const ValueKey('mobile-devices-add'),
+              onPressed: _showAddDeviceDialog,
+              icon: const Icon(Icons.add, size: 20),
+              label: const Text('Agregar dispositivo'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                foregroundColor: Colors.white,
+                minimumSize: const Size.fromHeight(48),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            if (showGateways)
+              if (gateways.isEmpty)
+                const _MobileListEmpty(message: 'No hay gateways.')
+              else
+                for (final gateway in gateways) ...[
+                  _GatewayCard(gateway: gateway),
+                  const SizedBox(height: 10),
+                ]
+            else if (devices.isEmpty)
+              _MobileListEmpty(
+                message: query.isNotEmpty
+                    ? 'No hay dispositivos que coincidan.'
+                    : switch (_filter) {
+                        _MobileDevicesFilter.unconfigured =>
+                          'No hay dispositivos sin configurar.',
+                        _MobileDevicesFilter.unassigned =>
+                          'No hay dispositivos sin ubicación.',
+                        _ => 'No hay dispositivos.',
+                      },
+              )
+            else
+              for (final device in devices) ...[
+                _DeviceRow(
+                  device: device,
+                  areas: snapshot.areas,
+                  onTap: () => _openDetail(device),
+                ),
+                const SizedBox(height: 10),
+              ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Filter chip of the mobile devices list; >= 40dp tall with the label as the
+/// touch target.
+class _MobileFilterChip extends StatelessWidget {
+  const _MobileFilterChip({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ChoiceChip(
+        label: Text(label),
+        selected: selected,
+        onSelected: (_) => onSelected(),
+        labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+      ),
+    );
+  }
+}
+
+class _MobileListEmpty extends StatelessWidget {
+  const _MobileListEmpty({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 32),
+      child: Text(
+        message,
+        textAlign: TextAlign.center,
+        style: const TextStyle(color: AppColors.textDim),
       ),
     );
   }
@@ -4226,80 +3975,66 @@ class _MetadataRow extends StatelessWidget {
   }
 }
 
-class _GatewaysPage extends StatelessWidget {
-  const _GatewaysPage({required this.snapshot});
+/// Gateway summary card: infraestructura de la casa, rendered inline under
+/// the 'Gateways' chip of the flat device list.
+class _GatewayCard extends StatelessWidget {
+  const _GatewayCard({required this.gateway});
 
-  final DeviceInventorySnapshot snapshot;
+  final GatewayInfo gateway;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        title: const Text('Gateways'),
-        backgroundColor: AppColors.bg,
-        surfaceTintColor: Colors.transparent,
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(18),
       ),
-      body: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
-        itemCount: snapshot.gateways.length,
-        separatorBuilder: (_, _) => const SizedBox(height: 10),
-        itemBuilder: (context, index) {
-          final gateway = snapshot.gateways[index];
-          return Container(
-            padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
             decoration: BoxDecoration(
-              color: AppColors.surface,
-              border: Border.all(color: AppColors.border),
-              borderRadius: BorderRadius.circular(18),
+              color: AppColors.accentTint,
+              borderRadius: BorderRadius.circular(14),
             ),
-            child: Row(
+            child: Icon(
+              CupertinoIcons.personalhotspot,
+              color: AppColors.accent,
+            ),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: AppColors.accentTint,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(
-                    CupertinoIcons.personalhotspot,
-                    color: AppColors.accent,
+                Text(
+                  gateway.name,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${gateway.provider} · ${gateway.childDeviceIds.length} subdispositivos',
+                  style: const TextStyle(
+                    color: AppColors.textDim,
+                    fontSize: 11.5,
                   ),
                 ),
-                const SizedBox(width: 13),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        gateway.name,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        '${gateway.provider} · ${gateway.childDeviceIds.length} subdispositivos',
-                        style: const TextStyle(
-                          color: AppColors.textDim,
-                          fontSize: 11.5,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        healthLabel(gateway.health),
-                        style: const TextStyle(
-                          color: AppColors.textFaint,
-                          fontSize: 10.5,
-                        ),
-                      ),
-                    ],
+                const SizedBox(height: 2),
+                Text(
+                  healthLabel(gateway.health),
+                  style: const TextStyle(
+                    color: AppColors.textFaint,
+                    fontSize: 10.5,
                   ),
                 ),
-                _OnlineDot(health: gateway.health),
               ],
             ),
-          );
-        },
+          ),
+          _OnlineDot(health: gateway.health),
+        ],
       ),
     );
   }

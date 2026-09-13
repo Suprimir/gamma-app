@@ -151,9 +151,9 @@ Future<void> _pumpDetail(
     ),
   );
   await tester.pumpAndSettle();
-  // Open the first device detail through its area card + device row.
-  final areaCard = find.text('pasillo');
-  await tester.tap(areaCard);
+  // Open the first device detail through the landing devices button and the
+  // flat device list.
+  await tester.tap(find.byKey(const ValueKey('open-devices-list')));
   await tester.pumpAndSettle();
   final deviceRow = find.text(deviceName ?? 'Relé').first;
   await tester.tap(deviceRow);

@@ -60,6 +60,10 @@ Future<void> pumpWall(
     ),
   );
   await tester.pump(const Duration(milliseconds: 150));
+  // Controles is the wall default; this suite covers the device detail, so
+  // switch to the Dispositivos list right away.
+  await tester.tap(find.byKey(const ValueKey('wall-devices-button')));
+  await tester.pumpAndSettle();
 }
 
 const _wallCopyTriple = PhysicalDevice(

@@ -17,6 +17,7 @@ void main() {
   testWidgets('large card summary in household language', (tester) async {
     final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     final triple = find.byKey(const ValueKey('wall-device-dev_triple_01'));
     expect(triple, findsOneWidget);
@@ -66,6 +67,7 @@ void main() {
   testWidgets('card opens simplified detail and back returns', (tester) async {
     final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     await tester.tap(find.text('Interruptor triple'));
     await tester.pumpAndSettle();
@@ -91,6 +93,7 @@ void main() {
   testWidgets('touch target at least 72 dp high', (tester) async {
     final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     final card = find.byKey(const ValueKey('wall-device-dev_triple_01'));
     final size = tester.getSize(card);
@@ -101,6 +104,7 @@ void main() {
   testWidgets('multi-gang independence on wall', (tester) async {
     final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
     final controller = _wallController(tester);
 
     await tester.tap(find.text('Interruptor triple'));
@@ -137,6 +141,7 @@ void main() {
   testWidgets('no ON/OFF controls on list or detail', (tester) async {
     final repo = _WallFakeRepo(devices: const [_wallTriple, _wallFan]);
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     expect(find.byIcon(Icons.power_settings_new), findsNothing);
     expect(find.textContaining('ON'), findsNothing);
@@ -173,8 +178,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(WallDevicesPage), findsOneWidget);
-    // 'Dispositivos' now appears twice: the page header and the view segment.
-    expect(find.text('Dispositivos'), findsWidgets);
+    // Controles is the default wall view; the attention flow keeps working
+    // and the device list stays one tap away.
+    expect(find.byKey(const ValueKey('wall-devices-button')), findsOneWidget);
+    await switchToWallDevices(tester);
+    expect(find.text('Dispositivos'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('wall-device-dev_triple_01')),
       findsOneWidget,
@@ -190,6 +198,7 @@ void main() {
       areas: const [HomeArea(id: 'sala', name: 'Sala')],
     );
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     // No confirmed observation yet: neutral pill, never a fake "Apagado".
     expect(find.text('Sin datos'), findsOneWidget);
@@ -215,6 +224,7 @@ void main() {
       powerResult: const EndpointPowerResult(outcome: 'TIMEOUT'),
     );
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     await tester.tap(find.text('Luz sala'));
     await tester.pumpAndSettle();
@@ -233,6 +243,7 @@ void main() {
   ) async {
     final repo = CommandDeviceFakeRepo(devices: const [_wallCapabilitiesLight]);
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     await tester.tap(find.text('Luz comandable'));
     await tester.pumpAndSettle();
@@ -274,6 +285,7 @@ void main() {
   ) async {
     final repo = CommandDeviceFakeRepo(devices: const [_wallBlindCaps]);
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     await tester.tap(find.text('Persiana comandable'));
     await tester.pumpAndSettle();
@@ -300,6 +312,7 @@ void main() {
   ) async {
     final repo = CommandDeviceFakeRepo(devices: const [_wallClimateCaps]);
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     await tester.tap(find.text('Clima comandable'));
     await tester.pumpAndSettle();
@@ -333,6 +346,7 @@ void main() {
       ),
     );
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     await tester.tap(find.text('Luz comandable'));
     await tester.pumpAndSettle();
@@ -360,6 +374,7 @@ void main() {
         devices: const [_wallTriple, _wallFan, _wallOfflinePlug],
       );
       await pumpWall(tester, repo);
+      await switchToWallDevices(tester);
 
       expect(
         find.byKey(const ValueKey('wall-device-dev_triple_01')),
@@ -462,6 +477,7 @@ void main() {
     ) async {
       final repo = _WallFakeRepo(devices: const [_wallOfflinePlug]);
       await pumpWall(tester, repo);
+      await switchToWallDevices(tester);
 
       expect(find.text('No hay dispositivos activos.'), findsOneWidget);
       expect(find.text('Todavía no hay dispositivos.'), findsNothing);
@@ -472,6 +488,7 @@ void main() {
     ) async {
       final repo = _WallFakeRepo();
       await pumpWall(tester, repo);
+      await switchToWallDevices(tester);
 
       expect(find.text('Todavía no hay dispositivos.'), findsOneWidget);
       expect(find.text('No hay dispositivos activos.'), findsNothing);
@@ -482,6 +499,7 @@ void main() {
   testWidgets('multi-gang card aggregates the power pill', (tester) async {
     final repo = CommandDeviceFakeRepo(devices: const [_wallObservedTriple]);
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     final card = find.byKey(
       const ValueKey('wall-device-dev_observed_triple_01'),
@@ -504,6 +522,7 @@ void main() {
       ],
     );
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     await tester.tap(
       find.byKey(const ValueKey('wall-device-dev_observed_triple_01')),
@@ -546,6 +565,7 @@ void main() {
       ],
     );
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     await tester.tap(
       find.byKey(const ValueKey('wall-device-dev_observed_triple_01')),
@@ -601,6 +621,7 @@ void main() {
       ),
     );
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     await tester.tap(
       find.byKey(const ValueKey('wall-device-dev_observed_triple_01')),
@@ -634,6 +655,7 @@ void main() {
   testWidgets('wall detail explains pending credentials', (tester) async {
     final repo = CommandDeviceFakeRepo(devices: const [_wallPendingKeyLight]);
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     await tester.tap(find.byKey(const ValueKey('wall-device-dev_pending_01')));
     await tester.pumpAndSettle();
@@ -646,6 +668,7 @@ void main() {
   ) async {
     final repo = CommandDeviceFakeRepo(devices: const [_wallHasKeyLight]);
     await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
 
     await tester.tap(find.byKey(const ValueKey('wall-device-dev_has_key_01')));
     await tester.pumpAndSettle();
@@ -654,7 +677,7 @@ void main() {
   });
 
   group('wall controles view', () {
-    testWidgets('segmented control switches to the channel tiles', (
+    testWidgets('controles is the default view without device management', (
       tester,
     ) async {
       final repo = CommandDeviceFakeRepo(
@@ -667,20 +690,14 @@ void main() {
         ],
       );
       await pumpWall(tester, repo);
-      expect(
-        find.byKey(const ValueKey('wall-device-dev_observed_triple_01')),
-        findsOneWidget,
-      );
 
-      await switchToWallControls(tester);
-
-      // Device cards leave; tiles take over grouped by effective area. The
-      // groups below the fold build lazily, so scroll each tile into view and
-      // check its area header while it is visible.
+      // Default surface: channel tiles by effective area, no device cards.
       expect(
         find.byKey(const ValueKey('wall-device-dev_observed_triple_01')),
         findsNothing,
       );
+      expect(find.byKey(const ValueKey('wall-devices-button')), findsOneWidget);
+      expect(find.byKey(const ValueKey('wall-controls-button')), findsNothing);
       final scrollable = find.byType(Scrollable).first;
       Future<void> expectTile(String endpointId, String areaName) async {
         final tile = find.byKey(
@@ -695,6 +712,76 @@ void main() {
       await expectTile('relay_1', 'Sala');
       await expectTile('relay_2', 'Comedor');
       await expectTile('relay_3', 'Patio');
+
+      // No device-management entries on the control surface.
+      expect(
+        find.widgetWithText(FilledButton, 'Agregar dispositivo'),
+        findsNothing,
+      );
+      expect(
+        find.widgetWithText(OutlinedButton, 'Buscar dispositivos'),
+        findsNothing,
+      );
+      expect(find.widgetWithText(OutlinedButton, 'Agregar área'), findsNothing);
+    });
+
+    testWidgets('wall-devices-button shows the devices view with actions', (
+      tester,
+    ) async {
+      final repo = CommandDeviceFakeRepo(devices: const [_wallObservedTriple]);
+      await pumpWall(tester, repo);
+      await switchToWallDevices(tester);
+
+      expect(
+        find.byKey(const ValueKey('wall-controls-button')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('wall-devices-button')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('wall-device-dev_observed_triple_01')),
+        findsOneWidget,
+      );
+      await tester.ensureVisible(
+        find.widgetWithText(FilledButton, 'Agregar dispositivo'),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.widgetWithText(FilledButton, 'Agregar dispositivo'),
+        findsOneWidget,
+      );
+      expect(
+        find.widgetWithText(OutlinedButton, 'Buscar dispositivos'),
+        findsOneWidget,
+      );
+      expect(
+        find.widgetWithText(OutlinedButton, 'Agregar área'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('wall-controls-button returns to the controles view', (
+      tester,
+    ) async {
+      final repo = CommandDeviceFakeRepo(devices: const [_wallObservedTriple]);
+      await pumpWall(tester, repo);
+      await switchToWallDevices(tester);
+      await switchToWallControls(tester);
+
+      expect(find.byKey(const ValueKey('wall-devices-button')), findsOneWidget);
+      expect(
+        find.widgetWithText(OutlinedButton, 'Buscar dispositivos'),
+        findsNothing,
+      );
+      expect(
+        find.widgetWithText(FilledButton, 'Agregar dispositivo'),
+        findsNothing,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('wall-channel-dev_observed_triple_01-relay_1'),
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('tile tap records and converges only its endpoint', (
@@ -710,8 +797,6 @@ void main() {
         ],
       );
       await pumpWall(tester, repo);
-      await switchToWallControls(tester);
-
       final relay2 = find.byKey(
         const ValueKey('wall-channel-dev_observed_triple_01-relay_2'),
       );
@@ -757,8 +842,6 @@ void main() {
         ],
       );
       await pumpWall(tester, repo);
-      await switchToWallControls(tester);
-
       // Select 'Sala' through the wall location dialog.
       await tester.tap(find.text('Todas'));
       await tester.pumpAndSettle();
@@ -803,6 +886,7 @@ void main() {
         ],
       );
       await pumpWall(tester, repo);
+      await switchToWallDevices(tester);
 
       final card = find.byKey(
         const ValueKey('wall-device-dev_named_triple_01'),
@@ -823,14 +907,15 @@ void main() {
   });
 }
 
-/// Switches the wall page to the 'Controles' dashboard via the segment.
+/// Switches the wall page (Controles by default) to the Dispositivos list.
+Future<void> switchToWallDevices(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('wall-devices-button')));
+  await tester.pumpAndSettle();
+}
+
+/// Switches back from the Dispositivos list to the Controles surface.
 Future<void> switchToWallControls(WidgetTester tester) async {
-  await tester.tap(
-    find.descendant(
-      of: find.byKey(const ValueKey('wall-devices-view')),
-      matching: find.text('Controles'),
-    ),
-  );
+  await tester.tap(find.byKey(const ValueKey('wall-controls-button')));
   await tester.pumpAndSettle();
 }
 

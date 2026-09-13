@@ -328,6 +328,9 @@ Future<void> pumpWallDevices(
     ),
   );
   await tester.pump(const Duration(milliseconds: 150));
+  // Controles is the wall default; card size proofs live in Dispositivos.
+  await tester.tap(find.byKey(const ValueKey('wall-devices-button')));
+  await tester.pumpAndSettle();
 }
 
 Future<void> pumpWallAreas(
