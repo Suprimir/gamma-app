@@ -135,8 +135,8 @@ Los canales con encendido se muestran como **tiles individuales**, además de
 |---|--------|------|
 | 1 | Tiles de canal (Patrón A) | ✅ `6c461e9` — control rápido real, estilo HomeKit/Tuya |
 | 2 | Nombres de canal en tarjetas | ✅ `6c461e9` — identificar canales sin entrar al detalle |
-| 3 | Iconos por rol (luz/persiana/enchufe/ventilador) | Reconocimiento visual rápido |
-| 4 | Feedback de guardado en mobile | Hoy guarda en silencio |
+| 3 | Iconos por rol (luz/persiana/enchufe/ventilador) | ✅ `41d7fde` — reconocimiento visual rápido |
+| 4 | Feedback de guardado en mobile | ✅ `41d7fde` — confirmaciones visibles |
 | 5 | Estado "enviando…" en toggles | Feedback inmediato (NN/g #6) |
 | 6 | Favoritos (fijar canales arriba) | Acceso diario |
 | 7 | Búsqueda de canales | Con 13+ canales se agradece |
@@ -151,8 +151,8 @@ Los canales con encendido se muestran como **tiles individuales**, además de
 2. ✅ Switches por canal en los detalles (app `bdb4ba9`).
 3. ✅ Tiles de canal ("Controles") en mobile + panel, y nombres de canal en
    tarjetas (app `6c461e9`).
-4. Reorganización del detalle (Patrón C) + iconos por rol + feedback mobile
-   (QoL 3-4).
+4. ✅ Reorganización del detalle (Patrón C) + iconos por rol + feedback mobile
+   (app `41d7fde`).
 5. **Ventana de prueba de control real por canal** (gate ON temporal) — decisión.
 6. Acciones masivas + favoritos + QoL de panel (Patrones D/E + QoL 5-9).
 
