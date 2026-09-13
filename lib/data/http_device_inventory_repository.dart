@@ -452,6 +452,8 @@ PhysicalDevice parsePhysicalDevice(
 
   final isSubdevice = _parseBoolField(json, 'is_subdevice');
   final isGateway = _parseBoolField(json, 'is_gateway');
+  final hasKey = _parseNullableBoolField(json, 'has_key');
+  final pendingKey = _parseNullableBoolField(json, 'pending_key');
   final parentDeviceId = json['parent_device_id'] is String
       ? json['parent_device_id'] as String
       : null;
@@ -488,6 +490,8 @@ PhysicalDevice parsePhysicalDevice(
         ? json['provider_name'] as String
         : null,
     userName: json['user_name'] is String ? json['user_name'] as String : null,
+    hasKey: hasKey,
+    pendingKey: pendingKey,
     deviceClass: json['device_class'] is String
         ? json['device_class'] as String
         : 'unknown',
@@ -504,6 +508,20 @@ PhysicalDevice parsePhysicalDevice(
 bool _parseBoolField(Map json, String field) {
   final value = json[field];
   if (value == null) return false;
+  if (value is bool) return value;
+  throw DeviceDtoException(
+    field: field,
+    value: value,
+    detail: 'Se esperaba un booleano.',
+  );
+}
+
+/// Nullable variant of [_parseBoolField]: a missing/null value stays unknown
+/// (`null`), a real bool passes through, and any malformed value is rejected
+/// with context instead of being coerced silently.
+bool? _parseNullableBoolField(Map json, String field) {
+  final value = json[field];
+  if (value == null) return null;
   if (value is bool) return value;
   throw DeviceDtoException(
     field: field,

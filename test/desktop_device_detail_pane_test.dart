@@ -662,8 +662,59 @@ void main() {
       );
       expect(find.textContaining('Cambios guardados'), findsNothing);
     });
+
+    testWidgets('multi-gang channels show each control state', (tester) async {
+      await pumpDetail(tester, device: _observedTriple);
+      expect(find.text('3 canales independientes'), findsOneWidget);
+
+      expect(
+        find.descendant(
+          of: desktopEndpointEditor('Canal 1'),
+          matching: find.text('Encendido'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: desktopEndpointEditor('Canal 2'),
+          matching: find.text('Apagado'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: desktopEndpointEditor('Canal 3'),
+          matching: find.text('Sin datos'),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('header shows Sin credenciales when pending_key is true', (
+      tester,
+    ) async {
+      await pumpDetail(tester, device: _pendingKeyLight);
+
+      expect(find.text('Sin credenciales'), findsOneWidget);
+    });
+
+    testWidgets('header hides Sin credenciales when credentials exist', (
+      tester,
+    ) async {
+      await pumpDetail(tester, device: _hasKeyLight);
+
+      expect(find.text('Sin credenciales'), findsNothing);
+    });
   });
 }
+
+/// The desktop per-channel editor that owns [channelName].
+Finder desktopEndpointEditor(String channelName) => find.ancestor(
+  of: find.text(channelName),
+  matching: find.byWidgetPredicate(
+    (widget) => widget.runtimeType.toString() == '_EndpointEditor',
+  ),
+);
 
 Future<void> pumpDetail(
   WidgetTester tester, {
@@ -806,6 +857,98 @@ const _lightCanonicalPower = PhysicalDevice(
       name: 'Luz',
       kind: DeviceKind.light,
       capabilities: {'POWER', 'BRIGHTNESS'},
+    ),
+  ],
+);
+
+/// Multi-gang with per-endpoint observations: relay_1 confirmed on, relay_2
+/// confirmed off, relay_3 reported without a power value (unknown).
+const _observedTriple = PhysicalDevice(
+  id: 'dev_observed_triple_01',
+  name: 'Interruptor triple observado',
+  kind: DeviceKind.switchController,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'TS0013',
+  gatewayId: 'gw_tuya_01',
+  physicalAreaId: 'pasillo',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  endpoints: [
+    DeviceEndpoint(
+      id: 'relay_1',
+      name: 'Canal 1',
+      kind: DeviceKind.switchController,
+      controlledAreaId: 'sala',
+      capabilities: {'on_off'},
+      observedPower: true,
+      observedQuality: 'confirmed',
+    ),
+    DeviceEndpoint(
+      id: 'relay_2',
+      name: 'Canal 2',
+      kind: DeviceKind.switchController,
+      controlledAreaId: 'comedor',
+      capabilities: {'on_off'},
+      observedPower: false,
+      observedQuality: 'confirmed',
+    ),
+    DeviceEndpoint(
+      id: 'relay_3',
+      name: 'Canal 3',
+      kind: DeviceKind.switchController,
+      controlledAreaId: 'patio',
+      capabilities: {'on_off'},
+      observedQuality: 'unknown',
+    ),
+  ],
+);
+
+/// Credential setup still pending (`pending_key == true`).
+const _pendingKeyLight = PhysicalDevice(
+  id: 'dev_pending_01',
+  name: 'Luz sin credenciales',
+  kind: DeviceKind.light,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'ZB-DL01',
+  gatewayId: 'gw_tuya_01',
+  physicalAreaId: 'sala',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  pendingKey: true,
+  endpoints: [
+    DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      capabilities: {'POWER'},
+    ),
+  ],
+);
+
+/// Credentials already stored (`has_key == true`): no chip expected.
+const _hasKeyLight = PhysicalDevice(
+  id: 'dev_has_key_01',
+  name: 'Luz con credenciales',
+  kind: DeviceKind.light,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'ZB-DL01',
+  gatewayId: 'gw_tuya_01',
+  physicalAreaId: 'sala',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  hasKey: true,
+  endpoints: [
+    DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      capabilities: {'POWER'},
     ),
   ],
 );

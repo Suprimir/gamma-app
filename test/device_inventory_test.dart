@@ -500,6 +500,111 @@ void main() {
     });
   });
 
+  group('power endpoint helpers', () {
+    const triple = PhysicalDevice(
+      id: 'dev_triple',
+      name: 'Triple',
+      kind: DeviceKind.switchController,
+      provider: 'Test',
+      providerDeviceId: '',
+      model: 'TS0013',
+      provisioningState: DeviceProvisioningState.configured,
+      online: true,
+      health: DeviceHealthState.online,
+      endpoints: [
+        DeviceEndpoint(
+          id: 'relay_1',
+          name: 'Canal 1',
+          kind: DeviceKind.switchController,
+          capabilities: {'POWER'},
+          observedPower: true,
+          observedQuality: 'confirmed',
+        ),
+        DeviceEndpoint(
+          id: 'relay_2',
+          name: 'Canal 2',
+          kind: DeviceKind.switchController,
+          capabilities: {'on_off'},
+          observedPower: false,
+          observedQuality: 'confirmed',
+        ),
+        DeviceEndpoint(
+          id: 'relay_3',
+          name: 'Canal 3',
+          kind: DeviceKind.switchController,
+          capabilities: {'POWER'},
+          observedQuality: 'confirmed',
+        ),
+        DeviceEndpoint(
+          id: 'temperature',
+          name: 'Temperatura',
+          kind: DeviceKind.sensor,
+          capabilities: {'TEMPERATURE'},
+        ),
+      ],
+    );
+
+    test('powerEndpoints keeps only power-capable endpoints', () {
+      expect(powerEndpoints(triple).map((endpoint) => endpoint.id), [
+        'relay_1',
+        'relay_2',
+        'relay_3',
+      ]);
+    });
+
+    test('powerStateCounts reports (confirmedOn, total, unknown)', () {
+      expect(powerStateCounts(triple), (1, 3, 1));
+    });
+
+    test('stale observations never count as confirmed', () {
+      final stale = triple.copyWith(
+        endpoints: [
+          triple.endpoints.first.copyWith(observedQuality: 'stale'),
+          ...triple.endpoints.skip(1),
+        ],
+      );
+
+      expect(powerStateCounts(stale), (0, 3, 2));
+    });
+
+    test('devices without power endpoints report (0, 0, 0)', () {
+      final sensor = triple.copyWith(endpoints: [triple.endpoints.last]);
+
+      expect(powerEndpoints(sensor), isEmpty);
+      expect(powerStateCounts(sensor), (0, 0, 0));
+    });
+  });
+
+  group('PhysicalDevice credentials', () {
+    const device = PhysicalDevice(
+      id: 'dev_creds',
+      name: 'Creds',
+      kind: DeviceKind.light,
+      provider: 'Test',
+      providerDeviceId: '',
+      model: 'X',
+      provisioningState: DeviceProvisioningState.configured,
+      online: true,
+      health: DeviceHealthState.online,
+      endpoints: [],
+    );
+
+    test('defaults hasKey/pendingKey to null', () {
+      expect(device.hasKey, isNull);
+      expect(device.pendingKey, isNull);
+    });
+
+    test('copyWith sets and clears hasKey/pendingKey', () {
+      final set = device.copyWith(hasKey: true, pendingKey: false);
+      expect(set.hasKey, isTrue);
+      expect(set.pendingKey, isFalse);
+
+      final cleared = set.copyWith(hasKey: null, pendingKey: null);
+      expect(cleared.hasKey, isNull);
+      expect(cleared.pendingKey, isNull);
+    });
+  });
+
   test('command result types carry the parsed facts', () {
     const power = EndpointPowerResult(
       outcome: 'SUCCESS',

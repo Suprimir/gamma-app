@@ -477,7 +477,91 @@ void main() {
       expect(find.byKey(const ValueKey('wall-offline-button')), findsNothing);
     });
   });
+
+  testWidgets('multi-gang card aggregates the power pill', (tester) async {
+    final repo = CommandDeviceFakeRepo(devices: const [_wallObservedTriple]);
+    await pumpWall(tester, repo);
+
+    final card = find.byKey(
+      const ValueKey('wall-device-dev_observed_triple_01'),
+    );
+    expect(card, findsOneWidget);
+    expect(
+      find.descendant(of: card, matching: find.text('1/3')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('wall detail shows each control state', (tester) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_wallObservedTriple],
+      areas: const [
+        HomeArea(id: 'sala', name: 'Sala'),
+        HomeArea(id: 'comedor', name: 'Comedor'),
+        HomeArea(id: 'patio', name: 'Patio'),
+        HomeArea(id: 'pasillo', name: 'Pasillo'),
+      ],
+    );
+    await pumpWall(tester, repo);
+
+    await tester.tap(
+      find.byKey(const ValueKey('wall-device-dev_observed_triple_01')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: wallEndpointEditor('Canal 1'),
+        matching: find.text('Encendido'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: wallEndpointEditor('Canal 2'),
+        matching: find.text('Apagado'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: wallEndpointEditor('Canal 3'),
+        matching: find.text('Sin datos'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('wall detail explains pending credentials', (tester) async {
+    final repo = CommandDeviceFakeRepo(devices: const [_wallPendingKeyLight]);
+    await pumpWall(tester, repo);
+
+    await tester.tap(find.byKey(const ValueKey('wall-device-dev_pending_01')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sin credenciales'), findsOneWidget);
+  });
+
+  testWidgets('wall detail hides the chip when credentials exist', (
+    tester,
+  ) async {
+    final repo = CommandDeviceFakeRepo(devices: const [_wallHasKeyLight]);
+    await pumpWall(tester, repo);
+
+    await tester.tap(find.byKey(const ValueKey('wall-device-dev_has_key_01')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sin credenciales'), findsNothing);
+  });
 }
+
+/// The wall per-control editor that owns [channelName].
+Finder wallEndpointEditor(String channelName) => find.ancestor(
+  of: find.text(channelName),
+  matching: find.byWidgetPredicate(
+    (widget) => widget.runtimeType.toString() == '_WallEndpointEditor',
+  ),
+);
 
 Future<void> pumpWall(
   WidgetTester tester,
@@ -604,6 +688,95 @@ const _wallCommandLight = PhysicalDevice(
   online: true,
   health: DeviceHealthState.online,
   physicalAreaId: 'sala',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      capabilities: {'POWER'},
+    ),
+  ],
+);
+
+/// Multi-gang with per-endpoint observations: relay_1 confirmed on, relay_2
+/// confirmed off, relay_3 reported without a power value (unknown).
+const _wallObservedTriple = PhysicalDevice(
+  id: 'dev_observed_triple_01',
+  name: 'Interruptor triple observado',
+  kind: DeviceKind.switchController,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'TS0013',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'pasillo',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'relay_1',
+      name: 'Canal 1',
+      kind: DeviceKind.switchController,
+      controlledAreaId: 'sala',
+      capabilities: {'on_off'},
+      observedPower: true,
+      observedQuality: 'confirmed',
+    ),
+    DeviceEndpoint(
+      id: 'relay_2',
+      name: 'Canal 2',
+      kind: DeviceKind.switchController,
+      controlledAreaId: 'comedor',
+      capabilities: {'on_off'},
+      observedPower: false,
+      observedQuality: 'confirmed',
+    ),
+    DeviceEndpoint(
+      id: 'relay_3',
+      name: 'Canal 3',
+      kind: DeviceKind.switchController,
+      controlledAreaId: 'patio',
+      capabilities: {'on_off'},
+      observedQuality: 'unknown',
+    ),
+  ],
+);
+
+/// Credential setup still pending (`pending_key == true`).
+const _wallPendingKeyLight = PhysicalDevice(
+  id: 'dev_pending_01',
+  name: 'Luz sin credenciales',
+  kind: DeviceKind.light,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'ZB-DL01',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'sala',
+  pendingKey: true,
+  endpoints: [
+    DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      capabilities: {'POWER'},
+    ),
+  ],
+);
+
+/// Credentials already stored (`has_key == true`): no chip expected.
+const _wallHasKeyLight = PhysicalDevice(
+  id: 'dev_has_key_01',
+  name: 'Luz con credenciales',
+  kind: DeviceKind.light,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'ZB-DL01',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'sala',
+  hasKey: true,
   endpoints: [
     DeviceEndpoint(
       id: 'light',

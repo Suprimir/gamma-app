@@ -669,6 +669,42 @@ void main() {
       expect(caught!.field, 'is_subdevice');
     });
 
+    test('has_key/pending_key true/false parse as bools', () {
+      final map = deviceMap(
+        id: 'device_x',
+        fields: {'has_key': true, 'pending_key': false},
+      );
+
+      final device = parsePhysicalDevice(map, gatewayIds: const {});
+
+      expect(device.hasKey, isTrue);
+      expect(device.pendingKey, isFalse);
+    });
+
+    test('missing has_key/pending_key stay unknown (null)', () {
+      final device = parsePhysicalDevice(
+        deviceMap(id: 'device_x'),
+        gatewayIds: const {},
+      );
+
+      expect(device.hasKey, isNull);
+      expect(device.pendingKey, isNull);
+    });
+
+    test('malformed has_key throws DeviceDtoException for that field', () {
+      final map = deviceMap(id: 'device_x', fields: {'has_key': 'yes'});
+
+      DeviceDtoException? caught;
+      try {
+        parsePhysicalDevice(map, gatewayIds: const {});
+      } on DeviceDtoException catch (error) {
+        caught = error;
+      }
+
+      expect(caught, isNotNull);
+      expect(caught!.field, 'has_key');
+    });
+
     test(
       'DeviceDtoException through load carries the malformed device id',
       () async {

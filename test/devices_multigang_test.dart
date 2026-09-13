@@ -330,7 +330,133 @@ void main() {
     await tester.pump();
     expect(find.text('Luz sin validar — Estado desconocido'), findsOneWidget);
   });
+
+  testWidgets('wall card aggregates multi-gang power state', (tester) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_observedTriple],
+      areas: const [HomeArea(id: 'pasillo', name: 'Pasillo')],
+    );
+    await pumpWall(tester, repo);
+
+    final card = find.byKey(const ValueKey('wall-device-dev_triple_02'));
+    expect(card, findsOneWidget);
+    expect(
+      find.descendant(of: card, matching: find.text('1/3')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('mobile card reports the multi-gang aggregate', (tester) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_observedTriple],
+      areas: const [HomeArea(id: 'pasillo', name: 'Pasillo')],
+    );
+    await pumpMobileDevicesWide(tester, repo);
+
+    await tester.tap(find.text('Pasillo'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 de 3 encendidos · 1 sin datos'), findsOneWidget);
+  });
+
+  testWidgets('mobile detail shows each control state', (tester) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_observedTriple],
+      areas: const [
+        HomeArea(id: 'pasillo', name: 'Pasillo'),
+        HomeArea(id: 'sala', name: 'Sala'),
+        HomeArea(id: 'comedor', name: 'Comedor'),
+        HomeArea(id: 'patio', name: 'Patio'),
+      ],
+    );
+    await pumpMobileDevicesWide(tester, repo);
+
+    await openMobileDetail(
+      tester,
+      areaName: 'Pasillo',
+      deviceName: 'Interruptor triple observado',
+    );
+
+    expect(
+      find.descendant(
+        of: mobileEndpointEditor('Canal 1'),
+        matching: find.text('Encendido'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: mobileEndpointEditor('Canal 2'),
+        matching: find.text('Apagado'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: mobileEndpointEditor('Canal 3'),
+        matching: find.text('Sin datos'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('mobile detail explains pending credentials', (tester) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_pendingKeyLight],
+      areas: const [HomeArea(id: 'sala', name: 'Sala')],
+    );
+    await pumpMobileDevicesWide(tester, repo);
+
+    await openMobileDetail(
+      tester,
+      areaName: 'Sala',
+      deviceName: 'Luz sin credenciales',
+    );
+
+    expect(find.text('Sin credenciales'), findsOneWidget);
+  });
+
+  testWidgets('mobile detail hides the credentials chip when has_key', (
+    tester,
+  ) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_hasKeyLight],
+      areas: const [HomeArea(id: 'sala', name: 'Sala')],
+    );
+    await pumpMobileDevicesWide(tester, repo);
+
+    await openMobileDetail(
+      tester,
+      areaName: 'Sala',
+      deviceName: 'Luz con credenciales',
+    );
+
+    expect(find.text('Sin credenciales'), findsNothing);
+  });
 }
+
+/// Opens the mobile standard detail for [deviceName] inside [areaName]:
+/// area card -> device grid -> long-press quick sheet -> Configurar.
+Future<void> openMobileDetail(
+  WidgetTester tester, {
+  required String areaName,
+  required String deviceName,
+}) async {
+  await tester.tap(find.text(areaName));
+  await tester.pumpAndSettle();
+  await tester.longPress(find.text(deviceName));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Configurar dispositivo'));
+  await tester.pumpAndSettle();
+}
+
+/// The mobile per-endpoint editor that owns [channelName].
+Finder mobileEndpointEditor(String channelName) => find.ancestor(
+  of: find.text(channelName),
+  matching: find.byWidgetPredicate(
+    (widget) => widget.runtimeType.toString() == '_EndpointEditor',
+  ),
+);
 
 Future<AdaptiveFeatureController> pumpDesktop(
   WidgetTester tester,
@@ -551,6 +677,95 @@ const _legacyUnknownLight = PhysicalDevice(
       name: 'Luz',
       kind: DeviceKind.light,
       capabilities: {'on_off'},
+    ),
+  ],
+);
+
+/// Multi-gang with per-endpoint observations: relay_1 confirmed on, relay_2
+/// confirmed off, relay_3 reported without a power value (unknown).
+const _observedTriple = PhysicalDevice(
+  id: 'dev_triple_02',
+  name: 'Interruptor triple observado',
+  kind: DeviceKind.switchController,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'TS0013',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'pasillo',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'relay_1',
+      name: 'Canal 1',
+      kind: DeviceKind.switchController,
+      controlledAreaId: 'sala',
+      capabilities: {'on_off'},
+      observedPower: true,
+      observedQuality: 'confirmed',
+    ),
+    DeviceEndpoint(
+      id: 'relay_2',
+      name: 'Canal 2',
+      kind: DeviceKind.switchController,
+      controlledAreaId: 'comedor',
+      capabilities: {'on_off'},
+      observedPower: false,
+      observedQuality: 'confirmed',
+    ),
+    DeviceEndpoint(
+      id: 'relay_3',
+      name: 'Canal 3',
+      kind: DeviceKind.switchController,
+      controlledAreaId: 'patio',
+      capabilities: {'on_off'},
+      observedQuality: 'unknown',
+    ),
+  ],
+);
+
+/// Credential setup still pending (`pending_key == true`).
+const _pendingKeyLight = PhysicalDevice(
+  id: 'dev_pending_01',
+  name: 'Luz sin credenciales',
+  kind: DeviceKind.light,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'ZB-DL01',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'sala',
+  pendingKey: true,
+  endpoints: [
+    DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      capabilities: {'POWER'},
+    ),
+  ],
+);
+
+/// Credentials already stored (`has_key == true`): no chip expected.
+const _hasKeyLight = PhysicalDevice(
+  id: 'dev_has_key_01',
+  name: 'Luz con credenciales',
+  kind: DeviceKind.light,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'ZB-DL01',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'sala',
+  hasKey: true,
+  endpoints: [
+    DeviceEndpoint(
+      id: 'light',
+      name: 'Luz',
+      kind: DeviceKind.light,
+      capabilities: {'POWER'},
     ),
   ],
 );

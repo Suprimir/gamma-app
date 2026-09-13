@@ -18,6 +18,96 @@ Color healthToColor(DeviceHealthState health) => switch (health) {
   _ => AppColors.statusDesconectado,
 };
 
+/// Household Spanish label for an endpoint's confirmed power display state.
+String endpointPowerLabel(PowerDisplayState state) => switch (state) {
+  PowerDisplayState.on => 'Encendido',
+  PowerDisplayState.off => 'Apagado',
+  PowerDisplayState.unknown => 'Sin datos',
+};
+
+/// Compact read-only chip with one endpoint's confirmed power state
+/// ('Encendido' / 'Apagado' / 'Sin datos'). Renders nothing when the endpoint
+/// exposes no power channel. [onColor]/[offColor] let each surface keep its
+/// own palette (mobile/desktop status colors, wall green/red).
+class EndpointPowerBadge extends StatelessWidget {
+  const EndpointPowerBadge({
+    super.key,
+    required this.endpoint,
+    this.onColor = AppColors.statusEncendido,
+    this.offColor = AppColors.statusApagado,
+    this.fontSize = 11.5,
+  });
+
+  final DeviceEndpoint endpoint;
+  final Color onColor;
+  final Color offColor;
+  final double fontSize;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasPowerCapability(endpoint)) return const SizedBox.shrink();
+    final state = endpointPowerDisplayState(endpoint);
+    final color = switch (state) {
+      PowerDisplayState.on => onColor,
+      PowerDisplayState.off => offColor,
+      PowerDisplayState.unknown => AppColors.textFaint,
+    };
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          endpointPowerLabel(state),
+          style: TextStyle(
+            color: color,
+            fontSize: fontSize,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Subtle 'Sin credenciales' chip for device detail headers: shown while the
+/// provider still has credential setup pending (`pending_key == true`).
+/// Callers gate it on the device flag; devices with credentials render
+/// nothing.
+class PendingCredentialsBadge extends StatelessWidget {
+  const PendingCredentialsBadge({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceRaised,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.key_off_outlined, size: 13, color: AppColors.textDim),
+          SizedBox(width: 4),
+          Text(
+            'Sin credenciales',
+            style: TextStyle(
+              color: AppColors.textDim,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Household Spanish copy for a canonical endpoint power outcome.
 /// [requested] is the value the user asked for (only used on success).
 String powerOutcomeMessage(

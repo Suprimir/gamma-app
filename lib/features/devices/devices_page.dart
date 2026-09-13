@@ -758,6 +758,29 @@ class _DashboardDeviceCard extends StatelessWidget {
   }
 }
 
+/// Aggregate power state for a device with more than one power endpoint:
+/// 'N de M encendidos', appending ' · K sin datos' while observations are
+/// missing. Null for devices with fewer than two power endpoints (they keep
+/// the single-state label) and for repositories without command support
+/// (plain fakes keep their `powerOn ?? online` behavior).
+({String label, Color dot})? _aggregatePowerState(
+  PhysicalDevice device, {
+  required bool canCommandPower,
+}) {
+  if (!canCommandPower) return null;
+  final (on, total, unknown) = powerStateCounts(device);
+  if (total <= 1) return null;
+  final base = '$on de $total encendidos';
+  return (
+    label: unknown > 0 ? '$base · $unknown sin datos' : base,
+    dot: on > 0
+        ? AppColors.statusEncendido
+        : unknown == total
+        ? AppColors.textFaint
+        : AppColors.statusApagado,
+  );
+}
+
 /// Estado honesto de la tarjeta: la falta de comunicación nunca se presenta
 /// como apagado, y una potencia sin observación confirmada se muestra como
 /// 'Sin datos' (nunca como un apagado confiado). Solo [controllable] habilita
@@ -796,7 +819,12 @@ class _DashboardDeviceCard extends StatelessWidget {
         );
       }
       return (
-        label: 'Sin datos',
+        label:
+            _aggregatePowerState(
+              device,
+              canCommandPower: canCommandPower,
+            )?.label ??
+            'Sin datos',
         dot: AppColors.textFaint,
         controllable: true,
         opensDetail: false,
@@ -809,6 +837,18 @@ class _DashboardDeviceCard extends StatelessWidget {
           dot: AppColors.textFaint,
           controllable: false,
           opensDetail: true,
+        );
+      }
+      final aggregate = _aggregatePowerState(
+        device,
+        canCommandPower: canCommandPower,
+      );
+      if (aggregate != null) {
+        return (
+          label: aggregate.label,
+          dot: aggregate.dot,
+          controllable: true,
+          opensDetail: false,
         );
       }
       return switch (powerState) {
@@ -2178,6 +2218,7 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
                   endpoint: _device.endpoints[index],
                   areas: widget.areas,
                   busy: _savingEndpoint == _device.endpoints[index].id,
+                  showPowerState: powerEndpoints(_device).length > 1,
                   onChanged: (areaId) =>
                       _setEndpointArea(_device.endpoints[index], areaId),
                   onIdentify: () =>
@@ -2316,6 +2357,7 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
                     endpoint: _device.endpoints[index],
                     areas: widget.areas,
                     busy: _savingEndpoint == _device.endpoints[index].id,
+                    showPowerState: powerEndpoints(_device).length > 1,
                     onAreaChanged: (areaId) =>
                         _setEndpointArea(_device.endpoints[index], areaId),
                     onRoleChanged: widget.repository.supportsSemanticRole
@@ -2419,6 +2461,10 @@ class _WallDeviceHero extends StatelessWidget {
                         ),
                       ),
                     ],
+                    if (device.pendingKey == true) ...[
+                      const SizedBox(height: 6),
+                      const PendingCredentialsBadge(),
+                    ],
                   ],
                 ),
               ),
@@ -2466,6 +2512,7 @@ class _WallEndpointEditor extends StatelessWidget {
     required this.onAreaChanged,
     required this.onRename,
     this.onRoleChanged,
+    this.showPowerState = false,
   });
 
   final DeviceEndpoint endpoint;
@@ -2474,6 +2521,11 @@ class _WallEndpointEditor extends StatelessWidget {
   final ValueChanged<String?> onAreaChanged;
   final VoidCallback onRename;
   final ValueChanged<String?>? onRoleChanged;
+
+  /// Whether the device has more than one power endpoint: only then is the
+  /// per-control state shown (single-control devices already surface it in
+  /// the device-level power card).
+  final bool showPowerState;
 
   @override
   Widget build(BuildContext context) {
@@ -2486,12 +2538,26 @@ class _WallEndpointEditor extends StatelessWidget {
             Icon(kindIcon, size: 20, color: AppColors.accent),
             const SizedBox(width: 9),
             Expanded(
-              child: Text(
-                endpoint.displayName,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 16,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    endpoint.displayName,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
+                  ),
+                  if (showPowerState && hasPowerCapability(endpoint)) ...[
+                    const SizedBox(height: 3),
+                    EndpointPowerBadge(
+                      endpoint: endpoint,
+                      onColor: AppColors.green,
+                      offColor: AppColors.red,
+                      fontSize: 13,
+                    ),
+                  ],
+                ],
               ),
             ),
             IconButton(
@@ -2720,6 +2786,10 @@ class _DeviceHero extends StatelessWidget {
                     ),
                   ),
                 ],
+                if (device.pendingKey == true) ...[
+                  const SizedBox(height: 6),
+                  const PendingCredentialsBadge(),
+                ],
               ],
             ),
           ),
@@ -2774,12 +2844,18 @@ class _EndpointEditor extends StatelessWidget {
     this.onRename,
     this.onRoleChanged,
     this.onBindEntity,
+    this.showPowerState = false,
   });
 
   final DeviceEndpoint endpoint;
   final List<HomeArea> areas;
   final bool busy;
   final ValueChanged<String?> onChanged;
+
+  /// Whether the device has more than one power endpoint: only then is the
+  /// per-control state shown (single-control devices already surface it in
+  /// the device-level control).
+  final bool showPowerState;
 
   /// Always visible — when the repository does not support identify, the
   /// callback shows an informational SnackBar instead of being null.
@@ -2821,6 +2897,10 @@ class _EndpointEditor extends StatelessWidget {
                       fontSize: 10.5,
                     ),
                   ),
+                  if (showPowerState && hasPowerCapability(endpoint)) ...[
+                    const SizedBox(height: 3),
+                    EndpointPowerBadge(endpoint: endpoint),
+                  ],
                 ],
               ),
             ),

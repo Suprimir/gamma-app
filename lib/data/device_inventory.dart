@@ -425,6 +425,8 @@ class PhysicalDevice {
     this.parentDeviceId,
     this.providerName,
     this.userName,
+    this.hasKey,
+    this.pendingKey,
     this.deviceClass = 'unknown',
     this.deviceClassSource = 'none',
     // Demo-only display state (mock): optional overrides used by the desktop
@@ -463,6 +465,15 @@ class PhysicalDevice {
 
   /// GAMMA-owned explicit name; null when unset (F2-B).
   final String? userName;
+
+  /// Whether the provider already holds credentials for this device
+  /// (`has_key`). Null when the backend omits the field.
+  final bool? hasKey;
+
+  /// Whether credential configuration is still pending (`pending_key`).
+  /// Null when the backend omits the field.
+  final bool? pendingKey;
+
   final String deviceClass;
   final String deviceClassSource;
 
@@ -503,6 +514,8 @@ class PhysicalDevice {
     Object? parentDeviceId = _unset,
     Object? providerName = _unset,
     Object? userName = _unset,
+    Object? hasKey = _unset,
+    Object? pendingKey = _unset,
     String? deviceClass,
     String? deviceClassSource,
     Object? powerOn = _unset,
@@ -548,6 +561,10 @@ class PhysicalDevice {
       userName: identical(userName, _unset)
           ? this.userName
           : userName as String?,
+      hasKey: identical(hasKey, _unset) ? this.hasKey : hasKey as bool?,
+      pendingKey: identical(pendingKey, _unset)
+          ? this.pendingKey
+          : pendingKey as bool?,
       deviceClass: deviceClass ?? this.deviceClass,
       deviceClassSource: deviceClassSource ?? this.deviceClassSource,
       powerOn: identical(powerOn, _unset) ? this.powerOn : powerOn as bool?,
@@ -605,6 +622,28 @@ PowerDisplayState devicePowerDisplayState(PhysicalDevice device) {
     return demoPower ? PowerDisplayState.on : PowerDisplayState.off;
   }
   return PowerDisplayState.unknown;
+}
+
+/// Power endpoints of [device] (canonical or legacy spelling).
+List<DeviceEndpoint> powerEndpoints(PhysicalDevice device) =>
+    device.endpoints.where(hasPowerCapability).toList();
+
+/// (confirmedOn, total, unknown) among power endpoints.
+(int, int, int) powerStateCounts(PhysicalDevice device) {
+  final endpoints = powerEndpoints(device);
+  var confirmedOn = 0;
+  var unknown = 0;
+  for (final endpoint in endpoints) {
+    switch (endpointPowerDisplayState(endpoint)) {
+      case PowerDisplayState.on:
+        confirmedOn++;
+      case PowerDisplayState.off:
+        break;
+      case PowerDisplayState.unknown:
+        unknown++;
+    }
+  }
+  return (confirmedOn, endpoints.length, unknown);
 }
 
 /// Whether [capability] can receive commands on [endpoint]: the canonical

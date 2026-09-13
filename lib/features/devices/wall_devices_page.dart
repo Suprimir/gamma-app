@@ -2234,6 +2234,8 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
                               busy:
                                   _savingEndpoint ==
                                   _device.endpoints[index].id,
+                              showPowerState:
+                                  powerEndpoints(_device).length > 1,
                               onAreaChanged: (areaId) => _setEndpointArea(
                                 _device.endpoints[index],
                                 areaId,
@@ -3584,6 +3586,10 @@ class _WallDeviceHero extends StatelessWidget {
                         ),
                       ),
                     ],
+                    if (device.pendingKey == true) ...[
+                      const SizedBox(height: 6),
+                      const PendingCredentialsBadge(),
+                    ],
                   ],
                 ),
               ),
@@ -3631,6 +3637,7 @@ class _WallEndpointEditor extends StatelessWidget {
     required this.onAreaChanged,
     required this.onRename,
     this.onRoleChanged,
+    this.showPowerState = false,
   });
 
   final DeviceEndpoint endpoint;
@@ -3639,6 +3646,11 @@ class _WallEndpointEditor extends StatelessWidget {
   final ValueChanged<String?> onAreaChanged;
   final VoidCallback onRename;
   final ValueChanged<String?>? onRoleChanged;
+
+  /// Whether the device has more than one power endpoint: only then is the
+  /// per-control state shown (single-control devices already surface it in
+  /// the device-level power card).
+  final bool showPowerState;
 
   @override
   Widget build(BuildContext context) {
@@ -3651,12 +3663,26 @@ class _WallEndpointEditor extends StatelessWidget {
             Icon(kindIcon, size: 20, color: AppColors.accent),
             const SizedBox(width: 9),
             Expanded(
-              child: Text(
-                endpoint.displayName,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 16,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    endpoint.displayName,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
+                  ),
+                  if (showPowerState && hasPowerCapability(endpoint)) ...[
+                    const SizedBox(height: 3),
+                    EndpointPowerBadge(
+                      endpoint: endpoint,
+                      onColor: AppColors.green,
+                      offColor: AppColors.red,
+                      fontSize: 13,
+                    ),
+                  ],
+                ],
               ),
             ),
             IconButton(
@@ -3850,6 +3876,20 @@ String _roomName(List<HomeArea> areas, String? physicalAreaId) {
       return null;
   }
   if (commandsSupported) {
+    final (on, total, unknown) = powerStateCounts(device);
+    if (total > 1) {
+      // Multi-gang: the pill aggregates every power endpoint instead of
+      // collapsing to the first confirmed one. Dim only when nothing is
+      // known; a confirmed all-off reads as off.
+      return (
+        label: '$on/$total',
+        color: on > 0
+            ? AppColors.green
+            : unknown == total
+            ? AppColors.textFaint
+            : AppColors.red,
+      );
+    }
     return switch (devicePowerDisplayState(device)) {
       PowerDisplayState.on => (label: 'Encendido', color: AppColors.green),
       PowerDisplayState.off => (label: 'Apagado', color: AppColors.red),

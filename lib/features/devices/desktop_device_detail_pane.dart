@@ -721,6 +721,7 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
                 powerState: _effectivePowerState(device),
                 onPowerChanged: _setPower,
                 onRename: _renameDevice,
+                pendingKey: device.pendingKey == true,
               ),
               const SizedBox(height: 20),
               Expanded(
@@ -1050,6 +1051,7 @@ class _Header extends StatelessWidget {
     required this.powerState,
     required this.onPowerChanged,
     required this.onRename,
+    required this.pendingKey,
   });
 
   final String displayName;
@@ -1062,6 +1064,10 @@ class _Header extends StatelessWidget {
   final PowerDisplayState powerState;
   final ValueChanged<bool> onPowerChanged;
   final VoidCallback onRename;
+
+  /// Whether the provider still owes credentials (`pending_key == true`):
+  /// shows the subtle 'Sin credenciales' chip in the header.
+  final bool pendingKey;
 
   @override
   Widget build(BuildContext context) {
@@ -1127,6 +1133,10 @@ class _Header extends StatelessWidget {
                   ),
                 ],
               ),
+              if (pendingKey) ...[
+                const SizedBox(height: 4),
+                const PendingCredentialsBadge(),
+              ],
             ],
           ),
         ),
@@ -1327,6 +1337,7 @@ class _ChannelEditors extends StatelessWidget {
             endpoint: endpoints[i],
             areas: areas,
             supportsRoles: supportsRoles,
+            showPowerState: powerEndpoints(device).length > 1,
             roleOptions: _roleOptions,
             onAreaChanged: (areaId) => onAreaChanged(endpoints[i], areaId),
             onRoleChanged: (role) => onRoleChanged(endpoints[i], role),
@@ -1349,6 +1360,7 @@ class _EndpointEditor extends StatelessWidget {
     required this.onAreaChanged,
     required this.onRoleChanged,
     required this.onRename,
+    this.showPowerState = false,
   });
 
   final DeviceEndpoint endpoint;
@@ -1358,6 +1370,11 @@ class _EndpointEditor extends StatelessWidget {
   final ValueChanged<String?> onAreaChanged;
   final ValueChanged<String?> onRoleChanged;
   final VoidCallback onRename;
+
+  /// Whether the device has more than one power endpoint: only then is the
+  /// per-control state shown (single-control devices already surface it in
+  /// the header switch).
+  final bool showPowerState;
 
   @override
   Widget build(BuildContext context) {
@@ -1390,6 +1407,10 @@ class _EndpointEditor extends StatelessWidget {
                       fontSize: 11.5,
                     ),
                   ),
+                  if (showPowerState && hasPowerCapability(endpoint)) ...[
+                    const SizedBox(height: 2),
+                    EndpointPowerBadge(endpoint: endpoint),
+                  ],
                   if (readOnly)
                     const Padding(
                       padding: EdgeInsets.only(top: 2),
