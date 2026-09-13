@@ -33,6 +33,12 @@ class FakeDeviceClassApi extends ApiClient {
   @override
   Future<Map<String, dynamic>> deviceProviderHealth() async => healthData;
 
+  /// No SSE in this fake: the production repository's live-update surface
+  /// stays inert so widget tests remain timer-free (same contract as the
+  /// other ApiClient fakes in this suite).
+  @override
+  Stream<Map<String, dynamic>> events() => const Stream.empty();
+
   @override
   Future<List<Map<String, dynamic>>> areas() async {
     final raw = catalogData['locations'];

@@ -54,6 +54,15 @@ class AdaptiveFeatureController extends ChangeNotifier {
   /// One-shot guard for the automatic sweep after the first successful load.
   bool _autoSweepDone = false;
 
+  /// One-shot guard for the lazy SSE subscription after the first successful
+  /// load. The stream is passive: the server pushes state updates, the client
+  /// never polls. Plain test fakes without [DeviceEventStreamRepository] never
+  /// subscribe.
+  bool _eventsSubscribed = false;
+
+  /// Live core-bus subscription; cancelled in [dispose].
+  StreamSubscription<Map<String, dynamic>>? _eventsSub;
+
   /// Ids created through [addLocalDevice] ("Agregar dispositivo") that the
   /// backend doesn't know yet. Every canonical reload re-appends them, so a
   /// locally created device is never wiped from the list (e.g. when coming
@@ -115,6 +124,7 @@ class AdaptiveFeatureController extends ChangeNotifier {
       _notify();
     }
     _maybeAutoSweep(loaded);
+    _maybeSubscribeEvents(loaded);
   }
 
   /// One-shot automatic state sweep after the first successful inventory
@@ -126,6 +136,39 @@ class AdaptiveFeatureController extends ChangeNotifier {
     if (!supportsStateRefresh) return;
     _autoSweepDone = true;
     unawaited(refreshStatesAndReload());
+  }
+
+  /// One-shot lazy subscription to the repository's passive SSE surface,
+  /// started after the first successful inventory load. Repositories without
+  /// [DeviceEventStreamRepository] (plain fakes) never subscribe, so tests
+  /// stay timer-free and no behavior changes for them.
+  void _maybeSubscribeEvents(bool loaded) {
+    if (!loaded || _eventsSubscribed) return;
+    final events = asDeviceEventStreamRepository(_repository)?.deviceEvents();
+    if (events == null) return;
+    _eventsSubscribed = true;
+    _eventsSub = events.listen(_onDeviceEvent, onError: (_) {});
+  }
+
+  /// Dispatches one stream frame.
+  ///
+  /// [ApiClient.events] yields `{'event': <name>, 'data': <decoded frame>}`,
+  /// and the core bus wraps every payload in an envelope
+  /// (`{id, event, data, timestamp}`), so the real name/payload may live one
+  /// level deeper. Only `devices_state_updated` reacts: the canonical snapshot
+  /// is silently reloaded, nothing else.
+  void _onDeviceEvent(Map<String, dynamic> event) {
+    if (_disposed) return;
+    final outer = event['data'];
+    if (outer is! Map) return;
+    var name = event['event'];
+    final innerData = outer['data'];
+    final innerName = outer['event'];
+    if (innerData is Map && innerName is String) {
+      name = innerName;
+    }
+    if (name != 'devices_state_updated') return;
+    unawaited(loadDevices());
   }
 
   /// Bulk read-only sweep of backend device states followed by a canonical
@@ -952,6 +995,8 @@ class AdaptiveFeatureController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_eventsSub?.cancel());
+    _eventsSub = null;
     super.dispose();
   }
 }

@@ -10,8 +10,20 @@ físicas **bloqueadas por diseño** (`GAMMA_PHYSICAL_EXECUTION_ENABLED=false`).
   pendiente para configurar.
 - 13 dispositivos en el hogar: 1 gateway Zigbee ("Hub") + 9 hijos Zigbee + 2
   directos + 1 gateway legacy offline.
-- Reporte de estado por canal: barrido de **solo lectura** al abrir la lista de
-  dispositivos y en pull-to-refresh (mobile y panel táctil).
+- Reporte de estado por canal: barrido de **solo lectura** al abrir la lista,
+  en pull-to-refresh (mobile y panel táctil) y adaptativo cada ~25 s con la app
+  conectada (ver "Frescura de estados").
+
+**Frescura de estados (niveles)**
+- **Nivel 1 — bajo demanda**: barrido al abrir la lista y en pull-to-refresh
+  (`POST /api/v1/devices/refresh-states`); salta offline por defecto.
+- **Nivel 2 — adaptativo (activo, backend `90dba64`)**: con al menos una app
+  conectada por SSE, el backend barre estados cada ~25 s
+  (`GAMMA_DEVICE_REFRESH_INTERVAL`, `0` desactiva) y publica
+  `devices_state_updated`; la app repinta al recibirlo, sin polling propio ni
+  requests por cliente. Sin app conectada no hay barridos.
+- **Nivel 3 — tiempo real (futuro)**: push de Tuya Cloud (Message Service/MQTT)
+  para reflejar cambios externos (app Tuya) al instante, sin barridos.
 
 **Organización**
 - Nombres editables de **dispositivo** y de **canal** en mobile, panel y desktop.

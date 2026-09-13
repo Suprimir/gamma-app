@@ -113,6 +113,12 @@ class FakeDeviceApi extends ApiClient {
     return deviceplatformDiscoveryJson;
   }
 
+  /// No SSE in this fake: the production repository's live-update surface
+  /// stays inert so widget tests remain timer-free (same contract as the
+  /// other ApiClient fakes in this suite).
+  @override
+  Stream<Map<String, dynamic>> events() => const Stream.empty();
+
   @override
   Future<Map<String, dynamic>> updateDevicePhysicalArea(
     String deviceId,

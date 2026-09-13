@@ -8,7 +8,8 @@ class HttpDeviceInventoryRepository
     implements
         DeviceInventoryRepository,
         DeviceCommandRepository,
-        DeviceStateRefreshRepository {
+        DeviceStateRefreshRepository,
+        DeviceEventStreamRepository {
   HttpDeviceInventoryRepository(this._api);
 
   final ApiClient _api;
@@ -22,6 +23,9 @@ class HttpDeviceInventoryRepository
 
   @override
   Future<void> refreshDeviceStates() => _api.refreshDeviceStates();
+
+  @override
+  Stream<Map<String, dynamic>> deviceEvents() => _api.events();
 
   @override
   Future<DeviceInventorySnapshot> load() async {

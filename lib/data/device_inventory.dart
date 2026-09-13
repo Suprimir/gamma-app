@@ -830,6 +830,29 @@ DeviceStateRefreshRepository? asDeviceStateRefreshRepository(
   return null;
 }
 
+/// Optional live-update surface: repositories backed by the HTTP API expose
+/// the core SSE stream; plain fakes stay without it (no subscription).
+/// Segregated the same way as [DeviceStateRefreshRepository]: every existing
+/// [DeviceInventoryRepository] implementer keeps compiling untouched, and the
+/// new surface must be explicitly narrowed through
+/// [asDeviceEventStreamRepository].
+abstract interface class DeviceEventStreamRepository {
+  /// Passive stream of core bus frames, shaped
+  /// `{'event': <name>, 'data': <decoded payload>}`. The server pushes; the
+  /// client never polls. Callers cancel the subscription on dispose.
+  Stream<Map<String, dynamic>> deviceEvents();
+}
+
+/// Narrows [repo] to [DeviceEventStreamRepository] when supported, else null.
+DeviceEventStreamRepository? asDeviceEventStreamRepository(
+  DeviceInventoryRepository repo,
+) {
+  if (repo is DeviceEventStreamRepository) {
+    return repo as DeviceEventStreamRepository;
+  }
+  return null;
+}
+
 /// Typed outcome of one endpoint power command.
 ///
 /// Deliberately decoupled from [PhysicalDevice]: whether execution succeeded

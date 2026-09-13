@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:gamma_app/data/api_client.dart';
@@ -180,6 +182,20 @@ class FakeApiClient extends ApiClient {
       'duration_ms': 0,
     };
   }
+
+  // ---- DeviceEventStreamRepository surface fakes ----
+
+  final _eventsController = StreamController<Map<String, dynamic>>.broadcast();
+
+  @override
+  Stream<Map<String, dynamic>> events() => _eventsController.stream;
+
+  /// Pushes one raw frame in the shape yielded by `ApiClient.events()`.
+  void emitEvent(String name, Map<String, dynamic> data) {
+    _eventsController.add({'event': name, 'data': data});
+  }
+
+  Future<void> closeEvents() => _eventsController.close();
 
   final bindCalls = <Map<String, Object?>>[];
   final unbindCalls = <Map<String, Object?>>[];
@@ -531,6 +547,32 @@ void main() {
         await repository.refreshDeviceStates();
 
         expect(fake.stateRefreshCalls, [false, false]);
+      },
+    );
+
+    test(
+      'the HTTP repository opts into the event stream surface and forwards it',
+      () async {
+        final fake = FakeApiClient();
+        final repository = HttpDeviceInventoryRepository(fake);
+        addTearDown(fake.closeEvents);
+
+        // Production wiring: the controller detects the live-update surface
+        // here, exactly like the bulk state sweep.
+        expect(asDeviceEventStreamRepository(repository), isNotNull);
+
+        final frames = <Map<String, dynamic>>[];
+        final subscription = repository.deviceEvents().listen(frames.add);
+        fake.emitEvent('devices_state_updated', {
+          'at': '2026-09-13T00:00:00Z',
+          'refreshed': 2,
+          'scanned': 4,
+        });
+        await pumpEventQueue();
+        await subscription.cancel();
+
+        expect(frames.single['event'], 'devices_state_updated');
+        expect((frames.single['data'] as Map)['refreshed'], 2);
       },
     );
 

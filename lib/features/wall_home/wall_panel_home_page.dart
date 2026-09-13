@@ -203,6 +203,12 @@ class _WallPanelHomePageState extends State<WallPanelHomePage>
   late final WallVoiceController _voice;
   StreamSubscription<List<double>>? _speechSub;
 
+  /// Passive core-bus subscription started after the first successful load.
+  /// Repositories without [DeviceEventStreamRepository] never subscribe;
+  /// cancelled on dispose.
+  StreamSubscription<Map<String, dynamic>>? _deviceEventsSub;
+  bool _deviceEventsSubscribed = false;
+
   /// Mic open or turn in flight: sleep stays off and touches don't re-arm.
   bool get _voiceActive => _voice.listening || _voice.busy;
 
@@ -250,6 +256,7 @@ class _WallPanelHomePageState extends State<WallPanelHomePage>
     try {
       final snapshot = await widget.repository.load();
       if (!mounted) return;
+      _maybeSubscribeDeviceEvents();
       setState(() {
         _snapshot = snapshot;
         _wall = projectWallHome(snapshot);
@@ -278,6 +285,41 @@ class _WallPanelHomePageState extends State<WallPanelHomePage>
         if (_wall != null) _armIdle();
       }
     }
+  }
+
+  /// One-shot lazy subscription to the repository's passive SSE surface,
+  /// started after the first successful load. Repositories without
+  /// [DeviceEventStreamRepository] (plain fakes) never subscribe, so tests
+  /// stay timer-free and no behavior changes for them.
+  void _maybeSubscribeDeviceEvents() {
+    if (_deviceEventsSubscribed) return;
+    final events = asDeviceEventStreamRepository(
+      widget.repository,
+    )?.deviceEvents();
+    if (events == null) return;
+    _deviceEventsSubscribed = true;
+    _deviceEventsSub = events.listen(_onDeviceEvent, onError: (_) {});
+  }
+
+  /// Dispatches one stream frame.
+  ///
+  /// [ApiClient.events] yields `{'event': <name>, 'data': <decoded frame>}`,
+  /// and the core bus wraps every payload in an envelope
+  /// (`{id, event, data, timestamp}`), so the real name/payload may live one
+  /// level deeper. Only `devices_state_updated` reacts: the canonical snapshot
+  /// is silently reloaded, nothing else.
+  void _onDeviceEvent(Map<String, dynamic> event) {
+    if (!mounted) return;
+    final outer = event['data'];
+    if (outer is! Map) return;
+    var name = event['event'];
+    final innerData = outer['data'];
+    final innerName = outer['event'];
+    if (innerData is Map && innerName is String) {
+      name = innerName;
+    }
+    if (name != 'devices_state_updated') return;
+    unawaited(_load());
   }
 
   Future<void> _runQuickAction(_QuickActionDef action) async {
@@ -322,6 +364,8 @@ class _WallPanelHomePageState extends State<WallPanelHomePage>
     WallActivityBus.holds.removeListener(_onBusHolds);
     _voice.removeListener(_onVoiceChanged);
     _speechSub?.cancel();
+    unawaited(_deviceEventsSub?.cancel());
+    _deviceEventsSub = null;
     _voice.dispose();
     _idleTimer?.cancel();
     _pillTimer?.cancel();
