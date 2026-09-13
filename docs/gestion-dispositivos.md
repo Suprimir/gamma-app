@@ -67,10 +67,98 @@ físicas **bloqueadas por diseño** (`GAMMA_PHYSICAL_EXECUTION_ENABLED=false`).
 - Desktop: "Guardar cambios" se ve deshabilitado si no hay cambios de
   capacidades; los campos de configuración se persisten solos (aclarar la UX).
 
-## 4. Fases sugeridas
+## 4. Propuesta de diseño (UX)
+
+Basada en investigación de patrones reales (Nielsen Norman Group, patrón
+"desagrupar" de HomeKit, dashboards de Home Assistant) y en las restricciones
+del sistema: estados honestos, gate de escrituras, panel táctil.
+
+### Principios
+
+1. **Estado primero**: al abrir, todo estado visible con color + ícono + texto
+   (nunca solo color).
+2. **Un tap = acción** para lo cotidiano; el detalle es para lo complejo.
+3. **El canal es la unidad de control; el dispositivo es la unidad de
+   identidad.** (Un 3-gang se comanda por canales, pero hoy pesa como "un
+   dispositivo" en la UI.)
+4. **Feedback inmediato y honesto**: pendiente → confirmado / deshabilitado /
+   sin datos (ya implementado; se mantiene).
+5. **Objetivos táctiles grandes**: ≥48dp en mobile, ≥64dp en el panel (NN/g
+   recomienda ≥1cm×1cm físicos, más en pantallas grandes).
+6. **Progressive disclosure**: control arriba, configuración colapsada.
+
+### Patrón A — Tiles de canal ("Controles") ⭐ la mejora clave
+
+Los canales con encendido se muestran como **tiles individuales**, además de
+(no en lugar de) la ficha del dispositivo:
+
+- Nombre del canal (o "Canal N"), ícono por rol, estado (color + texto).
+- **Tap = prender/apagar ese canal**; long-press = acciones (detalle,
+  renombrar, identificar).
+- Dónde: sección "Controles" dentro de cada habitación (mobile), vista "Todos
+  los controles", y sección principal del panel táctil.
+- Referencia: HomeKit permite "desagrupar" multi-gang en tiles separados; es
+  el patrón más rápido para el control diario.
+
+### Patrón B — Tarjetas de dispositivo (lista)
+
+- Resumen de canales: hasta 3 chips con estado (color + texto); más de 3 →
+  "N/M encendidos".
+- Tap → detalle; los toggles rápidos de tarjeta se mantienen.
+- Nombres de canal visibles en las tarjetas (hoy muestran "Canal N").
+
+### Patrón C — Detalle en 3 bloques
+
+1. **Control** (primero): una fila por canal — nombre grande, estado, switch.
+2. **Estado**: conexión, credenciales, gateway, "Probar conexión".
+3. **Configuración** (colapsable): renombrar (dispositivo/canal), habitación,
+   rol, vincular entidad.
+
+### Patrón D — Panel táctil
+
+- Tiles grandes (≥64dp), ícono + nombre + estado; tap = toggle, long-press =
+  detalle.
+- Se mantiene la confirmación visual ("splash") existente.
+- QoL kiosco: atenuación nocturna y despertar al tacto (si el hardware lo
+  permite).
+- La lista de dispositivos sigue como está (activos + "Sin acceso").
+
+### Patrón E — Acciones masivas
+
+- "Apagar todo" por habitación y por casa (sobre canales con encendido).
+- Con el gate cerrado responde honestamente; queda listo para la prueba real.
+- Referencia: NN/g #5 — reducir repetición con atajos.
+
+## 5. QoL propuesto (priorizado)
+
+| # | Mejora | Por qué |
+|---|--------|---------|
+| 1 | Tiles de canal (Patrón A) | Control rápido real, estilo HomeKit/Tuya |
+| 2 | Nombres de canal en tarjetas | Identificar canales sin entrar al detalle |
+| 3 | Iconos por rol (luz/persiana/enchufe/ventilador) | Reconocimiento visual rápido |
+| 4 | Feedback de guardado en mobile | Hoy guarda en silencio |
+| 5 | Estado "enviando…" en toggles | Feedback inmediato (NN/g #6) |
+| 6 | Favoritos (fijar canales arriba) | Acceso diario |
+| 7 | Búsqueda de canales | Con 13+ canales se agradece |
+| 8 | "Apagar todo" (habitación/casa) | Reducir repetición (NN/g #5) |
+| 9 | Panel: atenuación nocturna + wake on touch | Kiosco siempre encendido |
+| 10 | Accesibilidad: Semantics/contraste/targets, nunca solo color | NN/g #3 |
+| 11 | Orden estable de canales + renombrado en lote | Consistencia |
+
+## 6. Fases sugeridas (actualizado)
 
 1. ✅ Auto-configuración de vínculos canónicos (backend `dd1a93f`).
-2. ✅ Switches por canal en los detalles (app `bdb4ba9`); con el gate cerrado
-   cada acción responde honestamente "Escritura deshabilitada en el modo actual".
-3. Ventana de prueba de control real por canal (gate ON temporal).
-4. QoL: nombres de canal en tarjetas + feedback de guardado en mobile.
+2. ✅ Switches por canal en los detalles (app `bdb4ba9`).
+3. **Tiles de canal ("Controles")** en mobile + panel, y nombres de canal en
+   tarjetas (Patrón A/B + QoL 1-2).
+4. Reorganización del detalle (Patrón C) + iconos por rol + feedback mobile
+   (QoL 3-4).
+5. **Ventana de prueba de control real por canal** (gate ON temporal) — decisión.
+6. Acciones masivas + favoritos + QoL de panel (Patrones D/E + QoL 5-9).
+
+### Referencias
+
+- NN/g — *Smart-Device Apps: 7 Best Practices* (2025).
+- NN/g — *Touch Targets on Touchscreens*.
+- r/HomeKit — desagrupar multi-gang en tiles separados.
+- Comunidad Home Assistant — dashboards simples, tarjetas por entidad.
