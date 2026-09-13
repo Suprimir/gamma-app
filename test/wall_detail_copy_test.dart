@@ -20,8 +20,9 @@ void main() {
 
     expect(find.text('Configurar dispositivo'), findsOneWidget);
 
-    // Household vocabulary is the primary content of the wall detail.
-    expect(find.text('Nombre'), findsOneWidget);
+    // Household vocabulary is the primary content of the wall detail; the
+    // rename affordance lives in the header row (no separate 'Nombre' label).
+    expect(find.byTooltip('Cambiar nombre'), findsOneWidget);
     expect(find.text('Habitación física'), findsOneWidget);
     expect(find.text('Controles'), findsOneWidget);
 
@@ -96,7 +97,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     for (final label in [
-      'Nombre',
       'Habitación física',
       'Controles',
       'Qué controla',

@@ -3859,67 +3859,51 @@ class _WallDeviceHero extends StatelessWidget {
         borderRadius: BorderRadius.circular(22),
         border: Border.all(color: AppColors.border),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                width: 58,
-                height: 58,
-                decoration: BoxDecoration(
-                  color: AppColors.accentTint,
-                  borderRadius: BorderRadius.circular(17),
-                ),
-                child: Icon(kindIcon, size: 30, color: AppColors.accent),
-              ),
-              const SizedBox(width: 15),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      primaryName,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                        height: 1.2,
-                      ),
-                    ),
-                    if (health != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        health,
-                        style: const TextStyle(
-                          color: AppColors.textDim,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                    if (device.pendingKey == true) ...[
-                      const SizedBox(height: 6),
-                      const PendingCredentialsBadge(),
-                    ],
-                  ],
-                ),
-              ),
-            ],
+          Container(
+            width: 58,
+            height: 58,
+            decoration: BoxDecoration(
+              color: AppColors.accentTint,
+              borderRadius: BorderRadius.circular(17),
+            ),
+            child: Icon(kindIcon, size: 30, color: AppColors.accent),
           ),
-          const SizedBox(height: 16),
-          const Padding(
-            padding: EdgeInsets.only(left: 2, bottom: 7),
-            child: Text(
-              'Nombre',
-              style: TextStyle(
-                color: AppColors.textDim,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
+          const SizedBox(width: 15),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  primaryName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                  ),
+                ),
+                if (health != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    health,
+                    style: const TextStyle(
+                      color: AppColors.textDim,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+                if (device.pendingKey == true) ...[
+                  const SizedBox(height: 6),
+                  const PendingCredentialsBadge(),
+                ],
+              ],
             ),
           ),
+          const SizedBox(width: 10),
           IconButton(
             tooltip: 'Cambiar nombre',
             onPressed: onRename,
