@@ -760,6 +760,40 @@ void main() {
         await server.close(force: true);
       },
     );
+
+    test(
+      'un 409 de nombre duplicado se propaga como ApiException por HttpServer',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final client = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+
+        server.listen((request) async {
+          expect(request.method, 'PUT');
+          expect(
+            request.uri.path,
+            '/api/v1/devices/dev_1/endpoints/relay_1/name',
+          );
+          request.response.statusCode = 409;
+          request.response.write(
+            '{"detail":"Ya existe otro control con el nombre '
+            '\'Luz\' en la misma ubicación"}',
+          );
+          await request.response.close();
+        });
+
+        try {
+          await client.renameEndpoint('dev_1', 'relay_1', 'Luz');
+          fail('se esperaba ApiException 409');
+        } on ApiException catch (e) {
+          expect(e.statusCode, 409);
+          expect(
+            (e.body as Map)['detail'],
+            "Ya existe otro control con el nombre 'Luz' en la misma ubicación",
+          );
+        }
+        await server.close(force: true);
+      },
+    );
   });
 
   group('device commands', () {
