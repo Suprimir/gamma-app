@@ -124,7 +124,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 150));
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Dispositivos'), findsOneWidget);
+    // Page header + view segment both read 'Dispositivos'.
+    expect(find.text('Dispositivos'), findsWidgets);
     expect(
       find.byKey(const ValueKey('wall-device-dev_triple_01')),
       findsOneWidget,

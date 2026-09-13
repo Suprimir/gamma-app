@@ -278,7 +278,14 @@ void main() {
     await tester.pumpAndSettle();
 
     // No confirmed observation: the card is honest, never a fake "Apagado".
-    expect(find.text('Sin datos'), findsOneWidget);
+    // The area 'Controles' tile carries the same state, so scope to the card.
+    expect(
+      find.descendant(
+        of: mobileDeviceCard('Luz sala'),
+        matching: find.text('Sin datos'),
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('Luz sala'));
     await tester.pump();
@@ -301,9 +308,16 @@ void main() {
     await tester.pumpAndSettle();
 
     // Health is unvalidated but the device is commandable: honest 'Sin datos',
-    // not a dead 'Estado desconocido'.
+    // not a dead 'Estado desconocido'. The area 'Controles' tile carries the
+    // same state, so scope to the card.
     expect(find.text('Estado desconocido'), findsNothing);
-    expect(find.text('Sin datos'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: mobileDeviceCard('Luz sin validar'),
+        matching: find.text('Sin datos'),
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('Luz sin validar'));
     await tester.pump();
@@ -563,6 +577,14 @@ Finder mobileEndpointEditor(String channelName) => find.ancestor(
   of: find.text(channelName),
   matching: find.byWidgetPredicate(
     (widget) => widget.runtimeType.toString() == '_EndpointEditor',
+  ),
+);
+
+/// The mobile device card (identity surface) that owns [deviceName].
+Finder mobileDeviceCard(String deviceName) => find.ancestor(
+  of: find.text(deviceName),
+  matching: find.byWidgetPredicate(
+    (widget) => widget.runtimeType.toString() == '_DashboardDeviceCard',
   ),
 );
 

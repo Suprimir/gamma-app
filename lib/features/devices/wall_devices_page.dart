@@ -17,6 +17,10 @@ import '../routines/routines_page.dart';
 import '../areas/area_editor.dart';
 import '../wall_home/wall_area_editor.dart';
 
+/// Which dashboard the wall Devices page is showing: the device list
+/// (identity surface) or the channel-tile 'Controles' grid (control surface).
+enum _WallDevicesView { devices, controls }
+
 /// Touch-first Devices management for the wall panel surface.
 ///
 /// Owns its own [AdaptiveFeatureController] (same contract as [DevicesPage])
@@ -58,6 +62,16 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
   /// become backend queries (same contract as the desktop master pane).
   String _query = '';
   String? _locationId;
+
+  /// Which dashboard is rendered; the devices list keeps its exact behavior.
+  _WallDevicesView _view = _WallDevicesView.devices;
+
+  /// In-flight channel toggles, keyed by device/endpoint.
+  final Set<String> _channelBusy = {};
+
+  /// Local fallback for repositories without command support (plain fakes):
+  /// per-channel overrides keep the legacy `powerOn ?? online` behavior.
+  final Map<String, PowerDisplayState> _channelOverrides = {};
 
   @override
   void initState() {
@@ -310,6 +324,160 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
     );
   }
 
+  bool get _commandsAvailable => _controller.supportsEndpointCommands;
+
+  String _channelKey(PhysicalDevice device, DeviceEndpoint endpoint) =>
+      '${device.id}/${endpoint.id}';
+
+  /// Honest display state for one channel: command surfaces trust confirmed
+  /// observations; plain fakes keep the legacy `powerOn ?? online` projection.
+  PowerDisplayState _channelDisplayState(
+    PhysicalDevice device,
+    DeviceEndpoint endpoint,
+  ) {
+    final override = _channelOverrides[_channelKey(device, endpoint)];
+    if (override != null) return override;
+    if (!_commandsAvailable) {
+      return (device.powerOn ?? device.online)
+          ? PowerDisplayState.on
+          : PowerDisplayState.off;
+    }
+    return endpointPowerDisplayState(endpoint);
+  }
+
+  /// Tap on a wall channel tile: toggles exactly that channel (unknown turns
+  /// on) and keeps the wall SnackBar conventions for the honest outcome.
+  Future<void> _toggleChannel(
+    PhysicalDevice device,
+    DeviceEndpoint endpoint,
+  ) async {
+    final key = _channelKey(device, endpoint);
+    if (_channelBusy.contains(key)) return;
+    final value =
+        _channelDisplayState(device, endpoint) != PowerDisplayState.on;
+    if (!_commandsAvailable) {
+      setState(() {
+        _channelOverrides[key] = value
+            ? PowerDisplayState.on
+            : PowerDisplayState.off;
+      });
+      unawaited(
+        showWallSuccessSplash(
+          context,
+          message: value ? 'Encendido' : 'Apagado',
+        ),
+      );
+      return;
+    }
+    setState(() => _channelBusy.add(key));
+    try {
+      final result = await _controller.setEndpointPower(
+        device.id,
+        endpoint.id,
+        value,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(powerOutcomeMessage(result, requested: value))),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(powerFailureMessage(error))));
+    } finally {
+      if (mounted) setState(() => _channelBusy.remove(key));
+    }
+  }
+
+  /// Children for the 'Controles' dashboard: one group per effective area
+  /// with big channel tiles, or the honest empty state.
+  List<Widget> _wallControlsChildren({
+    required List<PowerChannelGroup> groups,
+    required bool filtering,
+  }) {
+    if (groups.isEmpty) {
+      return [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 48),
+          child: Text(
+            filtering ? 'Sin resultados' : 'Todavía no hay controles.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppColors.textDim, fontSize: 16),
+          ),
+        ),
+      ];
+    }
+    return [
+      for (final group in groups) ...[
+        Padding(
+          padding: const EdgeInsets.only(left: 2, bottom: 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  group.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.01,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.accentTint,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '${group.channels.length}',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.accentStrong,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 420,
+            mainAxisExtent: 148,
+            mainAxisSpacing: 18,
+            crossAxisSpacing: 18,
+          ),
+          itemCount: group.channels.length,
+          itemBuilder: (context, index) {
+            final channel = group.channels[index];
+            final device = channel.device;
+            final endpoint = channel.endpoint;
+            final key = _channelKey(device, endpoint);
+            return _WallChannelTile(
+              key: ValueKey('wall-channel-${device.id}-${endpoint.id}'),
+              name: endpointChannelName(endpoint),
+              icon: deviceKindMeta(endpoint.kind).icon,
+              state: _channelDisplayState(device, endpoint),
+              busy: _channelBusy.contains(key),
+              onTap: () => _toggleChannel(device, endpoint),
+              onLongPress: () => _openDevice(device),
+            );
+          },
+        ),
+        const SizedBox(height: 26),
+      ],
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -349,6 +517,13 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
               !DeviceInventorySnapshot.isOfflineDevice(device);
         }).toList();
         final filtering = query.isNotEmpty || _locationId != null;
+        final controlGroups = _view == _WallDevicesView.controls
+            ? _wallControlGroups(
+                snapshot: snapshot,
+                locationId: _locationId,
+                query: query,
+              )
+            : const <PowerChannelGroup>[];
         // Material host: TextField/ChoiceChip/FilledButton below need a
         // Material ancestor even when this page is pushed as a bare route
         // (e.g. from the wall home attention entry, with no Scaffold above).
@@ -374,6 +549,11 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
                         onShowOffline: _showOfflineDevices,
                       ),
                       const SizedBox(height: 18),
+                      _WallViewToggle(
+                        view: _view,
+                        onChanged: (value) => setState(() => _view = value),
+                      ),
+                      const SizedBox(height: 14),
                       _WallSearchField(
                         query: _query,
                         api: widget.api,
@@ -395,7 +575,12 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
                         onAddArea: _showAddAreaDialog,
                       ),
                       const SizedBox(height: 18),
-                      if (devices.isEmpty)
+                      if (_view == _WallDevicesView.controls)
+                        ..._wallControlsChildren(
+                          groups: controlGroups,
+                          filtering: filtering,
+                        )
+                      else if (devices.isEmpty)
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 48),
                           child: Text(
@@ -497,6 +682,48 @@ class _WallDevicesHeader extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Touch-first view switch between the device list and the channel-tile
+/// 'Controles' dashboard. >= 56dp tall; always visible so both surfaces are
+/// one tap away.
+class _WallViewToggle extends StatelessWidget {
+  const _WallViewToggle({required this.view, required this.onChanged});
+
+  final _WallDevicesView view;
+  final ValueChanged<_WallDevicesView> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SegmentedButton<_WallDevicesView>(
+      key: const ValueKey('wall-devices-view'),
+      segments: const [
+        ButtonSegment(
+          value: _WallDevicesView.devices,
+          icon: Icon(Icons.devices_outlined, size: 22),
+          label: Text('Dispositivos'),
+        ),
+        ButtonSegment(
+          value: _WallDevicesView.controls,
+          icon: Icon(Icons.tune, size: 22),
+          label: Text('Controles'),
+        ),
+      ],
+      selected: {view},
+      showSelectedIcon: false,
+      onSelectionChanged: (selection) => onChanged(selection.first),
+      style: ButtonStyle(
+        minimumSize: const WidgetStatePropertyAll(Size(0, 56)),
+        textStyle: const WidgetStatePropertyAll(
+          TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        side: WidgetStatePropertyAll(BorderSide(color: AppColors.border)),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        ),
+      ),
     );
   }
 }
@@ -1419,8 +1646,11 @@ class _WallDeviceCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 3),
+                    // QoL 2: named channels at a glance on multi-channel
+                    // devices; unnamed inventories keep the control count.
                     Text(
-                      '$controls ${controls == 1 ? 'control' : 'controles'}',
+                      powerChannelNamesSummary(device) ??
+                          '$controls ${controls == 1 ? 'control' : 'controles'}',
                       style: const TextStyle(
                         color: AppColors.textDim,
                         fontSize: 14,
@@ -1430,6 +1660,119 @@ class _WallDeviceCard extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Big, touch-first channel tile for the wall 'Controles' dashboard: kind
+/// icon, channel name and honest state (color + text). Tap toggles the
+/// channel; long-press opens the device detail. >= 64dp target.
+class _WallChannelTile extends StatelessWidget {
+  const _WallChannelTile({
+    super.key,
+    required this.name,
+    required this.icon,
+    required this.state,
+    required this.busy,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final String name;
+  final IconData icon;
+  final PowerDisplayState state;
+  final bool busy;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final stateColor = switch (state) {
+      PowerDisplayState.on => AppColors.green,
+      PowerDisplayState.off => AppColors.red,
+      PowerDisplayState.unknown => AppColors.textFaint,
+    };
+    final stateLabel = endpointPowerLabel(state);
+    return Semantics(
+      button: true,
+      enabled: !busy,
+      label: '$name, $stateLabel',
+      onLongPressHint: 'Abrir el dispositivo',
+      child: Material(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(20),
+        child: InkWell(
+          onTap: busy ? null : onTap,
+          onLongPress: busy ? null : onLongPress,
+          borderRadius: BorderRadius.circular(20),
+          child: Ink(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              border: Border.all(color: AppColors.border),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 54,
+                  height: 54,
+                  decoration: BoxDecoration(
+                    color: stateColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: busy
+                      ? Padding(
+                          padding: const EdgeInsets.all(15),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: stateColor,
+                          ),
+                        )
+                      : Icon(icon, size: 28, color: stateColor),
+                ),
+                const Spacer(),
+                Text(
+                  name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: stateColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        stateLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: stateColor,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -3895,6 +4238,29 @@ String _wallDetectedAs(PhysicalDevice device) {
     DeviceKind.switchController => 'Interruptor genérico',
     DeviceKind.unknown => 'Dispositivo',
   };
+}
+
+/// Power channels for the wall 'Controles' dashboard: active devices only,
+/// filtered by the selected location (channel effective area) and the search
+/// query (channel or area name), grouped by effective area.
+List<PowerChannelGroup> _wallControlGroups({
+  required DeviceInventorySnapshot snapshot,
+  required String? locationId,
+  required String query,
+}) {
+  final areaNameById = {for (final area in snapshot.areas) area.id: area.name};
+  final channels = powerChannelsOf(snapshot.activeDevices).where((channel) {
+    if (locationId != null && powerChannelAreaId(channel) != locationId) {
+      return false;
+    }
+    if (query.isEmpty) return true;
+    final areaName = areaNameById[powerChannelAreaId(channel)] ?? '';
+    return endpointChannelName(
+          channel.endpoint,
+        ).toLowerCase().contains(query) ||
+        areaName.toLowerCase().contains(query);
+  }).toList();
+  return groupPowerChannels(channels, snapshot.areas);
 }
 
 String _roomName(List<HomeArea> areas, String? physicalAreaId) {

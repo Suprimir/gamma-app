@@ -25,6 +25,85 @@ String endpointPowerLabel(PowerDisplayState state) => switch (state) {
   PowerDisplayState.unknown => 'Sin datos',
 };
 
+/// Household name for one channel: the GAMMA user name wins, then the
+/// backend-computed display name; a stable ordinal is the last fallback.
+String endpointChannelName(DeviceEndpoint endpoint) {
+  final userName = endpoint.userName?.trim();
+  if (userName != null && userName.isNotEmpty) return userName;
+  final displayName = endpoint.displayName.trim();
+  if (displayName.isNotEmpty) return displayName;
+  final ordinal = endpoint.stableOrdinal;
+  return ordinal == null ? 'Canal' : 'Canal ${ordinal + 1}';
+}
+
+/// Joined user-named power channels for a device card subtitle: up to two
+/// names separated by ' · ', with ' +N' when more named channels remain.
+/// Null when the device exposes fewer than two power channels or no channel
+/// carries a user name yet (cards then keep their generic control count).
+String? powerChannelNamesSummary(PhysicalDevice device) {
+  final channels = powerEndpoints(device);
+  if (channels.length <= 1) return null;
+  final names = <String>[];
+  for (final endpoint in channels) {
+    final name = endpoint.userName?.trim();
+    if (name != null && name.isNotEmpty) names.add(name);
+  }
+  if (names.isEmpty) return null;
+  final shown = names.take(2).join(' · ');
+  final remaining = names.length - 2;
+  return remaining > 0 ? '$shown +$remaining' : shown;
+}
+
+/// One power channel resolved with its owning device. The channel is the
+/// control unit; the device keeps its identity (card/detail).
+typedef PowerChannel = ({PhysicalDevice device, DeviceEndpoint endpoint});
+
+/// A named bucket of channels rendered as one 'Controles' group.
+typedef PowerChannelGroup = ({String name, List<PowerChannel> channels});
+
+/// Effective area id of a channel: the endpoint-controlled area wins over the
+/// device's physical area (one channel can command a different room).
+String? powerChannelAreaId(PowerChannel channel) =>
+    channel.endpoint.controlledAreaId ?? channel.device.physicalAreaId;
+
+/// Every power channel exposed by [devices], in canonical order.
+List<PowerChannel> powerChannelsOf(Iterable<PhysicalDevice> devices) => [
+  for (final device in devices)
+    for (final endpoint in device.endpoints)
+      if (hasPowerCapability(endpoint)) (device: device, endpoint: endpoint),
+];
+
+/// Groups [channels] by effective area name, keeping the [areas] grid order
+/// and leaving 'Sin ubicación' last. Unknown area ids keep first-seen order
+/// between the known areas and the no-area bucket, so they are never hidden
+/// under the wrong room.
+List<PowerChannelGroup> groupPowerChannels(
+  List<PowerChannel> channels,
+  List<HomeArea> areas,
+) {
+  final nameById = {for (final area in areas) area.id: area.name};
+  final grouped = <String?, List<PowerChannel>>{};
+  for (final channel in channels) {
+    grouped.putIfAbsent(powerChannelAreaId(channel), () => []).add(channel);
+  }
+  final groups = <PowerChannelGroup>[];
+  for (final area in areas) {
+    final bucket = grouped.remove(area.id);
+    if (bucket != null) groups.add((name: area.name, channels: bucket));
+  }
+  for (final id in grouped.keys.whereType<String>().toList()) {
+    final bucket = grouped.remove(id);
+    if (bucket != null) {
+      groups.add((name: nameById[id] ?? id, channels: bucket));
+    }
+  }
+  final withoutArea = grouped.remove(null);
+  if (withoutArea != null) {
+    groups.add((name: 'Sin ubicación', channels: withoutArea));
+  }
+  return groups;
+}
+
 /// Compact read-only chip with one endpoint's confirmed power state
 /// ('Encendido' / 'Apagado' / 'Sin datos'). Renders nothing when the endpoint
 /// exposes no power channel. [onColor]/[offColor] let each surface keep its

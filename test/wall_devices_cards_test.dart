@@ -173,7 +173,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(WallDevicesPage), findsOneWidget);
-    expect(find.text('Dispositivos'), findsOneWidget);
+    // 'Dispositivos' now appears twice: the page header and the view segment.
+    expect(find.text('Dispositivos'), findsWidgets);
     expect(
       find.byKey(const ValueKey('wall-device-dev_triple_01')),
       findsOneWidget,
@@ -651,6 +652,186 @@ void main() {
 
     expect(find.text('Sin credenciales'), findsNothing);
   });
+
+  group('wall controles view', () {
+    testWidgets('segmented control switches to the channel tiles', (
+      tester,
+    ) async {
+      final repo = CommandDeviceFakeRepo(
+        devices: const [_wallObservedTriple],
+        areas: const [
+          HomeArea(id: 'sala', name: 'Sala'),
+          HomeArea(id: 'comedor', name: 'Comedor'),
+          HomeArea(id: 'patio', name: 'Patio'),
+          HomeArea(id: 'pasillo', name: 'Pasillo'),
+        ],
+      );
+      await pumpWall(tester, repo);
+      expect(
+        find.byKey(const ValueKey('wall-device-dev_observed_triple_01')),
+        findsOneWidget,
+      );
+
+      await switchToWallControls(tester);
+
+      // Device cards leave; tiles take over grouped by effective area. The
+      // groups below the fold build lazily, so scroll each tile into view and
+      // check its area header while it is visible.
+      expect(
+        find.byKey(const ValueKey('wall-device-dev_observed_triple_01')),
+        findsNothing,
+      );
+      final scrollable = find.byType(Scrollable).first;
+      Future<void> expectTile(String endpointId, String areaName) async {
+        final tile = find.byKey(
+          ValueKey('wall-channel-dev_observed_triple_01-$endpointId'),
+        );
+        await tester.scrollUntilVisible(tile, 200, scrollable: scrollable);
+        await tester.pumpAndSettle();
+        expect(tile, findsOneWidget);
+        expect(find.text(areaName), findsWidgets);
+      }
+
+      await expectTile('relay_1', 'Sala');
+      await expectTile('relay_2', 'Comedor');
+      await expectTile('relay_3', 'Patio');
+    });
+
+    testWidgets('tile tap records and converges only its endpoint', (
+      tester,
+    ) async {
+      final repo = CommandDeviceFakeRepo(
+        devices: const [_wallObservedTriple],
+        areas: const [
+          HomeArea(id: 'sala', name: 'Sala'),
+          HomeArea(id: 'comedor', name: 'Comedor'),
+          HomeArea(id: 'patio', name: 'Patio'),
+          HomeArea(id: 'pasillo', name: 'Pasillo'),
+        ],
+      );
+      await pumpWall(tester, repo);
+      await switchToWallControls(tester);
+
+      final relay2 = find.byKey(
+        const ValueKey('wall-channel-dev_observed_triple_01-relay_2'),
+      );
+      await tester.ensureVisible(relay2);
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: relay2, matching: find.text('Apagado')),
+        findsOneWidget,
+      );
+
+      await tester.tap(relay2);
+      await tester.pump();
+      expect(repo.powerCalls, [('dev_observed_triple_01', 'relay_2', true)]);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(of: relay2, matching: find.text('Encendido')),
+        findsOneWidget,
+      );
+      final relay3 = find.byKey(
+        const ValueKey('wall-channel-dev_observed_triple_01-relay_3'),
+      );
+      await tester.scrollUntilVisible(
+        relay3,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: relay3, matching: find.text('Sin datos')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('location filter narrows the controls grid', (tester) async {
+      final repo = CommandDeviceFakeRepo(
+        devices: const [_wallObservedTriple],
+        areas: const [
+          HomeArea(id: 'sala', name: 'Sala'),
+          HomeArea(id: 'comedor', name: 'Comedor'),
+          HomeArea(id: 'patio', name: 'Patio'),
+          HomeArea(id: 'pasillo', name: 'Pasillo'),
+        ],
+      );
+      await pumpWall(tester, repo);
+      await switchToWallControls(tester);
+
+      // Select 'Sala' through the wall location dialog.
+      await tester.tap(find.text('Todas'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(WallCenterDialog),
+          matching: find.text('Sala'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(
+          const ValueKey('wall-channel-dev_observed_triple_01-relay_1'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('wall-channel-dev_observed_triple_01-relay_2'),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('wall-channel-dev_observed_triple_01-relay_3'),
+        ),
+        findsNothing,
+      );
+    });
+
+    testWidgets('wall card shows named channels instead of the count', (
+      tester,
+    ) async {
+      final repo = CommandDeviceFakeRepo(
+        devices: const [_wallNamedTriple],
+        areas: const [
+          HomeArea(id: 'sala', name: 'Sala'),
+          HomeArea(id: 'comedor', name: 'Comedor'),
+          HomeArea(id: 'patio', name: 'Patio'),
+          HomeArea(id: 'pasillo', name: 'Pasillo'),
+        ],
+      );
+      await pumpWall(tester, repo);
+
+      final card = find.byKey(
+        const ValueKey('wall-device-dev_named_triple_01'),
+      );
+      expect(card, findsOneWidget);
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.text('Luz terraza · Luz comedor +1'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: card, matching: find.text('3 controles')),
+        findsNothing,
+      );
+    });
+  });
+}
+
+/// Switches the wall page to the 'Controles' dashboard via the segment.
+Future<void> switchToWallControls(WidgetTester tester) async {
+  await tester.tap(
+    find.descendant(
+      of: find.byKey(const ValueKey('wall-devices-view')),
+      matching: find.text('Controles'),
+    ),
+  );
+  await tester.pumpAndSettle();
 }
 
 /// The wall per-control editor that owns [channelName].
@@ -1134,3 +1315,49 @@ class _WallFakeRepo implements DeviceInventoryRepository {
   @override
   Future<void> identify(String deviceId, {String? endpointId}) async {}
 }
+
+/// Multi-gang with three named channels: the wall card shows the joined names
+/// (up to two) plus the hidden count instead of '3 controles'.
+const _wallNamedTriple = PhysicalDevice(
+  id: 'dev_named_triple_01',
+  name: 'Interruptor con nombres',
+  kind: DeviceKind.switchController,
+  provider: 'Tuya',
+  providerDeviceId: '',
+  model: 'TS0013',
+  provisioningState: DeviceProvisioningState.configured,
+  online: true,
+  health: DeviceHealthState.online,
+  physicalAreaId: 'pasillo',
+  endpoints: [
+    DeviceEndpoint(
+      id: 'relay_1',
+      name: 'Canal 1',
+      kind: DeviceKind.switchController,
+      controlledAreaId: 'sala',
+      capabilities: {'on_off'},
+      userName: 'Luz terraza',
+      observedPower: true,
+      observedQuality: 'confirmed',
+    ),
+    DeviceEndpoint(
+      id: 'relay_2',
+      name: 'Canal 2',
+      kind: DeviceKind.switchController,
+      controlledAreaId: 'comedor',
+      capabilities: {'on_off'},
+      userName: 'Luz comedor',
+      observedPower: false,
+      observedQuality: 'confirmed',
+    ),
+    DeviceEndpoint(
+      id: 'relay_3',
+      name: 'Canal 3',
+      kind: DeviceKind.switchController,
+      controlledAreaId: 'patio',
+      capabilities: {'on_off'},
+      userName: 'Luz patio',
+      observedQuality: 'unknown',
+    ),
+  ],
+);

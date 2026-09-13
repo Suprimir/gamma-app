@@ -185,6 +185,7 @@ class _DevicesPageState extends State<DevicesPage> {
         .where((device) => device.physicalAreaId == null)
         .toList();
     final offlineDevices = snapshot.offlineDevices;
+    final controlsCount = powerChannelsOf(devices).length;
 
     return Container(
       color: AppColors.bg,
@@ -361,6 +362,22 @@ class _DevicesPageState extends State<DevicesPage> {
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
                   child: Column(
                     children: [
+                      _NavigationRow(
+                        key: const ValueKey('controls-row'),
+                        icon: CupertinoIcons.slider_horizontal_3,
+                        title: 'Controles',
+                        subtitle:
+                            '$controlsCount ${controlsCount == 1 ? 'control' : 'controles'} en casa',
+                        badge: '$controlsCount',
+                        onTap: () => _open(
+                          _MobileControlsPage(
+                            snapshot: snapshot,
+                            repository: widget.repository,
+                            controller: _controller,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
                       _NavigationRow(
                         icon: CupertinoIcons.square_stack,
                         title: 'Todos los dispositivos',
@@ -628,6 +645,7 @@ class _DashboardDeviceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final kindIcon = iosKindIcon(device.kind);
     final displayName = device.userName ?? device.name;
+    final channelNames = powerChannelNamesSummary(device);
     final state = _cardState(
       device,
       powerState,
@@ -706,6 +724,21 @@ class _DashboardDeviceCard extends StatelessWidget {
                     fontWeight: FontWeight.w500,
                   ),
                 ),
+                // QoL 2: named channels at a glance (multi-channel devices
+                // only; unnamed channels never add 'Canal N' noise).
+                if (channelNames != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    channelNames,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.textDim,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 Row(
                   children: [
@@ -1148,6 +1181,7 @@ class _AreaCard extends StatelessWidget {
 
 class _NavigationRow extends StatelessWidget {
   const _NavigationRow({
+    super.key,
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -1242,6 +1276,7 @@ class _MobileDeviceGridPage extends StatefulWidget {
     required this.controller,
     required this.emptyMessage,
     this.hideAreaName = false,
+    this.areaId,
     this.onCanonicalDeviceChanged,
   });
 
@@ -1267,6 +1302,7 @@ class _MobileDeviceGridPage extends StatefulWidget {
       controller: controller,
       emptyMessage: 'No hay dispositivos asignados a ${area.name}.',
       hideAreaName: true,
+      areaId: area.id,
       onCanonicalDeviceChanged: onCanonicalDeviceChanged,
     );
   }
@@ -1300,6 +1336,10 @@ class _MobileDeviceGridPage extends StatefulWidget {
   final AdaptiveFeatureController controller;
   final String emptyMessage;
   final bool hideAreaName;
+
+  /// Effective area this grid is showing (only set by [forArea]): the
+  /// 'Controles' section renders the channels that command this room.
+  final String? areaId;
   final ValueChanged<PhysicalDevice>? onCanonicalDeviceChanged;
 
   @override
@@ -1476,6 +1516,14 @@ class _MobileDeviceGridPageState extends State<_MobileDeviceGridPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Channels that command this room (endpoint effective area wins). The
+    // section is additive: the device cards below stay the identity surface.
+    final areaId = widget.areaId;
+    final areaChannels = areaId == null
+        ? const <PowerChannel>[]
+        : powerChannelsOf(
+            _devices,
+          ).where((channel) => powerChannelAreaId(channel) == areaId).toList();
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
@@ -1511,6 +1559,51 @@ class _MobileDeviceGridPageState extends State<_MobileDeviceGridPage> {
                       ),
                     ),
                   ),
+                  if (areaChannels.isNotEmpty) ...[
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 10),
+                        child: Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'Controles',
+                                style: TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.text,
+                                ),
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEFF6FF),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                '${areaChannels.length}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.accent,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    _ChannelTileGrid(
+                      channels: areaChannels,
+                      repository: widget.repository,
+                      controller: widget.controller,
+                    ),
+                    const SliverToBoxAdapter(child: SizedBox(height: 20)),
+                  ],
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
                     sliver: SliverGrid(
@@ -1545,6 +1638,618 @@ class _MobileDeviceGridPageState extends State<_MobileDeviceGridPage> {
                   ),
                 ],
               ),
+      ),
+    );
+  }
+}
+
+/// Full-screen 'Controles' view: every power channel of the active inventory,
+/// grouped by effective area. Tapping a tile toggles exactly that channel;
+/// long-press opens the channel actions. Tiles are additive to the device
+/// cards — the device stays the identity surface.
+class _MobileControlsPage extends StatelessWidget {
+  const _MobileControlsPage({
+    required this.snapshot,
+    required this.repository,
+    required this.controller,
+  });
+
+  final DeviceInventorySnapshot snapshot;
+  final DeviceInventoryRepository repository;
+  final AdaptiveFeatureController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = controller.snapshot ?? snapshot;
+    final channels = powerChannelsOf(current.activeDevices);
+    final groups = groupPowerChannels(channels, current.areas);
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      appBar: AppBar(
+        backgroundColor: AppColors.bg,
+        surfaceTintColor: Colors.transparent,
+        title: const Text('Controles'),
+      ),
+      body: SafeArea(
+        top: false,
+        child: channels.isEmpty
+            ? const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'Todavía no hay controles.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppColors.textDim),
+                  ),
+                ),
+              )
+            : CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  for (final group in groups) ...[
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                group.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.text,
+                                ),
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEFF6FF),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                '${group.channels.length}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.accent,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    _ChannelTileGrid(
+                      channels: group.channels,
+                      repository: repository,
+                      controller: controller,
+                    ),
+                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                  ],
+                  const SliverToBoxAdapter(child: SizedBox(height: 16)),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+/// Sliver grid of compact channel tiles sharing one per-channel busy/override
+/// state. Used by the area-view section and the full 'Controles' page.
+class _ChannelTileGrid extends StatefulWidget {
+  const _ChannelTileGrid({
+    required this.channels,
+    required this.repository,
+    required this.controller,
+  });
+
+  final List<PowerChannel> channels;
+  final DeviceInventoryRepository repository;
+  final AdaptiveFeatureController controller;
+
+  @override
+  State<_ChannelTileGrid> createState() => _ChannelTileGridState();
+}
+
+class _ChannelTileGridState extends State<_ChannelTileGrid> {
+  /// In-flight toggles, keyed by device/endpoint.
+  final Set<String> _busy = {};
+
+  /// Local fallback used only when the repository has no command support
+  /// (plain test fakes); production always takes the canonical path.
+  final Map<String, PowerDisplayState> _overrides = {};
+  bool _renaming = false;
+
+  bool get _commandsAvailable =>
+      asDeviceCommandRepository(widget.repository) != null;
+
+  /// Identify is offered only when the repository can actually run it: the
+  /// legacy contract flag or the segregated command layer.
+  bool get _identifyAvailable =>
+      widget.repository.supportsIdentify ||
+      asDeviceCommandRepository(widget.repository) != null;
+
+  String _key(String deviceId, String endpointId) => '$deviceId/$endpointId';
+
+  /// Newest canonical device for [id] so confirmed observations and renames
+  /// converge without waiting for the parent list to refresh.
+  PhysicalDevice _freshDevice(String id, PhysicalDevice fallback) {
+    final snapshot = widget.controller.snapshot;
+    if (snapshot == null) return fallback;
+    for (final device in snapshot.devices) {
+      if (device.id == id) return device;
+    }
+    return fallback;
+  }
+
+  DeviceEndpoint _freshEndpoint(
+    PhysicalDevice device,
+    DeviceEndpoint fallback,
+  ) {
+    for (final endpoint in device.endpoints) {
+      if (endpoint.id == fallback.id) return endpoint;
+    }
+    return fallback;
+  }
+
+  /// Honest display state for one channel: command surfaces trust confirmed
+  /// observations; plain fakes keep the legacy `powerOn ?? online` projection.
+  PowerDisplayState _displayState(
+    PhysicalDevice device,
+    DeviceEndpoint endpoint,
+  ) {
+    final override = _overrides[_key(device.id, endpoint.id)];
+    if (override != null) return override;
+    if (!_commandsAvailable) {
+      return (device.powerOn ?? device.online)
+          ? PowerDisplayState.on
+          : PowerDisplayState.off;
+    }
+    return endpointPowerDisplayState(endpoint);
+  }
+
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF374151),
+        duration: const Duration(seconds: 2),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      ),
+    );
+  }
+
+  /// Tap = toggle this channel (unknown turns on). The command merges a
+  /// confirmed observation into the shared controller; the honest outcome
+  /// drives the notice. Plain fakes keep the legacy local toggle.
+  Future<void> _toggle(PhysicalDevice device, DeviceEndpoint endpoint) async {
+    final key = _key(device.id, endpoint.id);
+    if (_busy.contains(key)) return;
+    final state = _displayState(device, endpoint);
+    final value = state != PowerDisplayState.on;
+    final name = endpointChannelName(endpoint);
+    if (!_commandsAvailable) {
+      setState(() {
+        _overrides[key] = value ? PowerDisplayState.on : PowerDisplayState.off;
+      });
+      _showSnack('$name — ${value ? 'Encendido' : 'Apagado'}');
+      return;
+    }
+    setState(() => _busy.add(key));
+    try {
+      final result = await widget.controller.setEndpointPower(
+        device.id,
+        endpoint.id,
+        value,
+      );
+      if (!mounted) return;
+      _showSnack('$name — ${powerOutcomeMessage(result, requested: value)}');
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack(powerFailureMessage(error));
+    } finally {
+      if (mounted) setState(() => _busy.remove(key));
+    }
+  }
+
+  Future<void> _openSheet(
+    PhysicalDevice device,
+    DeviceEndpoint endpoint,
+  ) async {
+    final action = await _showChannelQuickSheet(
+      context: context,
+      device: device,
+      endpoint: endpoint,
+      state: _displayState(device, endpoint),
+      canIdentify: _identifyAvailable,
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _ChannelQuickAction.open:
+        await _openDetail(device);
+      case _ChannelQuickAction.rename:
+        await _rename(device, endpoint);
+      case _ChannelQuickAction.identify:
+        await _identify(device, endpoint);
+    }
+  }
+
+  Future<void> _openDetail(PhysicalDevice device) async {
+    final fresh = _freshDevice(device.id, device);
+    final snapshot = widget.controller.snapshot;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _DeviceDetailPage(
+          device: fresh,
+          areas: snapshot?.areas ?? const <HomeArea>[],
+          gateways: snapshot?.gateways ?? const <GatewayInfo>[],
+          repository: widget.repository,
+          onCanonicalDeviceChanged: widget.controller.applyCanonicalDevice,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _rename(PhysicalDevice device, DeviceEndpoint endpoint) async {
+    if (_renaming) return;
+    setState(() => _renaming = true);
+    try {
+      final result = await showDialog<_RenameResult>(
+        context: context,
+        builder: (_) => _RenameDialog(
+          title: 'Cambiar nombre del canal',
+          initialName: endpoint.userName,
+          fallbackName: endpoint.displayName,
+          canReset: endpoint.userName != null,
+        ),
+      );
+      if (result is _RenameCancelled || result == null) return;
+      final userName = switch (result) {
+        _RenameSet(:final name) => name,
+        _RenameClear() => null,
+        _RenameCancelled() => null,
+      };
+      final updated = await widget.repository.renameEndpoint(
+        device.id,
+        endpoint.id,
+        userName,
+      );
+      if (!mounted) return;
+      widget.controller.applyCanonicalDevice(updated);
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack(deviceMutationErrorMessage(error));
+    } finally {
+      if (mounted) setState(() => _renaming = false);
+    }
+  }
+
+  Future<void> _identify(PhysicalDevice device, DeviceEndpoint endpoint) async {
+    try {
+      final result = await identifyDeviceWithFallback(
+        widget.repository,
+        device.id,
+        endpointId: endpoint.id,
+      );
+      if (!mounted) return;
+      if (!result.supported) {
+        _showSnack(identifyUnsupportedMessage(result));
+        return;
+      }
+      _showSnack(
+        'Se envió la orden de identificación a '
+        '${endpointChannelName(endpoint)}.',
+      );
+    } on UnsupportedError {
+      if (!mounted) return;
+      _showSnack('Orden de identificación enviada (simulada)');
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack('No se pudo identificar: $error');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (context, _) => SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+        sliver: SliverGrid(
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            childAspectRatio: 1.45,
+          ),
+          delegate: SliverChildBuilderDelegate((context, index) {
+            final channel = widget.channels[index];
+            final device = _freshDevice(channel.device.id, channel.device);
+            final endpoint = _freshEndpoint(device, channel.endpoint);
+            final state = _displayState(device, endpoint);
+            final key = _key(device.id, endpoint.id);
+            return _MobileChannelTile(
+              key: ValueKey('mobile-channel-${device.id}-${endpoint.id}'),
+              name: endpointChannelName(endpoint),
+              icon: iosKindIcon(endpoint.kind),
+              state: state,
+              busy: _busy.contains(key),
+              onTap: () => _toggle(device, endpoint),
+              onLongPress: () => _openSheet(device, endpoint),
+            );
+          }, childCount: widget.channels.length),
+        ),
+      ),
+    );
+  }
+}
+
+/// Resultado del menú secundario de un tile de canal.
+enum _ChannelQuickAction { open, rename, identify }
+
+/// Channel actions sheet: open the device detail, rename the channel, and
+/// identify it only when the repository can actually run it.
+Future<_ChannelQuickAction?> _showChannelQuickSheet({
+  required BuildContext context,
+  required PhysicalDevice device,
+  required DeviceEndpoint endpoint,
+  required PowerDisplayState state,
+  required bool canIdentify,
+}) {
+  final name = endpointChannelName(endpoint);
+  final deviceName = device.userName ?? device.name;
+  final stateColor = switch (state) {
+    PowerDisplayState.on => AppColors.statusEncendido,
+    PowerDisplayState.off => AppColors.statusApagado,
+    PowerDisplayState.unknown => AppColors.textFaint,
+  };
+  return showModalBottomSheet<_ChannelQuickAction>(
+    context: context,
+    backgroundColor: AppColors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE5E7EB),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppColors.accentTint,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(
+                    iosKindIcon(endpoint.kind),
+                    size: 22,
+                    color: AppColors.accent,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: stateColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            endpointPowerLabel(state),
+                            style: const TextStyle(
+                              color: AppColors.textDim,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              deviceName,
+              style: const TextStyle(color: AppColors.textFaint, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1, color: Color(0xFFF1F3F6)),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                CupertinoIcons.device_phone_portrait,
+                color: AppColors.accent,
+              ),
+              title: const Text('Ver dispositivo'),
+              subtitle: const Text('Estado, conexión y configuración.'),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_ChannelQuickAction.open),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                CupertinoIcons.pencil_outline,
+                color: AppColors.accent,
+              ),
+              title: const Text('Renombrar canal'),
+              subtitle: const Text('Poné un nombre para reconocerlo.'),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_ChannelQuickAction.rename),
+            ),
+            if (canIdentify)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  CupertinoIcons.antenna_radiowaves_left_right,
+                  color: AppColors.accent,
+                ),
+                title: const Text('Identificar'),
+                subtitle: const Text(
+                  'Parpadea una luz o activa un LED según el adaptador.',
+                ),
+                onTap: () => Navigator.of(
+                  sheetContext,
+                ).pop(_ChannelQuickAction.identify),
+              ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// Compact mobile channel tile: kind icon, channel name and honest state
+/// (color + text). Tap toggles the channel; long-press opens its actions.
+/// The grid keeps every tile at a comfortable >= 48dp target.
+class _MobileChannelTile extends StatelessWidget {
+  const _MobileChannelTile({
+    super.key,
+    required this.name,
+    required this.icon,
+    required this.state,
+    required this.busy,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final String name;
+  final IconData icon;
+  final PowerDisplayState state;
+  final bool busy;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (state) {
+      PowerDisplayState.on => AppColors.statusEncendido,
+      PowerDisplayState.off => AppColors.statusApagado,
+      PowerDisplayState.unknown => AppColors.textFaint,
+    };
+    final label = endpointPowerLabel(state);
+    return Semantics(
+      button: true,
+      enabled: !busy,
+      label: '$name, $label',
+      onLongPressHint: 'Mostrar más opciones',
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: busy ? null : onTap,
+          onLongPress: busy ? null : onLongPress,
+          borderRadius: BorderRadius.circular(16),
+          child: Ink(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFF1F3F6)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F5F8),
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: busy
+                      ? const Padding(
+                          padding: EdgeInsets.all(8),
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(icon, size: 18, color: AppColors.textDim),
+                ),
+                const Spacer(),
+                Text(
+                  name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13.5,
+                    height: 1.2,
+                    color: AppColors.text,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    Expanded(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
