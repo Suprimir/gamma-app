@@ -1257,8 +1257,9 @@ class _WallMusicCardState extends State<_WallMusicCard> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
       decoration: BoxDecoration(
-        color: const Color(0xFF141826),
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppColors.border),
       ),
       child: ListenableBuilder(
         listenable: _spotify,
@@ -1281,7 +1282,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white24,
+                    color: AppColors.borderStrong,
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: const Text(
@@ -1289,7 +1290,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: Colors.white,
+                      color: AppColors.text,
                     ),
                   ),
                 ),
@@ -1299,7 +1300,10 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                       ? 'Autorizá GAMMA en Spotify y se conecta sola.'
                       : 'Conectá tu cuenta para ver tu música acá.',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 13, color: Colors.white70),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppColors.textDim,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 FilledButton.icon(
@@ -1328,7 +1332,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 12,
-                      color: Colors.redAccent,
+                      color: AppColors.errorRed,
                     ),
                   ),
                   TextButton(
@@ -1341,7 +1345,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                 const Text(
                   'Sin reproducción',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 15, color: Colors.white70),
+                  style: TextStyle(fontSize: 15, color: AppColors.textDim),
                 ),
                 if (_spotify.error != null) ...[
                   const SizedBox(height: 8),
@@ -1350,7 +1354,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 12,
-                      color: Colors.redAccent,
+                      color: AppColors.errorRed,
                     ),
                   ),
                   TextButton(
@@ -1364,7 +1368,10 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                 Text(
                   _error!,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 12, color: Colors.redAccent),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.errorRed,
+                  ),
                 ),
                 TextButton(
                   onPressed: _loadStatus,
@@ -1391,7 +1398,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
       return const Text(
         'Sin reproducción',
         textAlign: TextAlign.center,
-        style: TextStyle(fontSize: 15, color: Colors.white70),
+        style: TextStyle(fontSize: 15, color: AppColors.textDim),
       );
     }
     final name = track['name']?.toString();
@@ -1404,11 +1411,11 @@ class _WallMusicCardState extends State<_WallMusicCard> {
     final imageUrl = track['image_url']?.toString();
     final hasImage = imageUrl != null && imageUrl.isNotEmpty;
     Widget artworkFallback() => Container(
-      color: const Color(0xFF262B3D),
+      color: AppColors.surfaceRaised,
       child: const Icon(
         Icons.music_note_rounded,
         size: 40,
-        color: Colors.white54,
+        color: AppColors.textFaint,
       ),
     );
     return Row(
@@ -1441,7 +1448,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                 style: const TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
-                  color: Colors.white,
+                  color: AppColors.text,
                 ),
               ),
               if (subtitle.isNotEmpty) ...[
@@ -1450,7 +1457,10 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                   subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 14, color: Colors.white70),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: AppColors.textDim,
+                  ),
                 ),
               ],
             ],
@@ -1494,9 +1504,9 @@ class _WallMusicCardState extends State<_WallMusicCard> {
             child: SliderTheme(
               data: SliderTheme.of(context).copyWith(
                 trackHeight: 8,
-                activeTrackColor: const Color(0xFF4ADE80),
-                inactiveTrackColor: Colors.white24,
-                thumbColor: const Color(0xFF4ADE80),
+                activeTrackColor: AppColors.accent,
+                inactiveTrackColor: AppColors.border,
+                thumbColor: AppColors.accent,
                 // 24px visual thumb with a 48px overlay/hit region.
                 thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 12),
                 overlayShape: const RoundSliderOverlayShape(overlayRadius: 24),
@@ -1518,7 +1528,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
           const SizedBox(width: 10),
           Text(
             '${_formatPlaybackTime(position)} / ${_formatPlaybackTime(duration)}',
-            style: const TextStyle(fontSize: 15, color: Colors.white70),
+            style: const TextStyle(fontSize: 15, color: AppColors.textDim),
           ),
         ],
       ),
@@ -1538,15 +1548,15 @@ class _WallMusicCardState extends State<_WallMusicCard> {
               child: LinearProgressIndicator(
                 value: duration <= 0 ? 0 : position / duration,
                 minHeight: 8,
-                backgroundColor: Colors.white24,
-                color: const Color(0xFF4ADE80),
+                backgroundColor: AppColors.accentTint,
+                color: AppColors.accent,
               ),
             ),
           ),
           const SizedBox(width: 10),
           Text(
             '${_formatPlaybackTime(position)} / ${_formatPlaybackTime(duration)}',
-            style: const TextStyle(fontSize: 15, color: Colors.white70),
+            style: const TextStyle(fontSize: 15, color: AppColors.textDim),
           ),
         ],
       ),
@@ -1571,7 +1581,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
               const Icon(
                 Icons.queue_music_rounded,
                 size: 20,
-                color: Colors.white54,
+                color: AppColors.textFaint,
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -1579,7 +1589,10 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                   'A continuación · ${_formatUpNextItem(upcoming.first)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 15, color: Colors.white70),
+                  style: const TextStyle(
+                    fontSize: 15,
+                    color: AppColors.textDim,
+                  ),
                 ),
               ),
             ],
@@ -1601,13 +1614,11 @@ class _WallMusicCardState extends State<_WallMusicCard> {
       onPressed: enabled ? onPressed : null,
       iconSize: primary ? 38 : 32,
       icon: Icon(icon),
-      color: primary ? const Color(0xFF141826) : Colors.white,
-      disabledColor: Colors.white24,
+      color: primary ? Colors.white : AppColors.accent,
+      disabledColor: AppColors.textFaint,
       style: IconButton.styleFrom(
-        backgroundColor: primary
-            ? const Color(0xFF1ED760)
-            : Colors.white.withValues(alpha: 0.10),
-        disabledBackgroundColor: Colors.white10,
+        backgroundColor: primary ? AppColors.accent : AppColors.accentTint,
+        disabledBackgroundColor: AppColors.surfaceRaised,
         padding: const EdgeInsets.all(14),
       ),
     );
@@ -1670,8 +1681,8 @@ class _WallMusicCardState extends State<_WallMusicCard> {
       tooltip: volumeUnsupported ? spotifyVolumeUnsupportedTooltip : 'Volumen',
       onPressed: volumeUnsupported ? null : _openVolumeSheet,
       iconSize: 28,
-      color: Colors.white,
-      disabledColor: Colors.white24,
+      color: AppColors.text,
+      disabledColor: AppColors.textFaint,
       icon: Icon(muted ? Icons.volume_off_rounded : Icons.volume_up_rounded),
     );
   }
@@ -1707,7 +1718,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
       tooltip: empty ? 'Sin dispositivo activo' : 'Elegir dispositivo',
       onPressed: _pickDevice,
       iconSize: 28,
-      color: Colors.white,
+      color: AppColors.text,
       icon: Icon(empty ? Icons.speaker_outlined : Icons.speaker_rounded),
     );
   }
@@ -1716,7 +1727,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
   Future<void> _openVolumeSheet() {
     return showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF1B2030),
+      backgroundColor: AppColors.surface,
       builder: (sheetContext) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 36),
@@ -1730,7 +1741,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
-                    color: Colors.white,
+                    color: AppColors.text,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -1748,7 +1759,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
   Future<void> _openQueueSheet() {
     return showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF1B2030),
+      backgroundColor: AppColors.surface,
       builder: (sheetContext) => SafeArea(
         child: SingleChildScrollView(
           child: ListenableBuilder(
@@ -1768,7 +1779,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w700,
-                          color: Colors.white,
+                          color: AppColors.text,
                         ),
                       ),
                     ),
@@ -1776,7 +1787,10 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                     if (upcoming.isEmpty)
                       const Text(
                         'No hay elementos en la cola.',
-                        style: TextStyle(fontSize: 15, color: Colors.white70),
+                        style: TextStyle(
+                          fontSize: 15,
+                          color: AppColors.textDim,
+                        ),
                       )
                     else
                       for (final item in upcoming) _queueRow(item),
@@ -1787,7 +1801,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                         style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w700,
-                          color: Colors.white,
+                          color: AppColors.text,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -1811,7 +1825,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
           const Icon(
             Icons.queue_music_rounded,
             size: 20,
-            color: Colors.white54,
+            color: AppColors.textFaint,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -1819,7 +1833,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
               _formatQueueItem(item),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 15, color: Colors.white70),
+              style: const TextStyle(fontSize: 15, color: AppColors.textDim),
             ),
           ),
         ],
@@ -1833,7 +1847,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
   Future<void> _pickDevice() async {
     final choice = await showModalBottomSheet<String>(
       context: context,
-      backgroundColor: const Color(0xFF1B2030),
+      backgroundColor: AppColors.surface,
       builder: (sheetContext) {
         final activeId = _spotify.activeDevice?['id'];
         return SafeArea(
@@ -1845,7 +1859,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                   title: Text(
                     'Reproducir en',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: AppColors.text,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -1853,19 +1867,19 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                 ListTile(
                   leading: const Icon(
                     Icons.auto_awesome,
-                    color: Colors.white70,
+                    color: AppColors.textDim,
                   ),
                   title: const Text(
                     'Automático',
-                    style: TextStyle(color: Colors.white),
+                    style: TextStyle(color: AppColors.text),
                   ),
                   subtitle: const Text(
                     'GAMMA elige el dispositivo activo',
-                    style: TextStyle(color: Colors.white54),
+                    style: TextStyle(color: AppColors.textFaint),
                   ),
                   trailing:
                       _spotify.selectedDeviceId == null && activeId != null
-                      ? const Icon(Icons.check, color: Color(0xFF4ADE80))
+                      ? Icon(Icons.check, color: AppColors.accent)
                       : null,
                   onTap: () => Navigator.pop(sheetContext, ''),
                 ),
@@ -1875,7 +1889,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                       device['is_active'] == true
                           ? Icons.speaker
                           : Icons.speaker_outlined,
-                      color: Colors.white70,
+                      color: AppColors.textDim,
                     ),
                     title: Text(
                       device['name']?.toString() ??
@@ -1883,16 +1897,16 @@ class _WallMusicCardState extends State<_WallMusicCard> {
                           'Dispositivo',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white),
+                      style: const TextStyle(color: AppColors.text),
                     ),
                     subtitle: device['is_default'] == true
                         ? const Text(
                             'Predeterminado',
-                            style: TextStyle(color: Colors.white54),
+                            style: TextStyle(color: AppColors.textFaint),
                           )
                         : null,
                     trailing: device['id'] == activeId
-                        ? const Icon(Icons.check, color: Color(0xFF4ADE80))
+                        ? Icon(Icons.check, color: AppColors.accent)
                         : null,
                     onTap: () =>
                         Navigator.pop(sheetContext, device['id']?.toString()),
@@ -1943,14 +1957,14 @@ class _WallVolumeSliderState extends State<_WallVolumeSlider> {
       children: [
         Row(
           children: [
-            const Icon(Icons.volume_down_rounded, color: Colors.white70),
+            const Icon(Icons.volume_down_rounded, color: AppColors.textDim),
             Expanded(
               child: Slider(
                 key: const ValueKey('wall-spotify-volume-slider'),
                 value: value,
                 max: 100,
-                activeColor: const Color(0xFF4ADE80),
-                inactiveColor: Colors.white24,
+                activeColor: AppColors.accent,
+                inactiveColor: AppColors.border,
                 onChanged: widget.enabled
                     ? (v) => setState(() => _drag = v)
                     : null,
@@ -1967,7 +1981,7 @@ class _WallVolumeSliderState extends State<_WallVolumeSlider> {
               child: Text(
                 '${value.round()}%',
                 textAlign: TextAlign.end,
-                style: const TextStyle(fontSize: 13, color: Colors.white70),
+                style: const TextStyle(fontSize: 13, color: AppColors.textDim),
               ),
             ),
           ],
@@ -1980,7 +1994,7 @@ class _WallVolumeSliderState extends State<_WallVolumeSlider> {
             style: const TextStyle(
               fontSize: 13,
               height: 1.3,
-              color: Colors.white70,
+              color: AppColors.textFaint,
             ),
           ),
         ],

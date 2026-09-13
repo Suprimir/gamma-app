@@ -257,7 +257,7 @@ void main() {
     );
     expect(button.onPressed, isNull);
     expect(button.tooltip, spotifyVolumeUnsupportedTooltip);
-    expect(button.disabledColor, Colors.white24);
+    expect(button.disabledColor, AppColors.textFaint);
 
     // Tapping the disabled trigger must not open the volume sheet.
     await tester.tap(find.byKey(const ValueKey('wall-spotify-volume')));
