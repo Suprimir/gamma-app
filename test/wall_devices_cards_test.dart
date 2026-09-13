@@ -532,6 +532,104 @@ void main() {
     );
   });
 
+  testWidgets('wall channel switch commands only relay_2 and converges', (
+    tester,
+  ) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_wallObservedTriple],
+      areas: const [
+        HomeArea(id: 'sala', name: 'Sala'),
+        HomeArea(id: 'comedor', name: 'Comedor'),
+        HomeArea(id: 'patio', name: 'Patio'),
+        HomeArea(id: 'pasillo', name: 'Pasillo'),
+      ],
+    );
+    await pumpWall(tester, repo);
+
+    await tester.tap(
+      find.byKey(const ValueKey('wall-device-dev_observed_triple_01')),
+    );
+    await tester.pumpAndSettle();
+
+    final relay2 = wallEndpointEditor('Canal 2');
+    final switchFinder = find.descendant(
+      of: relay2,
+      matching: find.byType(Switch),
+    );
+    await tester.ensureVisible(switchFinder);
+    await tester.pumpAndSettle();
+    // relay_2 has a confirmed off observation: the switch starts off.
+    expect(tester.widget<Switch>(switchFinder).value, isFalse);
+
+    await tester.tap(switchFinder);
+    await tester.pump();
+
+    expect(repo.powerCalls, [('dev_observed_triple_01', 'relay_2', true)]);
+    await tester.pumpAndSettle();
+
+    // The confirmed echo converges into the switch and the badge.
+    expect(tester.widget<Switch>(switchFinder).value, isTrue);
+    expect(
+      find.descendant(of: relay2, matching: find.text('Encendido')),
+      findsOneWidget,
+    );
+    // Siblings keep their own independent state.
+    expect(
+      find.descendant(
+        of: wallEndpointEditor('Canal 3'),
+        matching: find.text('Sin datos'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('wall channel switch surfaces writes-disabled without flipping', (
+    tester,
+  ) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_wallObservedTriple],
+      areas: const [
+        HomeArea(id: 'sala', name: 'Sala'),
+        HomeArea(id: 'comedor', name: 'Comedor'),
+        HomeArea(id: 'patio', name: 'Patio'),
+        HomeArea(id: 'pasillo', name: 'Pasillo'),
+      ],
+      powerResult: const EndpointPowerResult(
+        outcome: 'EXECUTION_DISABLED',
+        changed: false,
+      ),
+    );
+    await pumpWall(tester, repo);
+
+    await tester.tap(
+      find.byKey(const ValueKey('wall-device-dev_observed_triple_01')),
+    );
+    await tester.pumpAndSettle();
+
+    final relay2 = wallEndpointEditor('Canal 2');
+    final switchFinder = find.descendant(
+      of: relay2,
+      matching: find.byType(Switch),
+    );
+    await tester.ensureVisible(switchFinder);
+    await tester.pumpAndSettle();
+
+    await tester.tap(switchFinder);
+    await tester.pumpAndSettle();
+
+    expect(repo.powerCalls, [('dev_observed_triple_01', 'relay_2', true)]);
+    expect(
+      find.text('Escritura deshabilitada en el modo actual'),
+      findsOneWidget,
+    );
+    // No confirmed observation: the switch and the badge stay untouched.
+    expect(tester.widget<Switch>(switchFinder).value, isFalse);
+    expect(
+      find.descendant(of: relay2, matching: find.text('Apagado')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('wall detail explains pending credentials', (tester) async {
     final repo = CommandDeviceFakeRepo(devices: const [_wallPendingKeyLight]);
     await pumpWall(tester, repo);

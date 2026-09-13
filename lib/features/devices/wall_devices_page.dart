@@ -1478,6 +1478,10 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
   bool _identifying = false;
   bool _deleting = false;
 
+  /// Endpoint ids with an in-flight power command: only that channel's switch
+  /// is disabled while the command is running.
+  final Set<String> _powerBusyEndpoints = {};
+
   /// Related routines from `GET /api/v1/routines`, filtered by canonical
   /// action `device_id`. Null = unknown (still loading or fetch failed): the
   /// card shows '—', never a fabricated zero.
@@ -1630,8 +1634,19 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
       );
       return;
     }
+    await _setEndpointPower(endpoint, value);
+  }
+
+  /// Per-channel power command shared by the device-level button (first power
+  /// endpoint) and each channel switch: calls the canonical `set_power` and
+  /// converges a confirmed observation into the local canonical device. Only
+  /// the targeted channel's switch is disabled while the command is in
+  /// flight; the honest outcome drives the Spanish notice.
+  Future<void> _setEndpointPower(DeviceEndpoint endpoint, bool value) async {
+    if (_powerBusyEndpoints.contains(endpoint.id)) return;
     final commands = asDeviceCommandRepository(widget.repository);
     if (commands == null) return; // unreachable: guarded by _commandsAvailable
+    setState(() => _powerBusyEndpoints.add(endpoint.id));
     try {
       final result = await commands.setEndpointPower(
         _device.id,
@@ -1666,6 +1681,8 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(powerFailureMessage(error))));
+    } finally {
+      if (mounted) setState(() => _powerBusyEndpoints.remove(endpoint.id));
     }
   }
 
@@ -2236,6 +2253,15 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
                                   _device.endpoints[index].id,
                               showPowerState:
                                   powerEndpoints(_device).length > 1,
+                              powerBusy: _powerBusyEndpoints.contains(
+                                _device.endpoints[index].id,
+                              ),
+                              onPowerChanged: _commandsAvailable
+                                  ? (value) => _setEndpointPower(
+                                      _device.endpoints[index],
+                                      value,
+                                    )
+                                  : null,
                               onAreaChanged: (areaId) => _setEndpointArea(
                                 _device.endpoints[index],
                                 areaId,
@@ -3638,6 +3664,8 @@ class _WallEndpointEditor extends StatelessWidget {
     required this.onRename,
     this.onRoleChanged,
     this.showPowerState = false,
+    this.powerBusy = false,
+    this.onPowerChanged,
   });
 
   final DeviceEndpoint endpoint;
@@ -3651,6 +3679,14 @@ class _WallEndpointEditor extends StatelessWidget {
   /// per-control state shown (single-control devices already surface it in
   /// the device-level power card).
   final bool showPowerState;
+
+  /// Whether this channel's power command is in flight: disables only this
+  /// channel's switch.
+  final bool powerBusy;
+
+  /// Per-channel power command; null hides the switch (repository without
+  /// command support).
+  final ValueChanged<bool>? onPowerChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -3675,11 +3711,28 @@ class _WallEndpointEditor extends StatelessWidget {
                   ),
                   if (showPowerState && hasPowerCapability(endpoint)) ...[
                     const SizedBox(height: 3),
-                    EndpointPowerBadge(
-                      endpoint: endpoint,
-                      onColor: AppColors.green,
-                      offColor: AppColors.red,
-                      fontSize: 13,
+                    Row(
+                      children: [
+                        EndpointPowerBadge(
+                          endpoint: endpoint,
+                          onColor: AppColors.green,
+                          offColor: AppColors.red,
+                          fontSize: 13,
+                        ),
+                        if (onPowerChanged != null) ...[
+                          const Spacer(),
+                          Transform.scale(
+                            scale: 1.15,
+                            child: Switch(
+                              value:
+                                  endpointPowerDisplayState(endpoint) ==
+                                  PowerDisplayState.on,
+                              activeTrackColor: AppColors.green,
+                              onChanged: powerBusy ? null : onPowerChanged,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ],
                 ],

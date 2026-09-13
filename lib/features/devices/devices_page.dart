@@ -1871,6 +1871,10 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
   bool _savingPhysicalArea = false;
   bool _renaming = false;
 
+  /// Endpoint ids with an in-flight power command: only that channel's switch
+  /// is disabled while the command is running.
+  final Set<String> _powerBusyEndpoints = {};
+
   /// Last device reference the parent supplied. A parent update that reuses
   /// the same object (bare rebuild) must never clobber a just-committed local
   /// mutation; only a genuinely new reference (e.g. the canonical A' put back
@@ -2137,6 +2141,67 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
     }
   }
 
+  /// Per-channel power command: calls the canonical `set_power` for the
+  /// selected endpoint and merges a confirmed observation into the local
+  /// canonical device. The typed outcome drives the honest Spanish notice;
+  /// failures surface through [powerFailureMessage]. Only the targeted
+  /// channel's switch is disabled while the command is in flight.
+  Future<void> _setEndpointPower(DeviceEndpoint endpoint, bool value) async {
+    if (_powerBusyEndpoints.contains(endpoint.id)) return;
+    final commands = asDeviceCommandRepository(widget.repository);
+    if (commands == null) return;
+    setState(() => _powerBusyEndpoints.add(endpoint.id));
+    try {
+      final result = await commands.setEndpointPower(
+        _device.id,
+        endpoint.id,
+        value,
+      );
+      if (!mounted) return;
+      _applyEndpointPowerObservation(endpoint.id, result);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(powerOutcomeMessage(result, requested: value))),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(powerFailureMessage(error))));
+    } finally {
+      if (mounted) setState(() => _powerBusyEndpoints.remove(endpoint.id));
+    }
+  }
+
+  /// Merges the confirmed power observation of [result] into the local
+  /// canonical device and propagates it to the shared surface state. An
+  /// unparsed or unconfirmed answer changes nothing (never a fabricated
+  /// state).
+  void _applyEndpointPowerObservation(
+    String endpointId,
+    EndpointPowerResult result,
+  ) {
+    if (!result.responseParsed ||
+        result.observedPower == null ||
+        result.observedQuality == null) {
+      return;
+    }
+    final updated = _device.copyWith(
+      endpoints: [
+        for (final candidate in _device.endpoints)
+          if (candidate.id == endpointId)
+            candidate.copyWith(
+              observedPower: result.observedPower,
+              observedQuality: result.observedQuality,
+              observedAt: result.observedAt,
+            )
+          else
+            candidate,
+      ],
+    );
+    setState(() => _device = updated);
+    widget.onCanonicalDeviceChanged?.call(updated);
+  }
+
   @override
   Widget build(BuildContext context) {
     GatewayInfo? gateway;
@@ -2219,6 +2284,14 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
                   areas: widget.areas,
                   busy: _savingEndpoint == _device.endpoints[index].id,
                   showPowerState: powerEndpoints(_device).length > 1,
+                  powerBusy: _powerBusyEndpoints.contains(
+                    _device.endpoints[index].id,
+                  ),
+                  onPowerChanged:
+                      asDeviceCommandRepository(widget.repository) == null
+                      ? null
+                      : (value) =>
+                            _setEndpointPower(_device.endpoints[index], value),
                   onChanged: (areaId) =>
                       _setEndpointArea(_device.endpoints[index], areaId),
                   onIdentify: () =>
@@ -2845,6 +2918,8 @@ class _EndpointEditor extends StatelessWidget {
     this.onRoleChanged,
     this.onBindEntity,
     this.showPowerState = false,
+    this.powerBusy = false,
+    this.onPowerChanged,
   });
 
   final DeviceEndpoint endpoint;
@@ -2856,6 +2931,14 @@ class _EndpointEditor extends StatelessWidget {
   /// per-control state shown (single-control devices already surface it in
   /// the device-level control).
   final bool showPowerState;
+
+  /// Whether this channel's power command is in flight: disables only this
+  /// channel's switch.
+  final bool powerBusy;
+
+  /// Per-channel power command; null hides the switch (repository without
+  /// command support).
+  final ValueChanged<bool>? onPowerChanged;
 
   /// Always visible — when the repository does not support identify, the
   /// callback shows an informational SnackBar instead of being null.
@@ -2900,6 +2983,20 @@ class _EndpointEditor extends StatelessWidget {
                   if (showPowerState && hasPowerCapability(endpoint)) ...[
                     const SizedBox(height: 3),
                     EndpointPowerBadge(endpoint: endpoint),
+                    // The mobile channel column is narrow: the switch takes
+                    // its own right-aligned line instead of squeezing the
+                    // badge.
+                    if (onPowerChanged != null)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Switch(
+                          value:
+                              endpointPowerDisplayState(endpoint) ==
+                              PowerDisplayState.on,
+                          activeTrackColor: AppColors.accent,
+                          onChanged: powerBusy ? null : onPowerChanged,
+                        ),
+                      ),
                   ],
                 ],
               ),

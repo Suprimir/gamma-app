@@ -171,6 +171,10 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
   bool _testingConnection = false;
   bool _deleting = false;
   bool _savingEndpoint = false;
+
+  /// Endpoint ids with an in-flight power command: only that channel's switch
+  /// is disabled while the command is running.
+  final Set<String> _powerBusyEndpoints = {};
   OverlayEntry? _toastEntry;
   Timer? _toastTimer;
 
@@ -501,6 +505,34 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
     }
   }
 
+  /// Per-channel power command: calls the canonical `set_power` through the
+  /// controller, which merges a confirmed observation into the shared
+  /// snapshot (the pane rebuilds from it via [ListenableBuilder]). Only the
+  /// targeted channel's switch is disabled while the command is in flight.
+  Future<void> _setEndpointPower(DeviceEndpoint endpoint, bool value) async {
+    if (_powerBusyEndpoints.contains(endpoint.id)) return;
+    if (!_commandsAvailable) return;
+    setState(() => _powerBusyEndpoints.add(endpoint.id));
+    try {
+      final result = await widget.controller.setEndpointPower(
+        _canonical.id,
+        endpoint.id,
+        value,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(powerOutcomeMessage(result, requested: value))),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(powerFailureMessage(error))));
+    } finally {
+      if (mounted) setState(() => _powerBusyEndpoints.remove(endpoint.id));
+    }
+  }
+
   /// Wall parity: per-channel semantic role persists immediately when the
   /// repository supports it.
   Future<void> _setEndpointRole(DeviceEndpoint endpoint, String? role) async {
@@ -764,8 +796,11 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
                                       .controller
                                       .repository
                                       .supportsSemanticRole,
+                                  canCommandPower: _commandsAvailable,
+                                  powerBusyEndpointIds: _powerBusyEndpoints,
                                   onAreaChanged: _setEndpointArea,
                                   onRoleChanged: _setEndpointRole,
+                                  onPowerChanged: _setEndpointPower,
                                   onRename: _renameEndpoint,
                                 ),
                                 const SizedBox(height: 16),
@@ -1288,16 +1323,27 @@ class _ChannelEditors extends StatelessWidget {
     required this.device,
     required this.areas,
     required this.supportsRoles,
+    required this.canCommandPower,
+    required this.powerBusyEndpointIds,
     required this.onAreaChanged,
     required this.onRoleChanged,
+    required this.onPowerChanged,
     required this.onRename,
   });
 
   final PhysicalDevice device;
   final List<HomeArea> areas;
   final bool supportsRoles;
+
+  /// Whether the repository exposes canonical commands: without them no
+  /// per-channel power switch is offered.
+  final bool canCommandPower;
+
+  /// Endpoint ids whose power command is currently in flight.
+  final Set<String> powerBusyEndpointIds;
   final void Function(DeviceEndpoint endpoint, String? areaId) onAreaChanged;
   final void Function(DeviceEndpoint endpoint, String? role) onRoleChanged;
+  final void Function(DeviceEndpoint endpoint, bool value) onPowerChanged;
   final void Function(DeviceEndpoint endpoint) onRename;
 
   static const _roleOptions = <String, String>{
@@ -1338,9 +1384,13 @@ class _ChannelEditors extends StatelessWidget {
             areas: areas,
             supportsRoles: supportsRoles,
             showPowerState: powerEndpoints(device).length > 1,
+            powerBusy: powerBusyEndpointIds.contains(endpoints[i].id),
             roleOptions: _roleOptions,
             onAreaChanged: (areaId) => onAreaChanged(endpoints[i], areaId),
             onRoleChanged: (role) => onRoleChanged(endpoints[i], role),
+            onPowerChanged: canCommandPower
+                ? (value) => onPowerChanged(endpoints[i], value)
+                : null,
             onRename: () => onRename(endpoints[i]),
           ),
         ],
@@ -1361,6 +1411,8 @@ class _EndpointEditor extends StatelessWidget {
     required this.onRoleChanged,
     required this.onRename,
     this.showPowerState = false,
+    this.powerBusy = false,
+    this.onPowerChanged,
   });
 
   final DeviceEndpoint endpoint;
@@ -1375,6 +1427,14 @@ class _EndpointEditor extends StatelessWidget {
   /// per-control state shown (single-control devices already surface it in
   /// the header switch).
   final bool showPowerState;
+
+  /// Whether this channel's power command is in flight: disables only this
+  /// channel's switch.
+  final bool powerBusy;
+
+  /// Per-channel power command; null hides the switch (repository without
+  /// command support).
+  final ValueChanged<bool>? onPowerChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1425,6 +1485,21 @@ class _EndpointEditor extends StatelessWidget {
                 ],
               ),
             ),
+            if (showPowerState &&
+                hasPowerCapability(endpoint) &&
+                onPowerChanged != null) ...[
+              Transform.scale(
+                scale: 1.1,
+                child: Switch(
+                  value:
+                      endpointPowerDisplayState(endpoint) ==
+                      PowerDisplayState.on,
+                  activeTrackColor: AppColors.gammaIndigo,
+                  onChanged: powerBusy ? null : onPowerChanged,
+                ),
+              ),
+              const SizedBox(width: 4),
+            ],
             IconButton(
               tooltip: 'Cambiar nombre del canal',
               visualDensity: VisualDensity.compact,

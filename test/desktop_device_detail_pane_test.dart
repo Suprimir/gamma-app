@@ -690,6 +690,94 @@ void main() {
       );
     });
 
+    testWidgets(
+      'channel power switch commands relay_2 and merges the observation',
+      (tester) async {
+        final repo = CommandDeviceFakeRepo(devices: const [_observedTriple]);
+        final controller = AdaptiveFeatureController(repo);
+        await controller.loadDevices();
+        controller.selectDevice('dev_observed_triple_01');
+        await pumpDetailWithController(
+          tester,
+          controller: controller,
+          deviceFrom: controller,
+        );
+
+        final relay2 = desktopEndpointEditor('Canal 2');
+        final switchFinder = find.descendant(
+          of: relay2,
+          matching: find.byType(Switch),
+        );
+        await tester.ensureVisible(switchFinder);
+        await tester.pumpAndSettle();
+        // relay_2 has a confirmed off observation: the switch starts off.
+        expect(tester.widget<Switch>(switchFinder).value, isFalse);
+
+        await tester.tap(switchFinder);
+        await tester.pump();
+
+        expect(repo.powerCalls, [('dev_observed_triple_01', 'relay_2', true)]);
+        await tester.pumpAndSettle();
+
+        // The controller merged the confirmed observation into the snapshot.
+        expect(tester.widget<Switch>(switchFinder).value, isTrue);
+        final merged = controller.snapshot!.devices
+            .firstWhere((d) => d.id == 'dev_observed_triple_01')
+            .endpoints
+            .firstWhere((e) => e.id == 'relay_2');
+        expect(merged.observedPower, isTrue);
+        expect(merged.observedQuality, 'confirmed');
+        expect(
+          find.descendant(of: relay2, matching: find.text('Encendido')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'channel power switch surfaces writes-disabled without flipping',
+      (tester) async {
+        final repo = CommandDeviceFakeRepo(
+          devices: const [_observedTriple],
+          powerResult: const EndpointPowerResult(
+            outcome: 'EXECUTION_DISABLED',
+            changed: false,
+          ),
+        );
+        final controller = AdaptiveFeatureController(repo);
+        await controller.loadDevices();
+        controller.selectDevice('dev_observed_triple_01');
+        await pumpDetailWithController(
+          tester,
+          controller: controller,
+          deviceFrom: controller,
+        );
+
+        final relay2 = desktopEndpointEditor('Canal 2');
+        final switchFinder = find.descendant(
+          of: relay2,
+          matching: find.byType(Switch),
+        );
+        await tester.ensureVisible(switchFinder);
+        await tester.pumpAndSettle();
+
+        await tester.tap(switchFinder);
+        await tester.pumpAndSettle();
+
+        expect(repo.powerCalls, [('dev_observed_triple_01', 'relay_2', true)]);
+        expect(
+          find.text('Escritura deshabilitada en el modo actual'),
+          findsOneWidget,
+        );
+        // No confirmed observation: the switch and the badge stay untouched.
+        expect(tester.widget<Switch>(switchFinder).value, isFalse);
+        expect(
+          find.descendant(of: relay2, matching: find.text('Apagado')),
+          findsOneWidget,
+        );
+      },
+    );
+
     testWidgets('header shows Sin credenciales when pending_key is true', (
       tester,
     ) async {

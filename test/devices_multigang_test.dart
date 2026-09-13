@@ -400,6 +400,114 @@ void main() {
     );
   });
 
+  testWidgets('mobile channel switch commands only relay_2 and converges', (
+    tester,
+  ) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_observedTriple],
+      areas: const [
+        HomeArea(id: 'pasillo', name: 'Pasillo'),
+        HomeArea(id: 'sala', name: 'Sala'),
+        HomeArea(id: 'comedor', name: 'Comedor'),
+        HomeArea(id: 'patio', name: 'Patio'),
+      ],
+    );
+    await pumpMobileDevicesWide(tester, repo);
+
+    await openMobileDetail(
+      tester,
+      areaName: 'Pasillo',
+      deviceName: 'Interruptor triple observado',
+    );
+
+    final relay2 = mobileEndpointEditor('Canal 2');
+    final switchFinder = find.descendant(
+      of: relay2,
+      matching: find.byType(Switch),
+    );
+    await tester.ensureVisible(switchFinder);
+    await tester.pumpAndSettle();
+    // relay_2 has a confirmed off observation: the switch starts off.
+    expect(tester.widget<Switch>(switchFinder).value, isFalse);
+
+    await tester.tap(switchFinder);
+    await tester.pump();
+
+    expect(repo.powerCalls, [('dev_triple_02', 'relay_2', true)]);
+    await tester.pumpAndSettle();
+
+    // The confirmed echo converges into the switch and the badge.
+    expect(tester.widget<Switch>(switchFinder).value, isTrue);
+    expect(
+      find.descendant(of: relay2, matching: find.text('Encendido')),
+      findsOneWidget,
+    );
+    // Siblings keep their own independent state.
+    expect(
+      find.descendant(
+        of: mobileEndpointEditor('Canal 1'),
+        matching: find.text('Encendido'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: mobileEndpointEditor('Canal 3'),
+        matching: find.text('Sin datos'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'mobile channel switch surfaces writes-disabled without flipping',
+    (tester) async {
+      final repo = CommandDeviceFakeRepo(
+        devices: const [_observedTriple],
+        areas: const [
+          HomeArea(id: 'pasillo', name: 'Pasillo'),
+          HomeArea(id: 'sala', name: 'Sala'),
+          HomeArea(id: 'comedor', name: 'Comedor'),
+          HomeArea(id: 'patio', name: 'Patio'),
+        ],
+        powerResult: const EndpointPowerResult(
+          outcome: 'EXECUTION_DISABLED',
+          changed: false,
+        ),
+      );
+      await pumpMobileDevicesWide(tester, repo);
+
+      await openMobileDetail(
+        tester,
+        areaName: 'Pasillo',
+        deviceName: 'Interruptor triple observado',
+      );
+
+      final relay2 = mobileEndpointEditor('Canal 2');
+      final switchFinder = find.descendant(
+        of: relay2,
+        matching: find.byType(Switch),
+      );
+      await tester.ensureVisible(switchFinder);
+      await tester.pumpAndSettle();
+
+      await tester.tap(switchFinder);
+      await tester.pumpAndSettle();
+
+      expect(repo.powerCalls, [('dev_triple_02', 'relay_2', true)]);
+      expect(
+        find.text('Escritura deshabilitada en el modo actual'),
+        findsOneWidget,
+      );
+      // No confirmed observation: the switch and the badge stay untouched.
+      expect(tester.widget<Switch>(switchFinder).value, isFalse);
+      expect(
+        find.descendant(of: relay2, matching: find.text('Apagado')),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('mobile detail explains pending credentials', (tester) async {
     final repo = CommandDeviceFakeRepo(
       devices: const [_pendingKeyLight],
