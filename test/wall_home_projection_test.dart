@@ -96,6 +96,45 @@ void main() {
     },
   );
 
+  test('offline pending devices never inflate attention', () async {
+    const onlinePending = PhysicalDevice(
+      id: 'dev_online_pending',
+      name: 'Interruptor',
+      kind: DeviceKind.switchController,
+      provider: 'Test',
+      providerDeviceId: 'on-1',
+      model: 'ON',
+      provisioningState: DeviceProvisioningState.enriched,
+      online: true,
+      health: DeviceHealthState.online,
+      endpoints: [],
+    );
+    const offlinePending = PhysicalDevice(
+      id: 'dev_offline_pending',
+      name: 'Interruptor viejo',
+      kind: DeviceKind.switchController,
+      provider: 'Test',
+      providerDeviceId: 'off-1',
+      model: 'OF',
+      provisioningState: DeviceProvisioningState.enriched,
+      online: false,
+      health: DeviceHealthState.offline,
+      endpoints: [],
+    );
+    final snapshot = DeviceInventorySnapshot(
+      areas: const [],
+      devices: const [onlinePending, offlinePending],
+      gateways: const [],
+      lastDiscoveryLabel: 'Ahora',
+    );
+
+    final wall = projectWallHome(snapshot);
+
+    // Only the online pending device counts; the offline one lives in the
+    // offline surface.
+    expect(wall.attentionCount, 1);
+  });
+
   test('empty snapshot projects empty areas and zero attention', () async {
     final wall = projectWallHome(
       const DeviceInventorySnapshot(

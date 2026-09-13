@@ -312,6 +312,18 @@ void main() {
       health: DeviceHealthState.unreachable,
       endpoints: [],
     );
+    const offlinePending = PhysicalDevice(
+      id: 'dev_offline_pending',
+      name: 'Interruptor apagado',
+      kind: DeviceKind.switchController,
+      provider: 'Test',
+      providerDeviceId: 'ofp-1',
+      model: 'OFP',
+      provisioningState: DeviceProvisioningState.enriched,
+      online: false,
+      health: DeviceHealthState.offline,
+      endpoints: [],
+    );
     const authErrorLight = PhysicalDevice(
       id: 'dev_auth_error',
       name: 'Luz',
@@ -374,6 +386,23 @@ void main() {
       expect(unassignedIds, ['dev_sw']);
       expect(unassignedIds, isNot(contains('dev_gw')));
       expect(unassignedIds, isNot(contains('dev_sensor')));
+    });
+
+    test('unassigned never counts offline pending devices', () {
+      final snapshot = DeviceInventorySnapshot(
+        areas: const [],
+        devices: const [switchController, offlinePending],
+        gateways: const [],
+        lastDiscoveryLabel: 'Ahora',
+      );
+
+      // The offline row lives in the offline surface, never in the pending
+      // count; the online pending sibling still counts.
+      expect(snapshot.unassigned.map((d) => d.id), ['dev_sw']);
+      expect(
+        snapshot.offlineDevices.map((d) => d.id),
+        contains('dev_offline_pending'),
+      );
     });
 
     test('userDevices excludes the gateway', () {

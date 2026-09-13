@@ -75,7 +75,11 @@ WallHomeSnapshot projectWallHome(DeviceInventorySnapshot snapshot) {
   ];
 
   final attentionCount = userDevices
-      .where((device) => device.needsConfiguration)
+      .where(
+        (device) =>
+            device.needsConfiguration &&
+            !DeviceInventorySnapshot.isOfflineDevice(device),
+      )
       .length;
 
   return WallHomeSnapshot(areas: areas, attentionCount: attentionCount);

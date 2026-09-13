@@ -2030,7 +2030,9 @@ class _MobileDevicesListPageState extends State<_MobileDevicesListPage> {
             if (!_matchesQuery(device, query)) return false;
             return switch (_filter) {
               _MobileDevicesFilter.all => true,
-              _MobileDevicesFilter.unconfigured => device.needsConfiguration,
+              _MobileDevicesFilter.unconfigured =>
+                device.needsConfiguration &&
+                    !DeviceInventorySnapshot.isOfflineDevice(device),
               _MobileDevicesFilter.unassigned => device.physicalAreaId == null,
               _MobileDevicesFilter.gateways => false,
             };

@@ -724,8 +724,14 @@ class DeviceInventorySnapshot {
   List<PhysicalDevice> get userDevices =>
       devices.where((d) => !d.isGateway).toList();
 
+  /// Pending configuration among ONLINE devices: offline rows never inflate
+  /// pending counts or lists — they live in the offline surfaces
+  /// (`offlineDevices`). The per-device [needsConfiguration] state stays
+  /// intact for labels.
   List<PhysicalDevice> get unassigned =>
-      userDevices.where((d) => d.needsConfiguration).toList();
+      userDevices
+          .where((d) => d.needsConfiguration && !isOfflineDevice(d))
+          .toList();
 
   /// True when the device is known to be not reachable right now.
   static bool isOfflineDevice(PhysicalDevice device) =>

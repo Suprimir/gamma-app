@@ -1638,7 +1638,9 @@ class _WallDeviceCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      device.needsConfiguration
+                      DeviceInventorySnapshot.isOfflineDevice(device)
+                          ? 'Sin acceso'
+                          : device.needsConfiguration
                           ? 'Sin configurar'
                           : 'Configurado',
                       style: const TextStyle(
