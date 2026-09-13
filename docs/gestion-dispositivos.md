@@ -129,6 +129,17 @@ Los canales con encendido se muestran como **tiles individuales**, además de
 - Con el gate cerrado responde honestamente; queda listo para la prueba real.
 - Referencia: NN/g #5 — reducir repetición con atajos.
 
+### Patrón F — Pestaña Dispositivos: Controles primero
+
+- La vista principal de "Dispositivos" son los **Controles** (tiles por canal).
+- La lista de dispositivos (plana, sin separación por área, seleccionable,
+  con estado de configuración por fila) y la lista de **Sin acceso** viven
+  detrás de **botones pequeños de ícono** en el encabezado.
+- En la lista de dispositivos: chips de filtro (Todos / Sin configurar / Sin
+  ubicación / Gateways), búsqueda por dispositivo/canal, **Buscar
+  dispositivos** (discovery) y "Agregar dispositivo".
+- Implementado: app `6820255`.
+
 ## 5. QoL propuesto (priorizado)
 
 | # | Mejora | Nota |
