@@ -261,22 +261,6 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
   /// fakes without commands keep the legacy local behavior untouched.
   bool get _commandsAvailable => widget.controller.supportsEndpointCommands;
 
-  /// Power display for the header switch: a buffered pending value wins; with
-  /// command support the honest device state decides (unknown is never shown
-  /// as a confident off); without command support the legacy
-  /// `pendingPower ?? powerOn ?? online` fallback stays.
-  PowerDisplayState _effectivePowerState(PhysicalDevice device) {
-    final pending = widget.controller.pendingPower;
-    if (!_commandsAvailable) {
-      final legacyOn = pending ?? device.powerOn ?? device.online;
-      return legacyOn ? PowerDisplayState.on : PowerDisplayState.off;
-    }
-    if (pending != null) {
-      return pending ? PowerDisplayState.on : PowerDisplayState.off;
-    }
-    return devicePowerDisplayState(device);
-  }
-
   /// Confirmed numeric observation for [capability] on the first writable
   /// endpoint; null when unknown (never a fabricated value).
   num? _confirmedCapabilityNumber(PhysicalDevice device, String capability) {
@@ -345,43 +329,6 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
 
   bool _isSensorFor(PhysicalDevice device) =>
       _effectiveType(device) == _typeSensor || device.isGateway;
-
-  /// Power switch applies instantly (it is a direct action, not a form
-  /// field): the list row and header dot converge at once. Any buffered
-  /// power value is cleared so a later Guardar does not re-apply it.
-  ///
-  /// With command support the canonical backend is called and success is
-  /// never fabricated; the legacy local `online/health` mutation is the
-  /// fallback for repositories without commands.
-  Future<void> _setPower(bool value) async {
-    if (!_commandsAvailable) {
-      widget.controller.applyCanonicalDevice(
-        _canonical.copyWith(
-          powerOn: value,
-          online: value,
-          health: value ? DeviceHealthState.online : DeviceHealthState.sleeping,
-        ),
-      );
-      widget.controller.markPendingPower(null);
-      return;
-    }
-    widget.controller.markPendingPower(null);
-    try {
-      final result = await widget.controller.setDevicePower(
-        _canonical.id,
-        value,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(powerOutcomeMessage(result, requested: value))),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(powerFailureMessage(error))));
-    }
-  }
 
   void _setType(String? type) {
     if (type == null) return;
@@ -750,8 +697,6 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
                 healthLabel: healthLabel,
                 sensorValue: device.sensorValue,
                 isSensor: _isSensorFor(device),
-                powerState: _effectivePowerState(device),
-                onPowerChanged: _setPower,
                 onRename: _renameDevice,
                 pendingKey: device.pendingKey == true,
               ),
@@ -1083,8 +1028,6 @@ class _Header extends StatelessWidget {
     required this.healthLabel,
     required this.sensorValue,
     required this.isSensor,
-    required this.powerState,
-    required this.onPowerChanged,
     required this.onRename,
     required this.pendingKey,
   });
@@ -1096,8 +1039,6 @@ class _Header extends StatelessWidget {
   final String healthLabel;
   final String? sensorValue;
   final bool isSensor;
-  final PowerDisplayState powerState;
-  final ValueChanged<bool> onPowerChanged;
   final VoidCallback onRename;
 
   /// Whether the provider still owes credentials (`pending_key == true`):
@@ -1190,24 +1131,7 @@ class _Header extends StatelessWidget {
                 fontWeight: FontWeight.w700,
               ),
             ),
-          )
-        else ...[
-          if (powerState == PowerDisplayState.unknown) ...[
-            const Text(
-              'Sin datos',
-              style: TextStyle(color: AppColors.textDim, fontSize: 12.5),
-            ),
-            const SizedBox(width: 8),
-          ],
-          Transform.scale(
-            scale: 1.2,
-            child: Switch(
-              value: powerState == PowerDisplayState.on,
-              activeTrackColor: AppColors.gammaIndigo,
-              onChanged: onPowerChanged,
-            ),
           ),
-        ],
       ],
     );
   }
@@ -1383,7 +1307,6 @@ class _ChannelEditors extends StatelessWidget {
             endpoint: endpoints[i],
             areas: areas,
             supportsRoles: supportsRoles,
-            showPowerState: powerEndpoints(device).length > 1,
             powerBusy: powerBusyEndpointIds.contains(endpoints[i].id),
             roleOptions: _roleOptions,
             onAreaChanged: (areaId) => onAreaChanged(endpoints[i], areaId),
@@ -1410,7 +1333,6 @@ class _EndpointEditor extends StatelessWidget {
     required this.onAreaChanged,
     required this.onRoleChanged,
     required this.onRename,
-    this.showPowerState = false,
     this.powerBusy = false,
     this.onPowerChanged,
   });
@@ -1422,11 +1344,6 @@ class _EndpointEditor extends StatelessWidget {
   final ValueChanged<String?> onAreaChanged;
   final ValueChanged<String?> onRoleChanged;
   final VoidCallback onRename;
-
-  /// Whether the device has more than one power endpoint: only then is the
-  /// per-control state shown (single-control devices already surface it in
-  /// the header switch).
-  final bool showPowerState;
 
   /// Whether this channel's power command is in flight: disables only this
   /// channel's switch.
@@ -1471,7 +1388,7 @@ class _EndpointEditor extends StatelessWidget {
                       fontSize: 11.5,
                     ),
                   ),
-                  if (showPowerState && hasPowerCapability(endpoint)) ...[
+                  if (hasPowerCapability(endpoint)) ...[
                     const SizedBox(height: 2),
                     EndpointPowerBadge(endpoint: endpoint),
                   ],
@@ -1489,9 +1406,7 @@ class _EndpointEditor extends StatelessWidget {
                 ],
               ),
             ),
-            if (showPowerState &&
-                hasPowerCapability(endpoint) &&
-                onPowerChanged != null) ...[
+            if (hasPowerCapability(endpoint) && onPowerChanged != null) ...[
               Transform.scale(
                 scale: 1.1,
                 child: Switch(

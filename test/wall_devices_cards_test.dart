@@ -206,13 +206,37 @@ void main() {
     await tester.tap(find.text('Luz sala'));
     await tester.pumpAndSettle();
     expect(find.text('Configurar dispositivo'), findsOneWidget);
-    expect(find.text('Sin datos'), findsOneWidget);
 
-    await tester.tap(find.text('Encender'));
+    // Single-channel devices keep their control as a per-channel row: no
+    // device-level button exists on any device.
+    expect(find.text('Encender'), findsNothing);
+    expect(find.text('Apagar'), findsNothing);
+    expect(find.byType(Switch), findsOneWidget);
+    final row = wallChannelControl('light');
+    expect(row, findsOneWidget);
+    final switchFinder = find.descendant(
+      of: row,
+      matching: find.byType(Switch),
+    );
+    expect(switchFinder, findsOneWidget);
+    expect(
+      find.descendant(of: row, matching: find.text('Sin datos')),
+      findsOneWidget,
+    );
+    expect(tester.widget<Switch>(switchFinder).value, isFalse);
+
+    await tester.ensureVisible(switchFinder);
+    await tester.pumpAndSettle();
+    await tester.tap(switchFinder);
     await tester.pump();
 
     expect(repo.powerCalls, [('dev_power_01', 'light', true)]);
-    expect(find.text('Encendido'), findsWidgets);
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: row, matching: find.text('Encendido')),
+      findsOneWidget,
+    );
+    expect(tester.widget<Switch>(switchFinder).value, isTrue);
   });
 
   testWidgets('wall TIMEOUT reports honestly and keeps the state unknown', (
@@ -229,13 +253,24 @@ void main() {
     await tester.tap(find.text('Luz sala'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Encender'));
+    final row = wallChannelControl('light');
+    final switchFinder = find.descendant(
+      of: row,
+      matching: find.byType(Switch),
+    );
+    await tester.ensureVisible(switchFinder);
+    await tester.pumpAndSettle();
+    await tester.tap(switchFinder);
     await tester.pump();
 
     expect(repo.powerCalls, [('dev_power_01', 'light', true)]);
     expect(find.text('Sin respuesta del dispositivo'), findsOneWidget);
     // No parsed observation: the state stays neutral, never fabricated.
-    expect(find.text('Sin datos'), findsOneWidget);
+    expect(
+      find.descendant(of: row, matching: find.text('Sin datos')),
+      findsOneWidget,
+    );
+    expect(tester.widget<Switch>(switchFinder).value, isFalse);
   });
 
   testWidgets('wall save commands capability fields with mapped values', (
@@ -550,6 +585,47 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('wall detail exposes only per-channel power controls', (
+    tester,
+  ) async {
+    final repo = CommandDeviceFakeRepo(
+      devices: const [_wallObservedTriple],
+      areas: const [
+        HomeArea(id: 'sala', name: 'Sala'),
+        HomeArea(id: 'comedor', name: 'Comedor'),
+        HomeArea(id: 'patio', name: 'Patio'),
+        HomeArea(id: 'pasillo', name: 'Pasillo'),
+      ],
+    );
+    await pumpWall(tester, repo);
+    await switchToWallDevices(tester);
+
+    await tester.tap(
+      find.byKey(const ValueKey('wall-device-dev_observed_triple_01')),
+    );
+    await tester.pumpAndSettle();
+
+    // One switch per channel and no device-level control on top: the old
+    // single 'Encender'/'Apagar' button is gone for every device.
+    expect(find.byType(Switch), findsNWidgets(3));
+    expect(find.text('Encender'), findsNothing);
+    expect(find.text('Apagar'), findsNothing);
+    // Every power label belongs to a channel row (relay_1 on, relay_2 off,
+    // relay_3 unknown): a device-level state would add a second one.
+    expect(find.text('Encendido'), findsOneWidget);
+    expect(find.text('Apagado'), findsOneWidget);
+    expect(find.text('Sin datos'), findsOneWidget);
+    for (final id in ['relay_1', 'relay_2', 'relay_3']) {
+      expect(
+        find.descendant(
+          of: wallChannelControl(id),
+          matching: find.byType(Switch),
+        ),
+        findsOneWidget,
+      );
+    }
   });
 
   testWidgets('wall channel switch commands only relay_2 and converges', (

@@ -1937,55 +1937,11 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
   bool get _commandsAvailable =>
       asDeviceCommandRepository(widget.repository) != null;
 
-  /// Honest power display: with command support, confirmed observations (or
-  /// the demo-only powerOn fallback) decide; unknown is never projected as a
-  /// confident off. Without command support the legacy `powerOn ?? online`
-  /// behavior is preserved.
-  PowerDisplayState get _powerDisplayState {
-    if (!_commandsAvailable) {
-      final legacyOn = _device.powerOn ?? _device.online;
-      return legacyOn ? PowerDisplayState.on : PowerDisplayState.off;
-    }
-    return devicePowerDisplayState(_device);
-  }
-
-  /// Desktop parity: power applies instantly. With command support the
-  /// canonical backend is called and only a confirmed observation converges;
-  /// without it the legacy local convergence stays as fallback.
-  Future<void> _setPower(bool value) async {
-    if (!_commandsAvailable) {
-      _converge(
-        _device.copyWith(
-          powerOn: value,
-          online: value,
-          health: value ? DeviceHealthState.online : DeviceHealthState.sleeping,
-        ),
-      );
-      unawaited(
-        showWallSuccessSplash(
-          context,
-          message: value ? 'Dispositivo encendido' : 'Dispositivo apagado',
-        ),
-      );
-      return;
-    }
-    final endpoint = _device.endpoints.where(hasPowerCapability).firstOrNull;
-    if (endpoint == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('El dispositivo no expone un canal de encendido.'),
-        ),
-      );
-      return;
-    }
-    await _setEndpointPower(endpoint, value);
-  }
-
-  /// Per-channel power command shared by the device-level button (first power
-  /// endpoint) and each channel switch: calls the canonical `set_power` and
-  /// converges a confirmed observation into the local canonical device. Only
-  /// the targeted channel's switch is disabled while the command is in
-  /// flight; the honest outcome drives the Spanish notice.
+  /// Per-channel power command shared by each channel switch: calls the
+  /// canonical `set_power` and converges a confirmed observation into the
+  /// local canonical device. Only the targeted channel's switch is disabled
+  /// while the command is in flight; the honest outcome drives the Spanish
+  /// notice.
   Future<void> _setEndpointPower(DeviceEndpoint endpoint, bool value) async {
     if (_powerBusyEndpoints.contains(endpoint.id)) return;
     final commands = asDeviceCommandRepository(widget.repository);
@@ -2519,17 +2475,22 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _WallDeviceHero(device: _device, onRename: _renameDevice),
-                    const SizedBox(height: 14),
-                    _WallPowerCard(
-                      device: _device,
-                      powerState: _powerDisplayState,
-                      isSensor: _isSensor,
-                      isGateway: _isGateway,
-                      onPowerChanged: _setPower,
-                    ),
-                    // Control block: one big row per power channel. A single
-                    // channel is already covered by the power card above.
-                    if (powerChannels.length > 1) ...[
+                    // Informational card only for devices without a power
+                    // channel (gateway note, sensor reading, honest read-only
+                    // note). Controllable devices never get a device-level
+                    // control: one switch would be wrong on multi-gang
+                    // hardware, so the per-channel rows below own the action.
+                    if (powerChannels.isEmpty || _isGateway || _isSensor) ...[
+                      const SizedBox(height: 14),
+                      _WallPowerCard(
+                        device: _device,
+                        isSensor: _isSensor,
+                        isGateway: _isGateway,
+                      ),
+                    ],
+                    // Control block: one big row per power channel, rendered
+                    // for every controllable device (single channel included).
+                    if (powerChannels.isNotEmpty) ...[
                       const SizedBox(height: 14),
                       _WallCard(
                         child: Column(
@@ -2892,23 +2853,19 @@ String _wallEffectiveType(PhysicalDevice device) {
   };
 }
 
-/// Touch-first power/state card (desktop header parity): a large switch for
-/// controllable devices, the sensor reading for sensors, and honest,
-/// never-faked state text otherwise. No raw ON/OFF vocabulary.
+/// Informational card for devices without a device-level control: gateway
+/// explanation, sensor reading and the honest read-only note. Power actions
+/// live in the per-channel 'Controles' rows, never here.
 class _WallPowerCard extends StatelessWidget {
   const _WallPowerCard({
     required this.device,
-    required this.powerState,
     required this.isSensor,
     required this.isGateway,
-    required this.onPowerChanged,
   });
 
   final PhysicalDevice device;
-  final PowerDisplayState powerState;
   final bool isSensor;
   final bool isGateway;
-  final ValueChanged<bool> onPowerChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -2970,110 +2927,16 @@ class _WallPowerCard extends StatelessWidget {
         ),
       );
     }
-    // Power requires a real power channel (canonical POWER or legacy on_off);
-    // devices without one get an honest read-only card instead of a fake
-    // switch.
-    if (!device.endpoints.any(hasPowerCapability)) {
-      return const _WallCard(
-        child: Row(
-          children: [
-            Icon(Icons.power_off_outlined, size: 30, color: AppColors.textDim),
-            SizedBox(width: 16),
-            Expanded(
-              child: Text(
-                'Este dispositivo no expone un canal de encendido.',
-                style: TextStyle(color: AppColors.textDim, fontSize: 16),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-    // Capability-based (not health-based): turning the device off sets
-    // health to sleeping, which must not hide the way back on.
-    // Unknown power is never shown as a confident off: the label carries the
-    // truth ('Sin datos') while the action stays enabled to command it.
-    final isOn = powerState == PowerDisplayState.on;
-    final stateColor = switch (powerState) {
-      PowerDisplayState.on => AppColors.green,
-      PowerDisplayState.off => AppColors.red,
-      PowerDisplayState.unknown => AppColors.textDim,
-    };
-    final stateLabel = switch (powerState) {
-      PowerDisplayState.on => 'Encendido',
-      PowerDisplayState.off => 'Apagado',
-      PowerDisplayState.unknown => 'Sin datos',
-    };
-    final actionColor = isOn ? AppColors.red : AppColors.green;
-    return _WallCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    // No power channel: an honest read-only note instead of a fake switch.
+    return const _WallCard(
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  color: stateColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(
-                  switch (powerState) {
-                    PowerDisplayState.on => Icons.power_outlined,
-                    PowerDisplayState.off => Icons.power_off_outlined,
-                    PowerDisplayState.unknown => Icons.help_outline,
-                  },
-                  size: 30,
-                  color: stateColor,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      stateLabel,
-                      style: TextStyle(
-                        fontSize: 19,
-                        fontWeight: FontWeight.w700,
-                        color: stateColor,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      powerState == PowerDisplayState.unknown
-                          ? 'El dispositivo todavía no reportó su estado.'
-                          : 'Toca el botón para cambiarlo',
-                      style: const TextStyle(
-                        color: AppColors.textDim,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          FilledButton.icon(
-            onPressed: () => onPowerChanged(!isOn),
-            icon: Icon(
-              isOn ? Icons.power_settings_new_outlined : Icons.power_outlined,
-              size: 24,
-            ),
-            label: Text(
-              isOn ? 'Apagar' : 'Encender',
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-            ),
-            style: FilledButton.styleFrom(
-              backgroundColor: actionColor,
-              foregroundColor: Colors.white,
-              minimumSize: const Size.fromHeight(60),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
+          Icon(Icons.power_off_outlined, size: 30, color: AppColors.textDim),
+          SizedBox(width: 16),
+          Expanded(
+            child: Text(
+              'Este dispositivo no expone un canal de encendido.',
+              style: TextStyle(color: AppColors.textDim, fontSize: 16),
             ),
           ),
         ],

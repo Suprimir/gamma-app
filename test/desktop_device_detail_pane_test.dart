@@ -298,7 +298,8 @@ void main() {
     });
 
     testWidgets(
-      'power command reaches the repository and merges the observation',
+      'single-channel power switch commands its endpoint and merges the '
+      'observation',
       (tester) async {
         final repo = CommandDeviceFakeRepo(devices: const [_commandPowerLight]);
         final controller = AdaptiveFeatureController(repo);
@@ -310,18 +311,35 @@ void main() {
           deviceFrom: controller,
         );
 
-        // No observation: the switch is off but the label carries the truth.
-        expect(find.text('Sin datos'), findsOneWidget);
-        var powerSwitch = tester.widget<Switch>(find.byType(Switch));
-        expect(powerSwitch.value, isFalse);
+        // One switch only, inside the channel editor: no device-level control
+        // exists anymore, even for single-channel devices.
+        expect(find.byType(Switch), findsOneWidget);
+        final editor = desktopEndpointEditor('Luz');
+        final switchFinder = find.descendant(
+          of: editor,
+          matching: find.byType(Switch),
+        );
+        expect(switchFinder, findsOneWidget);
+        await tester.ensureVisible(switchFinder);
+        await tester.pumpAndSettle();
 
-        await tester.tap(find.byType(Switch));
+        // No observation: the switch is off but the label carries the truth.
+        expect(
+          find.descendant(of: editor, matching: find.text('Sin datos')),
+          findsOneWidget,
+        );
+        expect(tester.widget<Switch>(switchFinder).value, isFalse);
+
+        await tester.tap(switchFinder);
         await tester.pump();
 
         expect(repo.powerCalls, [('dev_power_01', 'light', true)]);
-        expect(find.text('Encendido'), findsOneWidget);
-        powerSwitch = tester.widget<Switch>(find.byType(Switch));
-        expect(powerSwitch.value, isTrue);
+        await tester.pumpAndSettle();
+        expect(
+          find.descendant(of: editor, matching: find.text('Encendido')),
+          findsOneWidget,
+        );
+        expect(tester.widget<Switch>(switchFinder).value, isTrue);
         expect(find.text('Sin datos'), findsNothing);
       },
     );
@@ -710,6 +728,21 @@ void main() {
         );
         await tester.ensureVisible(switchFinder);
         await tester.pumpAndSettle();
+        // One switch per channel and no device-level control on top: the old
+        // header switch is gone, so each power label lives in its channel row.
+        expect(find.byType(Switch), findsNWidgets(3));
+        expect(find.text('Encendido'), findsOneWidget);
+        expect(find.text('Apagado'), findsOneWidget);
+        expect(find.text('Sin datos'), findsOneWidget);
+        for (final channel in ['Canal 1', 'Canal 2', 'Canal 3']) {
+          expect(
+            find.descendant(
+              of: desktopEndpointEditor(channel),
+              matching: find.byType(Switch),
+            ),
+            findsOneWidget,
+          );
+        }
         // relay_2 has a confirmed off observation: the switch starts off.
         expect(tester.widget<Switch>(switchFinder).value, isFalse);
 
