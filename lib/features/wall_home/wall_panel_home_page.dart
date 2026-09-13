@@ -930,18 +930,22 @@ class _WallHeroRow extends StatelessWidget {
             ],
           );
         }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: _WallAssistantCard(voice: voice)),
-            const SizedBox(width: 14),
-            Expanded(
-              child: _WallMusicCard(
-                api: api,
-                pollInterval: spotifyPollInterval,
+        return IntrinsicHeight(
+          child: Row(
+            // Both hero cards share the row's (tallest) height in every
+            // Spotify/assistant state: no disproportionate pair.
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: _WallAssistantCard(voice: voice)),
+              const SizedBox(width: 14),
+              Expanded(
+                child: _WallMusicCard(
+                  api: api,
+                  pollInterval: spotifyPollInterval,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         );
       },
     );
@@ -959,6 +963,10 @@ class _WallAssistantCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
+      key: const ValueKey('wall-assistant-card'),
+      // Centered vertically: the hero row stretches both cards to the same
+      // height in every Spotify state.
+      alignment: Alignment.center,
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -1255,6 +1263,10 @@ class _WallMusicCardState extends State<_WallMusicCard> {
   @override
   Widget build(BuildContext context) {
     return Container(
+      key: const ValueKey('wall-music-card'),
+      // Centered vertically: the hero row stretches both cards to the same
+      // height in every Spotify state (playing, idle, disconnected).
+      alignment: Alignment.center,
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
       decoration: BoxDecoration(
         color: AppColors.surface,

@@ -146,6 +146,37 @@ void main() {
     expect(find.text('Tema 3 · Artista 3'), findsOneWidget);
   });
 
+  testWidgets('wall hero cards share the same height in every spotify state', (
+    tester,
+  ) async {
+    Future<void> expectEqualHeights() async {
+      final assistant = tester.getSize(
+        find.byKey(const ValueKey('wall-assistant-card')),
+      );
+      final music = tester.getSize(
+        find.byKey(const ValueKey('wall-music-card')),
+      );
+      expect(music.height, assistant.height);
+    }
+
+    // Playing: the music card is content-heavy.
+    await pumpWall(tester, _SpotifyCardApi());
+    await expectEqualHeights();
+
+    // No playback: the music card shrinks; both must still match.
+    await pumpWall(tester, _SpotifyCardApi()..hasPlayback = false);
+    await expectEqualHeights();
+
+    // Spotify not connected: the smallest music state.
+    await pumpWall(
+      tester,
+      _SpotifyCardApi()
+        ..authenticated = false
+        ..spotifyReady = false,
+    );
+    await expectEqualHeights();
+  });
+
   testWidgets('wall progress slider previews during drag and seeks on end', (
     tester,
   ) async {
