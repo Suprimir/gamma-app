@@ -100,7 +100,7 @@ void main() {
     // El botón configurar abre el detalle técnico.
     await tester.tap(find.text('Configurar dispositivo'));
     await tester.pumpAndSettle();
-    expect(find.text('ENDPOINTS / CANALES'), findsOneWidget);
+    expect(find.text('Configuración'), findsOneWidget);
   });
 
   testWidgets('offline device leaves the area grid and reports no-connection '

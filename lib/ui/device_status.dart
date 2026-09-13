@@ -25,6 +25,19 @@ String endpointPowerLabel(PowerDisplayState state) => switch (state) {
   PowerDisplayState.unknown => 'Sin datos',
 };
 
+/// Household availability label for device details: connectivity language
+/// instead of the power vocabulary used by list rows. Sleeping keeps the
+/// wall wording ('En espera'); an unvalidated state is never invented as a
+/// failure ('Sin datos').
+String deviceConnectionLabel(DeviceHealthState health) => switch (health) {
+  DeviceHealthState.online => 'En línea',
+  DeviceHealthState.offline ||
+  DeviceHealthState.unreachable ||
+  DeviceHealthState.authError => 'Sin acceso',
+  DeviceHealthState.sleeping => 'En espera',
+  DeviceHealthState.unknown => 'Sin datos',
+};
+
 /// Household name for one channel: the GAMMA user name wins, then the
 /// backend-computed display name; a stable ordinal is the last fallback.
 String endpointChannelName(DeviceEndpoint endpoint) {
@@ -369,6 +382,29 @@ IconData? _roleIcon(String key) => switch (key) {
   'curtain' => Icons.blinds_closed,
   _ => null,
 };
+
+/// Channel glyph: the endpoint semantic role wins (same keys as
+/// [deviceListIcon]); when the role carries no icon meaning (or is still
+/// 'unknown'), the declared capabilities decide so a generically-detected
+/// blind/fan/light is still recognizable; a generic toggle is the last
+/// resort.
+IconData endpointChannelIcon(DeviceEndpoint endpoint) {
+  final role = endpoint.semanticRole?.toLowerCase().trim();
+  if (role != null && role.isNotEmpty && role != 'unknown') {
+    final icon = _roleIcon(role);
+    if (icon != null) return icon;
+  }
+  final caps = <String>{
+    for (final c in endpoint.capabilities) c.trim().toUpperCase(),
+  };
+  if (caps.contains('POSITION') || caps.contains('OPEN_CLOSE')) {
+    return Icons.blinds_closed;
+  }
+  if (caps.contains('SPEED')) return Icons.air;
+  if (caps.contains('BRIGHTNESS')) return Icons.lightbulb_outline;
+  if (caps.contains('POWER')) return Icons.toggle_on_outlined;
+  return Icons.toggle_on_outlined;
+}
 
 /// Sensor glyph by what the device measures (from endpoint capabilities).
 IconData _sensorIcon(PhysicalDevice device) {

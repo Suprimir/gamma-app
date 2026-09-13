@@ -512,21 +512,21 @@ void main() {
 
     expect(
       find.descendant(
-        of: wallEndpointEditor('Canal 1'),
+        of: wallChannelControl('relay_1'),
         matching: find.text('Encendido'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
-        of: wallEndpointEditor('Canal 2'),
+        of: wallChannelControl('relay_2'),
         matching: find.text('Apagado'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
-        of: wallEndpointEditor('Canal 3'),
+        of: wallChannelControl('relay_3'),
         matching: find.text('Sin datos'),
       ),
       findsOneWidget,
@@ -552,7 +552,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final relay2 = wallEndpointEditor('Canal 2');
+    final relay2 = wallChannelControl('relay_2');
     final switchFinder = find.descendant(
       of: relay2,
       matching: find.byType(Switch),
@@ -577,7 +577,7 @@ void main() {
     // Siblings keep their own independent state.
     expect(
       find.descendant(
-        of: wallEndpointEditor('Canal 3'),
+        of: wallChannelControl('relay_3'),
         matching: find.text('Sin datos'),
       ),
       findsOneWidget,
@@ -607,7 +607,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final relay2 = wallEndpointEditor('Canal 2');
+    final relay2 = wallChannelControl('relay_2');
     final switchFinder = find.descendant(
       of: relay2,
       matching: find.byType(Switch),
@@ -834,7 +834,11 @@ Future<void> switchToWallControls(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-/// The wall per-control editor that owns [channelName].
+/// The wall per-channel control row that owns [endpointId].
+Finder wallChannelControl(String endpointId) =>
+    find.byKey(ValueKey('wall-channel-control-$endpointId'));
+
+/// The wall per-control editor (configuration, collapsed by default).
 Finder wallEndpointEditor(String channelName) => find.ancestor(
   of: find.text(channelName),
   matching: find.byWidgetPredicate(

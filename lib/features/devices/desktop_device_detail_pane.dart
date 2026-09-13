@@ -1444,7 +1444,11 @@ class _EndpointEditor extends StatelessWidget {
       children: [
         Row(
           children: [
-            Icon(kindIcon(endpoint.kind), size: 18, color: AppColors.textDim),
+            Icon(
+              endpointChannelIcon(endpoint),
+              size: 18,
+              color: AppColors.textDim,
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: Column(

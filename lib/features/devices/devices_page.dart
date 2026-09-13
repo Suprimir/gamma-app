@@ -1980,7 +1980,7 @@ class _ChannelTileGridState extends State<_ChannelTileGrid> {
             return _MobileChannelTile(
               key: ValueKey('mobile-channel-${device.id}-${endpoint.id}'),
               name: endpointChannelName(endpoint),
-              icon: iosKindIcon(endpoint.kind),
+              icon: endpointChannelIcon(endpoint),
               state: state,
               busy: _busy.contains(key),
               onTap: () => _toggle(device, endpoint),
@@ -2632,6 +2632,7 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
       );
       if (mounted) setState(() => _device = updated);
       widget.onCanonicalDeviceChanged?.call(updated);
+      if (mounted) _showSaved('Nombre actualizado');
     } catch (error) {
       if (mounted) _showError(error);
     } finally {
@@ -2667,6 +2668,7 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
       );
       if (mounted) setState(() => _device = updated);
       widget.onCanonicalDeviceChanged?.call(updated);
+      if (mounted) _showSaved('Nombre actualizado');
     } catch (error) {
       if (mounted) _showError(error);
     } finally {
@@ -2683,6 +2685,7 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
       );
       if (mounted) setState(() => _device = updated);
       widget.onCanonicalDeviceChanged?.call(updated);
+      if (mounted) _showSaved('Habitación actualizada');
     } catch (error) {
       if (mounted) _showError(error);
     } finally {
@@ -2701,6 +2704,7 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
       );
       if (mounted) setState(() => _device = updated);
       widget.onCanonicalDeviceChanged?.call(updated);
+      if (mounted) _showSaved('Habitación actualizada');
     } catch (error) {
       if (mounted) _showError(error);
     } finally {
@@ -2719,6 +2723,7 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
       );
       if (mounted) setState(() => _device = updated);
       widget.onCanonicalDeviceChanged?.call(updated);
+      if (mounted) _showSaved('Control actualizado');
     } catch (error) {
       if (mounted) _showError(error);
     } finally {
@@ -2760,6 +2765,14 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
         : error is ApiException
         ? 'Error del servidor (${error.statusCode}).'
         : error.toString();
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// QoL 4: immediate confirmation after a successful mutation (mobile
+  /// previously saved silently). Failures keep the existing [_showError] path.
+  void _showSaved(String message) {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
@@ -2922,28 +2935,140 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
     return _buildStandardDetail(gateway);
   }
 
-  /// Byte-identical standard detail (mobile/desktop). Wall surfaces take the
-  /// household-first [_buildWallDetail] branch instead.
+  /// Standard detail shared by the mobile flow and the narrow desktop push.
+  /// Wall surfaces take the household-first [_buildWallDetail] branch instead.
+  ///
+  /// Household-first order (Pattern C): Control first, then Estado, then a
+  /// collapsed Configuración. The per-channel switches live in the CONTROLES
+  /// panel; the per-channel editors keep only rename/area/role/bindings.
   Widget _buildStandardDetail(GatewayInfo? gateway) {
+    final powerChannels = powerEndpoints(_device);
+    final commands = asDeviceCommandRepository(widget.repository);
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 34),
       children: [
         _DeviceHero(device: _device, onRename: _renameDevice),
         const SizedBox(height: 18),
+        if (powerChannels.isNotEmpty) ...[
+          _Panel(
+            title: 'CONTROLES',
+            child: Column(
+              children: [
+                for (var index = 0; index < powerChannels.length; index++) ...[
+                  _ChannelControlRow(
+                    key: ValueKey('channel-control-${powerChannels[index].id}'),
+                    endpoint: powerChannels[index],
+                    busy: _powerBusyEndpoints.contains(powerChannels[index].id),
+                    onPowerChanged: commands == null
+                        ? null
+                        : (value) =>
+                              _setEndpointPower(powerChannels[index], value),
+                  ),
+                  if (index != powerChannels.length - 1)
+                    const Divider(height: 24, color: AppColors.border),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
         _Panel(
-          title: 'DISPOSITIVO FÍSICO',
+          title: 'ESTADO',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Dónde está instalado el hardware. Esto no limita qué área controla cada canal.',
+              Row(
+                children: [
+                  _OnlineDot(health: _device.health),
+                  const SizedBox(width: 7),
+                  Text(
+                    deviceConnectionLabel(_device.health),
+                    style: TextStyle(
+                      color: healthToColor(_device.health),
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (_device.lastSeenLabel != null) ...[
+                    const Text(
+                      ' · ',
+                      style: TextStyle(color: AppColors.textFaint),
+                    ),
+                    Flexible(
+                      child: Text(
+                        _device.lastSeenLabel!,
+                        style: const TextStyle(
+                          color: AppColors.textFaint,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              // The hero already carries identity; credentials/gateway live
+              // in the Estado block so the control surface stays uncluttered.
+              if (_device.pendingKey == true) ...[
+                const SizedBox(height: 10),
+                const PendingCredentialsBadge(),
+              ],
+              if (gateway != null) ...[
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.hub_outlined,
+                      size: 16,
+                      color: AppColors.textDim,
+                    ),
+                    const SizedBox(width: 7),
+                    Flexible(
+                      child: Text(
+                        'Gateway: ${gateway.name}',
+                        style: const TextStyle(
+                          color: AppColors.textDim,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 14),
+              OutlinedButton.icon(
+                onPressed: () => _identify(),
+                icon: _identifying
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(CupertinoIcons.antenna_radiowaves_left_right),
+                label: Text(
+                  _identifying ? 'Identificando…' : 'Identificar dispositivo',
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '“Identificar” envía una orden al dispositivo para parpadear una luz o activar un LED según el adaptador.',
+                textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: AppColors.textDim,
-                  fontSize: 12.5,
+                  color: AppColors.textFaint,
+                  fontSize: 10.5,
                   height: 1.35,
                 ),
               ),
-              const SizedBox(height: 14),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        // Configuration is progressive disclosure: collapsed by default, the
+        // body is removed from the tree until expanded (same contract as the
+        // wall 'Información técnica' tile).
+        _ConfigSection(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
               _AreaDropdown(
                 key: const Key('physical-area-dropdown'),
                 label: 'Ubicación física',
@@ -2971,32 +3096,16 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
                   label: const Text('Usar también para todos los canales'),
                 ),
               ],
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-        _Panel(
-          title: 'ENDPOINTS / CANALES',
-          child: Column(
-            children: [
               for (
                 var index = 0;
                 index < _device.endpoints.length;
                 index++
               ) ...[
+                const Divider(height: 30, color: AppColors.border),
                 _EndpointEditor(
                   endpoint: _device.endpoints[index],
                   areas: widget.areas,
                   busy: _savingEndpoint == _device.endpoints[index].id,
-                  showPowerState: powerEndpoints(_device).length > 1,
-                  powerBusy: _powerBusyEndpoints.contains(
-                    _device.endpoints[index].id,
-                  ),
-                  onPowerChanged:
-                      asDeviceCommandRepository(widget.repository) == null
-                      ? null
-                      : (value) =>
-                            _setEndpointPower(_device.endpoints[index], value),
                   onChanged: (areaId) =>
                       _setEndpointArea(_device.endpoints[index], areaId),
                   onIdentify: () =>
@@ -3006,14 +3115,11 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
                       ? (role) =>
                             _setEndpointRole(_device.endpoints[index], role)
                       : null,
-                  onBindEntity:
-                      asDeviceCommandRepository(widget.repository) == null
+                  onBindEntity: commands == null
                       ? null
                       : (entityId) =>
                             _bindEntity(_device.endpoints[index], entityId),
                 ),
-                if (index != _device.endpoints.length - 1)
-                  const Divider(height: 28, color: AppColors.border),
               ],
             ],
           ),
@@ -3039,33 +3145,7 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
               _MetadataRow(label: 'Modelo', value: _device.model),
               if (_device.manufacturer != null)
                 _MetadataRow(label: 'Fabricante', value: _device.manufacturer!),
-              if (gateway != null)
-                _MetadataRow(label: 'Gateway', value: gateway.name),
             ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        OutlinedButton.icon(
-          onPressed: () => _identify(),
-          icon: _identifying
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(CupertinoIcons.antenna_radiowaves_left_right),
-          label: Text(
-            _identifying ? 'Identificando…' : 'Identificar dispositivo',
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          '“Identificar” envía una orden al dispositivo para parpadear una luz o activar un LED según el adaptador.',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: AppColors.textFaint,
-            fontSize: 10.5,
-            height: 1.35,
           ),
         ),
       ],
@@ -3564,10 +3644,8 @@ class _DeviceHero extends StatelessWidget {
                     ),
                   ),
                 ],
-                if (device.pendingKey == true) ...[
-                  const SizedBox(height: 6),
-                  const PendingCredentialsBadge(),
-                ],
+                // The 'Sin credenciales' chip lives in the Estado block of
+                // the standard detail; the hero keeps identity only.
               ],
             ),
           ),
@@ -3612,6 +3690,128 @@ class _Panel extends StatelessWidget {
   }
 }
 
+/// Collapsed-by-default configuration group of the standard detail. The body
+/// is removed from the tree until expanded, so the primary view stays
+/// control-first (same ExpansionTile contract as the wall technical tile).
+class _ConfigSection extends StatelessWidget {
+  const _ConfigSection({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          key: const Key('device-config-section'),
+          initiallyExpanded: false,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 17, vertical: 8),
+          childrenPadding: const EdgeInsets.fromLTRB(17, 0, 17, 17),
+          title: const Text('Configuración'),
+          children: [child],
+        ),
+      ),
+    );
+  }
+}
+
+/// One household control row of the CONTROLES panel: role icon, channel name,
+/// honest power state (color + text) and the per-channel switch. The switch
+/// keeps the canonical command path and the per-channel busy guard; when the
+/// repository exposes no command layer the switch is omitted instead of
+/// faking a control.
+class _ChannelControlRow extends StatelessWidget {
+  const _ChannelControlRow({
+    super.key,
+    required this.endpoint,
+    required this.busy,
+    this.onPowerChanged,
+  });
+
+  final DeviceEndpoint endpoint;
+  final bool busy;
+  final ValueChanged<bool>? onPowerChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = endpointPowerDisplayState(endpoint);
+    final color = switch (state) {
+      PowerDisplayState.on => AppColors.statusEncendido,
+      PowerDisplayState.off => AppColors.statusApagado,
+      PowerDisplayState.unknown => AppColors.textFaint,
+    };
+    return Row(
+      children: [
+        Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: AppColors.accentTint,
+            borderRadius: BorderRadius.circular(13),
+          ),
+          child: Icon(
+            endpointChannelIcon(endpoint),
+            size: 22,
+            color: AppColors.accent,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                endpointChannelName(endpoint),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Row(
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    endpointPowerLabel(state),
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (onPowerChanged != null)
+          Switch(
+            value: state == PowerDisplayState.on,
+            activeTrackColor: AppColors.accent,
+            onChanged: busy ? null : onPowerChanged,
+          ),
+      ],
+    );
+  }
+}
+
 class _EndpointEditor extends StatelessWidget {
   const _EndpointEditor({
     required this.endpoint,
@@ -3622,28 +3822,12 @@ class _EndpointEditor extends StatelessWidget {
     this.onRename,
     this.onRoleChanged,
     this.onBindEntity,
-    this.showPowerState = false,
-    this.powerBusy = false,
-    this.onPowerChanged,
   });
 
   final DeviceEndpoint endpoint;
   final List<HomeArea> areas;
   final bool busy;
   final ValueChanged<String?> onChanged;
-
-  /// Whether the device has more than one power endpoint: only then is the
-  /// per-control state shown (single-control devices already surface it in
-  /// the device-level control).
-  final bool showPowerState;
-
-  /// Whether this channel's power command is in flight: disables only this
-  /// channel's switch.
-  final bool powerBusy;
-
-  /// Per-channel power command; null hides the switch (repository without
-  /// command support).
-  final ValueChanged<bool>? onPowerChanged;
 
   /// Always visible — when the repository does not support identify, the
   /// callback shows an informational SnackBar instead of being null.
@@ -3685,24 +3869,6 @@ class _EndpointEditor extends StatelessWidget {
                       fontSize: 10.5,
                     ),
                   ),
-                  if (showPowerState && hasPowerCapability(endpoint)) ...[
-                    const SizedBox(height: 3),
-                    EndpointPowerBadge(endpoint: endpoint),
-                    // The mobile channel column is narrow: the switch takes
-                    // its own right-aligned line instead of squeezing the
-                    // badge.
-                    if (onPowerChanged != null)
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: Switch(
-                          value:
-                              endpointPowerDisplayState(endpoint) ==
-                              PowerDisplayState.on,
-                          activeTrackColor: AppColors.accent,
-                          onChanged: powerBusy ? null : onPowerChanged,
-                        ),
-                      ),
-                  ],
                 ],
               ),
             ),

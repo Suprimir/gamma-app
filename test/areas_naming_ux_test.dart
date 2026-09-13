@@ -327,6 +327,10 @@ Future<void> _pumpDetail(WidgetTester tester, _FakeRepo repo) async {
   final device = repo.devices.first;
   await tester.tap(find.text(device.name));
   await tester.pumpAndSettle();
+  // Per-channel configuration is collapsed by default; expand it so the
+  // area/role selectors and rename affordances are built.
+  await tester.tap(find.text('Configuración'));
+  await tester.pumpAndSettle();
 }
 
 /// Minimal ApiClient subclass so DevicesPage construction works; the repo is

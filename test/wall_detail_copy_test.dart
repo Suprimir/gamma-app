@@ -78,6 +78,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
+    // Configuration is collapsed by default: expand it to prove the labels
+    // still render unclipped.
+    await tester.ensureVisible(find.text('Configuración'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Configuración'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
     for (final label in [
       'Nombre',
       'Habitación física',

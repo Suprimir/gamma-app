@@ -465,7 +465,7 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
             return _WallChannelTile(
               key: ValueKey('wall-channel-${device.id}-${endpoint.id}'),
               name: endpointChannelName(endpoint),
-              icon: deviceKindMeta(endpoint.kind).icon,
+              icon: endpointChannelIcon(endpoint),
               state: _channelDisplayState(device, endpoint),
               busy: _channelBusy.contains(key),
               onTap: () => _toggleChannel(device, endpoint),
@@ -2474,6 +2474,7 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
         break;
       }
     }
+    final powerChannels = powerEndpoints(_device);
     return PopScope(
       // Desktop parity: buffered display values die with the route, so a
       // back navigation with pending changes asks first (Guardar /
@@ -2523,7 +2524,143 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
                       isGateway: _isGateway,
                       onPowerChanged: _setPower,
                     ),
+                    // Control block: one big row per power channel. A single
+                    // channel is already covered by the power card above.
+                    if (powerChannels.length > 1) ...[
+                      const SizedBox(height: 14),
+                      _WallCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Controles',
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            for (
+                              var index = 0;
+                              index < powerChannels.length;
+                              index++
+                            )
+                              _WallChannelControlRow(
+                                key: ValueKey(
+                                  'wall-channel-control-'
+                                  '${powerChannels[index].id}',
+                                ),
+                                endpoint: powerChannels[index],
+                                busy: _powerBusyEndpoints.contains(
+                                  powerChannels[index].id,
+                                ),
+                                onPowerChanged: _commandsAvailable
+                                    ? (value) => _setEndpointPower(
+                                        powerChannels[index],
+                                        value,
+                                      )
+                                    : null,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 14),
+                    _WallAdjustCard(
+                      device: _effectiveDevice,
+                      commandsAvailable: _commandsAvailable,
+                      onBrightnessChanged: _setBrightness,
+                      onFanSpeedChanged: _setFanSpeed,
+                      onTemperatureChanged: _setTargetTemperature,
+                      onClimateModeChanged: _setClimateMode,
+                      onPositionChanged: _setPosition,
+                      onColorTemperatureChanged: _setColorTemperature,
+                    ),
+                    const SizedBox(height: 14),
+                    // Estado block: connection, gateway and the optional
+                    // identify. The hero already carries the credentials chip.
+                    _WallCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Estado',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Container(
+                                width: 10,
+                                height: 10,
+                                decoration: BoxDecoration(
+                                  color: _wallHealthColor(_device.health),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                wallHealthLabel(_device.health) ?? 'Sin datos',
+                                style: TextStyle(
+                                  color: _wallHealthColor(_device.health),
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (gateway != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              'Gateway: ${gateway.name}',
+                              style: const TextStyle(
+                                color: AppColors.textDim,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 14),
+                          FilledButton.icon(
+                            onPressed: _identifying ? null : _testConnection,
+                            icon: _identifying
+                                ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.5,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.wifi_find_outlined,
+                                    size: 24,
+                                  ),
+                            label: Text(
+                              _identifying ? 'Probando…' : 'Probar conexión',
+                              style: const TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: AppColors.accent,
+                              foregroundColor: Colors.white,
+                              minimumSize: const Size.fromHeight(64),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    // Configuration stays reachable but secondary: the
+                    // physical area remains visible and the per-channel
+                    // editors are collapsed under 'Configuración'.
                     _WallCard(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2560,29 +2697,10 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    _WallAdjustCard(
-                      device: _effectiveDevice,
-                      commandsAvailable: _commandsAvailable,
-                      onBrightnessChanged: _setBrightness,
-                      onFanSpeedChanged: _setFanSpeed,
-                      onTemperatureChanged: _setTargetTemperature,
-                      onClimateModeChanged: _setClimateMode,
-                      onPositionChanged: _setPosition,
-                      onColorTemperatureChanged: _setColorTemperature,
-                    ),
-                    const SizedBox(height: 14),
-                    _WallCard(
+                    _WallConfigSection(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'Controles',
-                            style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 14),
                           for (
                             var index = 0;
                             index < _device.endpoints.length;
@@ -2594,17 +2712,6 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
                               busy:
                                   _savingEndpoint ==
                                   _device.endpoints[index].id,
-                              showPowerState:
-                                  powerEndpoints(_device).length > 1,
-                              powerBusy: _powerBusyEndpoints.contains(
-                                _device.endpoints[index].id,
-                              ),
-                              onPowerChanged: _commandsAvailable
-                                  ? (value) => _setEndpointPower(
-                                      _device.endpoints[index],
-                                      value,
-                                    )
-                                  : null,
                               onAreaChanged: (areaId) => _setEndpointArea(
                                 _device.endpoints[index],
                                 areaId,
@@ -2632,35 +2739,6 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
                     _WallRoutinesCard(
                       relatedCount: _relatedRoutineCount,
                       onCreate: _openRoutines,
-                    ),
-                    const SizedBox(height: 14),
-                    FilledButton.icon(
-                      onPressed: _identifying ? null : _testConnection,
-                      icon: _identifying
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.5,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.wifi_find_outlined, size: 24),
-                      label: Text(
-                        _identifying ? 'Probando…' : 'Probar conexión',
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.accent,
-                        foregroundColor: Colors.white,
-                        minimumSize: const Size.fromHeight(64),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
                     ),
                     const SizedBox(height: 12),
                     ElevatedButton.icon(
@@ -3998,6 +4076,134 @@ class _WallDeviceHero extends StatelessWidget {
 /// Wall per-control editor: household vocabulary only (display name, 'Qué
 /// controla', 'Habitación que controla'). Presents the shared state mutation
 /// callbacks; never duplicates repository logic.
+/// Touch-first per-channel control row (>= 56dp): role icon, household
+/// channel name, honest state and the per-channel switch. The switch keeps
+/// the canonical command path and the per-channel busy guard; without a
+/// command layer the row stays informative instead of faking a control.
+class _WallChannelControlRow extends StatelessWidget {
+  const _WallChannelControlRow({
+    super.key,
+    required this.endpoint,
+    required this.busy,
+    this.onPowerChanged,
+  });
+
+  final DeviceEndpoint endpoint;
+  final bool busy;
+  final ValueChanged<bool>? onPowerChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = endpointPowerDisplayState(endpoint);
+    final stateColor = switch (state) {
+      PowerDisplayState.on => AppColors.green,
+      PowerDisplayState.off => AppColors.red,
+      PowerDisplayState.unknown => AppColors.textFaint,
+    };
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 56),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: AppColors.accentTint,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(
+              endpointChannelIcon(endpoint),
+              size: 26,
+              color: AppColors.accent,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  endpointChannelName(endpoint),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Container(
+                      width: 9,
+                      height: 9,
+                      decoration: BoxDecoration(
+                        color: stateColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      endpointPowerLabel(state),
+                      style: TextStyle(
+                        color: stateColor,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (onPowerChanged != null)
+            Transform.scale(
+              scale: 1.15,
+              child: Switch(
+                value: state == PowerDisplayState.on,
+                activeTrackColor: AppColors.green,
+                onChanged: busy ? null : onPowerChanged,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Collapsed-by-default configuration for the wall surface: household
+/// rename/area/role editors stay out of the primary view and are only built
+/// once expanded (same ExpansionTile contract as 'Información técnica').
+class _WallConfigSection extends StatelessWidget {
+  const _WallConfigSection({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          key: const Key('wall-config-section'),
+          initiallyExpanded: false,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 17, vertical: 8),
+          childrenPadding: const EdgeInsets.fromLTRB(17, 0, 17, 17),
+          title: const Text('Configuración'),
+          children: [child],
+        ),
+      ),
+    );
+  }
+}
+
 class _WallEndpointEditor extends StatelessWidget {
   const _WallEndpointEditor({
     required this.endpoint,
@@ -4006,9 +4212,6 @@ class _WallEndpointEditor extends StatelessWidget {
     required this.onAreaChanged,
     required this.onRename,
     this.onRoleChanged,
-    this.showPowerState = false,
-    this.powerBusy = false,
-    this.onPowerChanged,
   });
 
   final DeviceEndpoint endpoint;
@@ -4017,19 +4220,6 @@ class _WallEndpointEditor extends StatelessWidget {
   final ValueChanged<String?> onAreaChanged;
   final VoidCallback onRename;
   final ValueChanged<String?>? onRoleChanged;
-
-  /// Whether the device has more than one power endpoint: only then is the
-  /// per-control state shown (single-control devices already surface it in
-  /// the device-level power card).
-  final bool showPowerState;
-
-  /// Whether this channel's power command is in flight: disables only this
-  /// channel's switch.
-  final bool powerBusy;
-
-  /// Per-channel power command; null hides the switch (repository without
-  /// command support).
-  final ValueChanged<bool>? onPowerChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -4052,32 +4242,6 @@ class _WallEndpointEditor extends StatelessWidget {
                       fontSize: 16,
                     ),
                   ),
-                  if (showPowerState && hasPowerCapability(endpoint)) ...[
-                    const SizedBox(height: 3),
-                    Row(
-                      children: [
-                        EndpointPowerBadge(
-                          endpoint: endpoint,
-                          onColor: AppColors.green,
-                          offColor: AppColors.red,
-                          fontSize: 13,
-                        ),
-                        if (onPowerChanged != null) ...[
-                          const Spacer(),
-                          Transform.scale(
-                            scale: 1.15,
-                            child: Switch(
-                              value:
-                                  endpointPowerDisplayState(endpoint) ==
-                                  PowerDisplayState.on,
-                              activeTrackColor: AppColors.green,
-                              onChanged: powerBusy ? null : onPowerChanged,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
                 ],
               ),
             ),

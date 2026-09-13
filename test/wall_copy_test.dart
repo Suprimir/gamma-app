@@ -29,6 +29,14 @@ void main() {
 
     // Household vocabulary stays the primary content (freeze).
     expect(find.text('Controles'), findsOneWidget);
+
+    // The per-control editors are configuration and stay collapsed until
+    // explicitly expanded.
+    expect(find.text('Qué controla'), findsNothing);
+    await tester.ensureVisible(find.text('Configuración'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Configuración'));
+    await tester.pumpAndSettle();
     expect(find.text('Qué controla'), findsWidgets);
     expect(find.text('Habitación que controla'), findsWidgets);
   });

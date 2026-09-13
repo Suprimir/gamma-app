@@ -393,21 +393,21 @@ void main() {
 
     expect(
       find.descendant(
-        of: mobileEndpointEditor('Canal 1'),
+        of: mobileChannelControl('relay_1'),
         matching: find.text('Encendido'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
-        of: mobileEndpointEditor('Canal 2'),
+        of: mobileChannelControl('relay_2'),
         matching: find.text('Apagado'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
-        of: mobileEndpointEditor('Canal 3'),
+        of: mobileChannelControl('relay_3'),
         matching: find.text('Sin datos'),
       ),
       findsOneWidget,
@@ -434,7 +434,7 @@ void main() {
       deviceName: 'Interruptor triple observado',
     );
 
-    final relay2 = mobileEndpointEditor('Canal 2');
+    final relay2 = mobileChannelControl('relay_2');
     final switchFinder = find.descendant(
       of: relay2,
       matching: find.byType(Switch),
@@ -459,14 +459,14 @@ void main() {
     // Siblings keep their own independent state.
     expect(
       find.descendant(
-        of: mobileEndpointEditor('Canal 1'),
+        of: mobileChannelControl('relay_1'),
         matching: find.text('Encendido'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
-        of: mobileEndpointEditor('Canal 3'),
+        of: mobileChannelControl('relay_3'),
         matching: find.text('Sin datos'),
       ),
       findsOneWidget,
@@ -497,7 +497,7 @@ void main() {
         deviceName: 'Interruptor triple observado',
       );
 
-      final relay2 = mobileEndpointEditor('Canal 2');
+      final relay2 = mobileChannelControl('relay_2');
       final switchFinder = find.descendant(
         of: relay2,
         matching: find.byType(Switch),
@@ -572,13 +572,9 @@ Future<void> openMobileDetail(
   await tester.pumpAndSettle();
 }
 
-/// The mobile per-endpoint editor that owns [channelName].
-Finder mobileEndpointEditor(String channelName) => find.ancestor(
-  of: find.text(channelName),
-  matching: find.byWidgetPredicate(
-    (widget) => widget.runtimeType.toString() == '_EndpointEditor',
-  ),
-);
+/// The mobile per-channel control row that owns [endpointId].
+Finder mobileChannelControl(String endpointId) =>
+    find.byKey(ValueKey('channel-control-$endpointId'));
 
 /// The mobile device card (identity surface) that owns [deviceName].
 Finder mobileDeviceCard(String deviceName) => find.ancestor(

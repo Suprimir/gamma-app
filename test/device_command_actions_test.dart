@@ -295,6 +295,10 @@ Future<void> _pumpDetail(
     ),
   );
   await tester.pump();
+  // Per-channel configuration (identify, bind, area, role) is collapsed
+  // under 'Configuración' by default: expand it for these action tests.
+  await tester.tap(find.text('Configuración'));
+  await tester.pumpAndSettle();
 }
 
 Future<void> _submitBinding(WidgetTester tester, String entityId) async {

@@ -58,6 +58,15 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Configurar dispositivo'), findsOneWidget);
+    // The physical-area selector lives in the collapsed Configuración block.
+    await tester.scrollUntilVisible(
+      find.text('Configuración'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Configuración'));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
   });
 

@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gamma_app/data/device_inventory.dart';
 import 'package:gamma_app/ui/app_colors.dart';
@@ -73,6 +74,76 @@ void main() {
 
     test('sensor -> grey', () {
       expect(kindBadgeColor(DeviceKind.sensor).toARGB32(), 0xFF9CA3AF);
+    });
+  });
+
+  group('endpointChannelIcon', () {
+    DeviceEndpoint endpoint({
+      String? semanticRole,
+      Set<String> capabilities = const {},
+    }) => DeviceEndpoint(
+      id: 'ch',
+      name: 'Canal',
+      kind: DeviceKind.switchController,
+      capabilities: capabilities,
+      semanticRole: semanticRole,
+    );
+
+    test('semantic role wins over capabilities', () {
+      expect(
+        endpointChannelIcon(
+          endpoint(semanticRole: 'light', capabilities: {'POSITION'}),
+        ),
+        Icons.lightbulb_outline,
+      );
+      expect(
+        endpointChannelIcon(endpoint(semanticRole: 'cover')),
+        Icons.blinds_closed,
+      );
+      expect(endpointChannelIcon(endpoint(semanticRole: 'fan')), Icons.air);
+    });
+
+    test('unknown or missing role falls back to capabilities', () {
+      expect(
+        endpointChannelIcon(
+          endpoint(semanticRole: 'unknown', capabilities: {'POSITION'}),
+        ),
+        Icons.blinds_closed,
+      );
+      expect(
+        endpointChannelIcon(endpoint(capabilities: {'OPEN_CLOSE'})),
+        Icons.blinds_closed,
+      );
+      expect(endpointChannelIcon(endpoint(capabilities: {'SPEED'})), Icons.air);
+      expect(
+        endpointChannelIcon(endpoint(capabilities: {'BRIGHTNESS'})),
+        Icons.lightbulb_outline,
+      );
+      expect(
+        endpointChannelIcon(endpoint(capabilities: {'POWER'})),
+        Icons.toggle_on_outlined,
+      );
+    });
+
+    test('sensor role and empty capabilities end on the generic toggle', () {
+      expect(
+        endpointChannelIcon(
+          endpoint(semanticRole: 'sensor', capabilities: {'TEMPERATURE_READ'}),
+        ),
+        Icons.toggle_on_outlined,
+      );
+      expect(endpointChannelIcon(endpoint()), Icons.toggle_on_outlined);
+    });
+
+    test('role is matched case-insensitively from the backend', () {
+      expect(
+        endpointChannelIcon(endpoint(semanticRole: 'Cover')),
+        Icons.blinds_closed,
+      );
+      expect(
+        endpointChannelIcon(endpoint(semanticRole: 'OUTLET')),
+        Icons.power_outlined,
+      );
     });
   });
 }
