@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:record/record.dart';
@@ -47,6 +48,12 @@ class _MicPageState extends State<MicPage> {
   }
 
   Future<void> _toggleRecord() async {
+    if (kIsWeb) {
+      setState(
+        () => _error = 'La voz no está disponible en la versión web todavía.',
+      );
+      return;
+    }
     if (_recording) {
       try {
         final path = await _recorder.stop();
@@ -113,6 +120,13 @@ class _MicPageState extends State<MicPage> {
   }
 
   Future<void> _playResponse(String audioB64) async {
+    if (kIsWeb) {
+      setState(
+        () => _error =
+            'La reproducción de voz no está disponible en la versión web todavía.',
+      );
+      return;
+    }
     final bytes = base64Decode(audioB64);
     final file = File(
       '${Directory.systemTemp.path}/gamma_respuesta_${DateTime.now().millisecondsSinceEpoch}.wav',

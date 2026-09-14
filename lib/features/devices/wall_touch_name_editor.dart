@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 import 'dart:math' show Random;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
 import 'package:vad/vad.dart';
@@ -512,7 +513,7 @@ class _WallNameSheetState extends State<_WallNameSheet> {
         await mic.cancel();
       } catch (_) {}
     }
-    if (!Platform.isAndroid) {
+    if (!kIsWeb && !Platform.isAndroid) {
       try {
         await _recorder.stop();
       } catch (_) {}

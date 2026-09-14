@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:record/record.dart';
 
 // ponytail: 16 kHz mono PCM16 microphone contract via record (Android, iOS,
@@ -31,9 +32,10 @@ Future<MicStream> micPcm16Stream(AudioRecorder recorder) async {
       numChannels: 1,
     ),
   );
+  final isMobileNative = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
   return _bridge(
-    Platform.isAndroid || Platform.isIOS ? _rechunk(source) : source,
-    onCancel: Platform.isAndroid || Platform.isIOS ? recorder.stop : null,
+    isMobileNative ? _rechunk(source) : source,
+    onCancel: isMobileNative ? recorder.stop : null,
   );
 }
 

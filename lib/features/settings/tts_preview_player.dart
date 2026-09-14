@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:media_kit/media_kit.dart';
 
 /// Plays the short WAV returned by the TTS preview endpoint.
@@ -23,6 +24,12 @@ class MediaKitTtsPreviewPlayer implements TtsPreviewPlayer {
 
   @override
   Future<void> play(Uint8List wavBytes) async {
+    if (kIsWeb) {
+      // dart:io has no temp files on web: media_kit cannot open a File here.
+      throw StateError(
+        'La previsualización de voz no está disponible en la versión web.',
+      );
+    }
     final file = File(
       '${Directory.systemTemp.path}/gamma_tts_preview_'
       '${DateTime.now().millisecondsSinceEpoch}.wav',

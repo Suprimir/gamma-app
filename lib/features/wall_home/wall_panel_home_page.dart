@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -15,6 +16,7 @@ import '../dashboard/desktop_dashboard_page.dart';
 import '../../data/device_inventory.dart';
 import '../../data/http_device_inventory_repository.dart';
 import '../../data/weather_repository.dart';
+import '../../ui/open_in_new_tab.dart';
 import '../../ui/shared_widgets.dart';
 import '../../ui/spotify_logo.dart';
 import '../voice/vad_model.dart';
@@ -1261,6 +1263,10 @@ class _WallMusicCardState extends State<_WallMusicCard> {
   }
 
   Future<void> _openExternalUrl(String url) async {
+    if (kIsWeb) {
+      openInNewTab(url);
+      return;
+    }
     if (Platform.isAndroid) {
       await _externalUrlChannel.invokeMethod<void>('openUrl', {'url': url});
       return;

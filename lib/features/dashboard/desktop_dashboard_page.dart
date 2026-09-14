@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -14,6 +15,7 @@ import '../../data/http_device_inventory_repository.dart';
 import '../../ui/app_colors.dart';
 import '../../ui/assistant_orb.dart';
 import '../../ui/audio_waves.dart';
+import '../../ui/open_in_new_tab.dart';
 import 'home_theme_background.dart';
 import '../../ui/shared_widgets.dart';
 import '../../ui/spotify_logo.dart';
@@ -292,7 +294,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
       _state = LoopState.processing;
     });
     await WidgetsBinding.instance.endOfFrame;
-    if (!Platform.isAndroid) {
+    if (!kIsWeb && !Platform.isAndroid) {
       try {
         await _recorder.stop();
       } catch (_) {}
@@ -333,6 +335,12 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   }
 
   Future<void> _playResponse(String audioB64) async {
+    if (kIsWeb) {
+      _fail(
+        'La reproducción de voz no está disponible en la versión web todavía.',
+      );
+      return;
+    }
     final bytes = base64Decode(audioB64);
     final file = File(
       '${Directory.systemTemp.path}/gamma_respuesta_${DateTime.now().millisecondsSinceEpoch}.wav',
@@ -434,6 +442,10 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
       final url = data['auth_url']?.toString();
       if (url == null || url.isEmpty) {
         throw StateError('URL de autorización vacía');
+      }
+      if (kIsWeb) {
+        openInNewTab(url);
+        return;
       }
       if (Platform.isAndroid) {
         await _externalUrlChannel.invokeMethod<void>('openUrl', {'url': url});

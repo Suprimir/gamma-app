@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart' show IOClient;
 
@@ -15,9 +16,10 @@ class ApiClient {
   // un cliente que reutiliza el socket muerto falla con "connection closed
   // before full header was received". Cada request abre TCP fresco (red
   // local, costo despreciable) y el error desaparece.
-  final http.Client _client = IOClient(
-    HttpClient()..idleTimeout = const Duration(seconds: 0),
-  );
+  // En web dart:io no existe: se usa el cliente HTTP del navegador.
+  final http.Client _client = kIsWeb
+      ? http.Client()
+      : IOClient(HttpClient()..idleTimeout = const Duration(seconds: 0));
 
   Future<Map<String, dynamic>> health() => _get('/api/v1/health');
 

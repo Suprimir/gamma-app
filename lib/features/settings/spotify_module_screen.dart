@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../data/api_client.dart';
 import '../../ui/app_colors.dart';
+import '../../ui/open_in_new_tab.dart';
 import '../../ui/shared_widgets.dart';
 import 'module_config_widgets.dart';
 
@@ -119,6 +121,10 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
   static const _platformChannel = MethodChannel('gamma_app/external_url');
 
   Future<void> _openExternalUrl(String url) async {
+    if (kIsWeb) {
+      openInNewTab(url);
+      return;
+    }
     if (Platform.isAndroid) {
       await _platformChannel.invokeMethod<void>('openUrl', {'url': url});
       return;

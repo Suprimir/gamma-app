@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:record/record.dart';
@@ -342,7 +343,7 @@ class _DashboardPageState extends State<DashboardPage> {
     // Android/iOS el stop corre en background vía MicStream.cancel
     // (onCancel: recorder.stop); llamar a record.stop() aquí es una llamada
     // de plataforma innecesaria que puede colgar.
-    if (!Platform.isAndroid) {
+    if (!kIsWeb && !Platform.isAndroid) {
       try {
         await _recorder.stop();
       } catch (_) {}
@@ -383,6 +384,12 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _playResponse(String audioB64) async {
+    if (kIsWeb) {
+      _fail(
+        'La reproducción de voz no está disponible en la versión web todavía.',
+      );
+      return;
+    }
     final bytes = base64Decode(audioB64);
     final file = File(
       '${Directory.systemTemp.path}/gamma_respuesta_${DateTime.now().millisecondsSinceEpoch}.wav',

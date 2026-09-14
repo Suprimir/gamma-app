@@ -42,6 +42,7 @@ dependencies:
   record: ^6.1.2
   shared_preferences: ^2.5.5
   vad: ^0.0.8
+  web: 1.1.1
 
 dev_dependencies:
   flutter_test:

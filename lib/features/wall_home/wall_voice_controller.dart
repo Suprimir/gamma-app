@@ -131,7 +131,7 @@ class WallVoiceController extends ChangeNotifier {
     _busy = true;
     _state = LoopState.processing;
     notifyListeners();
-    if (!Platform.isAndroid) {
+    if (!kIsWeb && !Platform.isAndroid) {
       try {
         await _recorder.stop();
       } catch (_) {}
@@ -167,6 +167,12 @@ class WallVoiceController extends ChangeNotifier {
   }
 
   Future<void> _playResponse(String audioB64) async {
+    if (kIsWeb) {
+      _fail(
+        'La reproducción de voz no está disponible en la versión web todavía.',
+      );
+      return;
+    }
     try {
       final bytes = base64Decode(audioB64);
       final file = File(
