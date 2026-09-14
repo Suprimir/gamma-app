@@ -8,6 +8,7 @@ import 'package:record/record.dart';
 
 import '../../data/api_client.dart';
 import '../../ui/assistant_orb.dart';
+import '../../ui/voice_response_player.dart';
 import '../voice/mic_source.dart';
 import '../voice/vad_model.dart';
 import '../voice/voice_session.dart';
@@ -65,10 +66,6 @@ class WallVoiceController extends ChangeNotifier {
   }
 
   Future<void> toggle() async {
-    if (kIsWeb) {
-      _fail('La voz no está disponible en la versión web todavía.');
-      return;
-    }
     if (_listening) {
       await _stopAndIdle();
       return;
@@ -96,7 +93,7 @@ class WallVoiceController extends ChangeNotifier {
       await VadModel.vad.startListening(
         audioStream: mic.pcm,
         model: 'v5',
-        baseAssetPath: 'assets/',
+        baseAssetPath: VadModel.baseAssetPath,
         submitUserSpeechOnPause: true,
       );
     } catch (e) {
@@ -171,20 +168,9 @@ class WallVoiceController extends ChangeNotifier {
   }
 
   Future<void> _playResponse(String audioB64) async {
-    if (kIsWeb) {
-      _fail(
-        'La reproducción de voz no está disponible en la versión web todavía.',
-      );
-      return;
-    }
+    final bytes = base64Decode(audioB64);
     try {
-      final bytes = base64Decode(audioB64);
-      final file = File(
-        '${Directory.systemTemp.path}/gamma_wall_${DateTime.now().millisecondsSinceEpoch}.wav',
-      );
-      await file.writeAsBytes(bytes);
-      final player = _player ??= Player();
-      await player.open(Media(file.path), play: true);
+      await playVoiceResponse(bytes, _player ??= Player());
     } catch (e) {
       _fail('Error al reproducir la respuesta: $e');
     }

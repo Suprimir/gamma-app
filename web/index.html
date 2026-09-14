@@ -29,6 +29,13 @@
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
+  <!--
+    Voice (Silero VAD) on web requires the global `ort` object: the vad
+    package's web implementation calls it directly. CDN build documented by
+    the package, pinned to the ORT version it expects (1.22.0).
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.wasm.min.js"></script>
+
   <title>gamma_app</title>
   <link rel="manifest" href="manifest.json">
 </head>

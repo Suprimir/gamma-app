@@ -1,8 +1,8 @@
-import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:media_kit/media_kit.dart';
+
+import '../../ui/voice_response_player.dart';
 
 /// Plays the short WAV returned by the TTS preview endpoint.
 ///
@@ -15,28 +15,17 @@ abstract interface class TtsPreviewPlayer {
   void dispose();
 }
 
-/// media_kit implementation mirroring the wall voice loop: writes the WAV to
-/// a temp file and plays it with a lazily-created [Player]. The player is
-/// created on first playback so merely building the settings page never
-/// requires native libraries.
+/// Platform-dispatched implementation mirroring the wall voice loop: on IO it
+/// writes the WAV to a temp file and plays it with a lazily-created [Player];
+/// on web the shared helper plays a blob URL. The player is created on first
+/// playback so merely building the settings page never requires native
+/// libraries.
 class MediaKitTtsPreviewPlayer implements TtsPreviewPlayer {
   Player? _player;
 
   @override
   Future<void> play(Uint8List wavBytes) async {
-    if (kIsWeb) {
-      // dart:io has no temp files on web: media_kit cannot open a File here.
-      throw StateError(
-        'La previsualización de voz no está disponible en la versión web.',
-      );
-    }
-    final file = File(
-      '${Directory.systemTemp.path}/gamma_tts_preview_'
-      '${DateTime.now().millisecondsSinceEpoch}.wav',
-    );
-    await file.writeAsBytes(wavBytes);
-    final player = _player ??= Player();
-    await player.open(Media(file.path), play: true);
+    await playVoiceResponse(wavBytes, _player ??= Player());
   }
 
   @override

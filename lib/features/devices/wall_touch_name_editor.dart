@@ -11,6 +11,7 @@ import 'package:vad/vad.dart';
 import '../../data/api_client.dart';
 import '../../ui/app_colors.dart';
 import '../voice/mic_source.dart';
+import '../voice/vad_model.dart';
 import '../voice/voice_session.dart';
 import '../wall_home/wall_activity_bus.dart';
 
@@ -246,7 +247,7 @@ class _WallNameSheetState extends State<_WallNameSheet> {
       await _vad.startListening(
         audioStream: ctrl.stream,
         model: 'v5',
-        baseAssetPath: 'assets/',
+        baseAssetPath: VadModel.baseAssetPath,
         positiveSpeechThreshold: _vadPositiveThreshold,
         negativeSpeechThreshold: _vadNegativeThreshold,
         redemptionFrames: _vadRedemptionFrames,
@@ -399,7 +400,7 @@ class _WallNameSheetState extends State<_WallNameSheet> {
       await _vad.startListening(
         audioStream: mic.pcm,
         model: 'v5',
-        baseAssetPath: 'assets/',
+        baseAssetPath: VadModel.baseAssetPath,
         positiveSpeechThreshold: _vadPositiveThreshold,
         negativeSpeechThreshold: _vadNegativeThreshold,
         redemptionFrames: _vadRedemptionFrames,

@@ -19,6 +19,7 @@ import '../../ui/open_in_new_tab.dart';
 import 'home_theme_background.dart';
 import '../../ui/shared_widgets.dart';
 import '../../ui/spotify_logo.dart';
+import '../../ui/voice_response_player.dart';
 import '../areas/area_editor.dart';
 import '../areas/areas_page.dart';
 import '../cameras/cameras_page.dart';
@@ -230,10 +231,6 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   }
 
   Future<void> _toggleRecord() async {
-    if (kIsWeb) {
-      _fail('La voz no está disponible en la versión web todavía.');
-      return;
-    }
     if (_listening) {
       await VadModel.vad.stopListening();
       if (!mounted) return;
@@ -274,7 +271,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
       await VadModel.vad.startListening(
         audioStream: mic.pcm,
         model: 'v5',
-        baseAssetPath: 'assets/',
+        baseAssetPath: VadModel.baseAssetPath,
         submitUserSpeechOnPause: true,
       );
     } catch (e) {
@@ -339,19 +336,9 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   }
 
   Future<void> _playResponse(String audioB64) async {
-    if (kIsWeb) {
-      _fail(
-        'La reproducción de voz no está disponible en la versión web todavía.',
-      );
-      return;
-    }
     final bytes = base64Decode(audioB64);
-    final file = File(
-      '${Directory.systemTemp.path}/gamma_respuesta_${DateTime.now().millisecondsSinceEpoch}.wav',
-    );
-    await file.writeAsBytes(bytes);
     try {
-      await _player.open(Media(file.path), play: true);
+      await playVoiceResponse(bytes, _player);
     } catch (e) {
       _fail('Error al reproducir la respuesta: $e');
     }

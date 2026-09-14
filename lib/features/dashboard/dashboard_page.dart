@@ -14,6 +14,7 @@ import '../../data/api_client.dart';
 import '../../ui/app_colors.dart';
 import '../../ui/assistant_orb.dart';
 import '../../ui/audio_waves.dart';
+import '../../ui/voice_response_player.dart';
 import '../voice/mic_source.dart';
 import '../voice/vad_model.dart';
 import '../voice/voice_session.dart';
@@ -255,10 +256,6 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _toggleRecord() async {
-    if (kIsWeb) {
-      _fail('La voz no está disponible en la versión web todavía.');
-      return;
-    }
     if (_listening) {
       // Stop manual: en lugar de descartar el audio hablado, forzar el fin
       // del habla en el VAD (submitUserSpeechOnPause) — emite onSpeechEnd
@@ -312,7 +309,7 @@ class _DashboardPageState extends State<DashboardPage> {
       await VadModel.vad.startListening(
         audioStream: mic.pcm,
         model: 'v5',
-        baseAssetPath: 'assets/',
+        baseAssetPath: VadModel.baseAssetPath,
         submitUserSpeechOnPause: true,
       );
     } catch (e) {
@@ -388,19 +385,9 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _playResponse(String audioB64) async {
-    if (kIsWeb) {
-      _fail(
-        'La reproducción de voz no está disponible en la versión web todavía.',
-      );
-      return;
-    }
     final bytes = base64Decode(audioB64);
-    final file = File(
-      '${Directory.systemTemp.path}/gamma_respuesta_${DateTime.now().millisecondsSinceEpoch}.wav',
-    );
-    await file.writeAsBytes(bytes);
     try {
-      await _player.open(Media(file.path), play: true);
+      await playVoiceResponse(bytes, _player);
     } catch (e) {
       _fail('Error al reproducir la respuesta: $e');
     }

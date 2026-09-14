@@ -16,6 +16,13 @@ class VadModel {
 
   static final VadHandler vad = VadHandler.create(isDebug: kDebugMode);
 
+  /// Ruta base de los modelos Silero.
+  ///
+  /// En web los assets de pubspec se sirven bajo `assets/assets/` (p.ej.
+  /// `build/web/assets/assets/silero_vad_v5.onnx`); en IO se sirven tal cual
+  /// bajo `assets/`. El paquete concatena `baseAssetPath + 'silero_vad_v5.onnx'`.
+  static const String baseAssetPath = kIsWeb ? 'assets/assets/' : 'assets/';
+
   static Future<void>? _ready;
 
   /// Carga el modelo Silero en frío con un stream mudo y lo descarta.
@@ -23,10 +30,6 @@ class VadModel {
   /// Si falla (p.ej. en tests sin ONNX nativo), la primera escucha real
   /// carga el modelo igual — la precarga es solo una optimización.
   static Future<void> ensureReady() {
-    // Voz deshabilitada en web por ahora: no se precarga el modelo (evita el
-    // error de creación de sesión Silero en la consola del navegador) y la
-    // escucha real queda bloqueada con un mensaje honesto en las dashboards.
-    if (kIsWeb) return Future<void>.value();
     return _ready ??= _prewarm();
   }
 
@@ -39,7 +42,7 @@ class VadModel {
         // ~10ms del v4 (1536 muestras). Mismo clasificador neuronal, pero
         // el bloqueo del main thread por frame baja a imperceptible.
         model: 'v5',
-        baseAssetPath: 'assets/',
+        baseAssetPath: baseAssetPath,
       );
       await vad.stopListening();
     } catch (_) {
