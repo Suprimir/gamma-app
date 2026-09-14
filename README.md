@@ -31,6 +31,22 @@ flutter pub get
 flutter run --dart-define=GAMMA_PI=http://<backend-host>:8420
 ```
 
+## Build web
+
+```bash
+./tool/build_web.sh                       # backend local (http://localhost:8420)
+./tool/build_web.sh http://gamma-pi:8420  # backend de la Raspberry Pi
+```
+
+Salida en `build/web`. Servirlo con cualquier servidor estático:
+
+```bash
+cd build/web && python3 -m http.server 8080
+```
+
+El backend debe permitir el origen de la web en `GAMMA_WEB_ORIGINS`
+(p. ej. `http://localhost:8080`); si no, el navegador bloquea las llamadas.
+
 ## Verificación
 
 ```bash
