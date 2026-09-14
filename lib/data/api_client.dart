@@ -590,8 +590,6 @@ class ApiClient {
   Future<Map<String, dynamic>> spotifyPlaybackQueue({int limit = 20}) =>
       _get('/api/v1/spotify/queue?limit=$limit');
 
-  Future<Map<String, dynamic>> voiceStatus() => _get('/api/v1/voice/status');
-
   Future<Map<String, dynamic>> ttsSettings() => _get('/api/v1/tts/settings');
 
   /// Synthesizes a voice preview; returns the raw WAV bytes. Backend errors
@@ -727,23 +725,6 @@ class ApiClient {
     return _decode(resp);
   }
 
-  Future<Map<String, dynamic>> activateVoice() async {
-    final resp = await _client.post(
-      Uri.parse('$baseUrl/api/v1/voice/activate'),
-    );
-    return _decode(resp);
-  }
-
-  Future<Map<String, dynamic>> stopVoice({String? sessionId}) async {
-    final query = sessionId == null
-        ? ''
-        : '?session_id=${Uri.encodeQueryComponent(sessionId)}';
-    final resp = await _client.post(
-      Uri.parse('$baseUrl/api/v1/voice/stop$query'),
-    );
-    return _decode(resp);
-  }
-
   /// Sube un WAV (PCM16 mono 16 kHz) para transcribirlo y ejecutar el turno.
   /// `sessionId` aísla el turno de voz por sesión en el backend.
   Future<Map<String, dynamic>> audioTurn(
@@ -759,62 +740,6 @@ class ApiClient {
       body: wavBytes,
     );
     return _decode(resp);
-  }
-
-  /// Flujo SSE de voz de una sesión: reenvía Last-Event-ID al reconectar
-  /// (desde las líneas `id:` y/o `payload.data.sequence`) y termina con
-  /// `voice_finished` o si la sesión ya no existe (HTTP != 200).
-  /// `isCancelled()` evita reconexiones tras un stop o dispose.
-  Stream<Map<String, dynamic>> voiceEvents(
-    String sessionId, {
-    required bool Function() isCancelled,
-  }) async* {
-    String? lastEventId;
-    while (!isCancelled()) {
-      final req = http.Request(
-        'GET',
-        Uri.parse(
-          '$baseUrl/api/v1/voice/events/${Uri.encodeComponent(sessionId)}',
-        ),
-      );
-      if (lastEventId != null) req.headers['Last-Event-ID'] = lastEventId;
-      final resp = await _client.send(req);
-      if (resp.statusCode != 200) return;
-
-      final lines = resp.stream
-          .transform(utf8.decoder)
-          .transform(const LineSplitter());
-      String? eventName;
-      final data = StringBuffer();
-      await for (final line in lines) {
-        if (line.isEmpty) {
-          if (eventName != null) {
-            final payload = jsonDecode(data.toString());
-            // The backend emits both `id:` and `data.sequence`; the payload
-            // value is the fallback when the id line is missing.
-            if (payload is Map) {
-              final inner = payload['data'];
-              final sequence = inner is Map ? inner['sequence'] : null;
-              if (sequence != null) lastEventId = sequence.toString();
-            }
-            yield {'event': eventName, 'data': payload};
-            if (eventName == 'voice_finished') return;
-          }
-          eventName = null;
-          data.clear();
-          continue;
-        }
-        if (line.startsWith(':')) continue;
-        if (line.startsWith('event:')) {
-          eventName = line.substring('event:'.length).trim();
-        } else if (line.startsWith('data:')) {
-          data.writeln(line.substring('data:'.length).trim());
-        } else if (line.startsWith('id:')) {
-          lastEventId = line.substring('id:'.length).trim();
-        }
-      }
-      await Future<void>.delayed(const Duration(seconds: 2));
-    }
   }
 
   /// Flujo SSE de GET /api/v1/events, con reconexión y Last-Event-ID.
