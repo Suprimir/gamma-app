@@ -510,63 +510,43 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
   }
 
   /// Wall parity: per-channel rename with explicit reset (null clears the
-  /// custom name back to the provider display name).
+  /// custom name back to the provider display name). The dialog owns the API
+  /// call and stays open on failure with the backend detail inline.
   Future<void> _renameEndpoint(DeviceEndpoint endpoint) async {
-    if (_savingEndpoint) return;
-    final result = await showDialog<String?>(
+    final updated = await showDialog<PhysicalDevice>(
       context: context,
       builder: (_) => _DetailRenameDialog(
         initialName: endpoint.userName ?? endpoint.displayName,
         canReset: endpoint.userName != null,
+        onSubmit: (userName) => widget.controller.repository.renameEndpoint(
+          _canonical.id,
+          endpoint.id,
+          userName,
+        ),
       ),
     );
-    if (result == null || !mounted) return;
-    // Empty string is the reset sentinel from the dialog.
-    final userName = result.isEmpty ? null : result;
-    if (userName != null && userName.trim().isEmpty) return;
-    setState(() => _savingEndpoint = true);
-    try {
-      final updated = await widget.controller.repository.renameEndpoint(
-        _canonical.id,
-        endpoint.id,
-        userName,
-      );
-      widget.controller.applyCanonicalDevice(updated);
-      if (!mounted) return;
-      _showSnack('Nombre actualizado');
-    } catch (e) {
-      // Honest failure: the previous canonical name stays in place and the
-      // backend error is surfaced instead of a fake success.
-      if (!mounted) return;
-      _showSnack(deviceMutationErrorMessage(e));
-    } finally {
-      if (mounted) setState(() => _savingEndpoint = false);
-    }
+    if (updated == null || !mounted) return;
+    widget.controller.applyCanonicalDevice(updated);
+    if (!mounted) return;
+    _showSnack('Nombre actualizado');
   }
 
   Future<void> _renameDevice() async {
     final device = _canonical;
-    final result = await showDialog<String>(
+    final updated = await showDialog<PhysicalDevice>(
       context: context,
-      builder: (_) =>
-          _DetailRenameDialog(initialName: device.userName ?? device.name),
+      builder: (_) => _DetailRenameDialog(
+        initialName: device.userName ?? device.name,
+        onSubmit: (userName) =>
+            widget.controller.repository.renameDevice(device.id, userName),
+      ),
     );
-    if (result == null) return;
-    final newName = result.trim();
-    if (newName.isEmpty) return;
-    try {
-      final updated = await widget.controller.repository.renameDevice(
-        device.id,
-        newName,
-      );
-      widget.controller.applyCanonicalDevice(updated);
-      if (!mounted) return;
-      _showSnack('Nombre actualizado');
-    } catch (e) {
-      // Honest failure: no local rename is applied and no success is shown.
-      if (!mounted) return;
-      _showSnack(deviceMutationErrorMessage(e));
-    }
+    // Honest failure: the dialog renders the backend error inline and the
+    // previous canonical name stays in place; no fake success is shown.
+    if (updated == null || !mounted) return;
+    widget.controller.applyCanonicalDevice(updated);
+    if (!mounted) return;
+    _showSnack('Nombre actualizado');
   }
 
   Future<void> _testConnection() async {
@@ -2134,13 +2114,29 @@ class _SensorReading extends StatelessWidget {
   }
 }
 
+/// Rename dialog for the desktop detail pane.
+///
+/// The dialog owns the rename call through [onSubmit] (`null` resets the
+/// custom name): it shows a busy state while the request is in flight and, on
+/// failure, stays open with the backend detail rendered inline and the typed
+/// value preserved. It pops the canonical [PhysicalDevice] only on success;
+/// cancel pops `null`.
 class _DetailRenameDialog extends StatefulWidget {
-  const _DetailRenameDialog({required this.initialName, this.canReset = false});
+  const _DetailRenameDialog({
+    required this.initialName,
+    this.canReset = false,
+    required this.onSubmit,
+  });
   final String initialName;
 
-  /// When true, offers 'Restablecer' which pops an empty string: the caller
+  /// When true, offers 'Restablecer' which submits a null name: the caller
   /// clears the custom name back to the provider display name (wall parity).
   final bool canReset;
+
+  /// Runs the rename (`null` clears the custom name) and returns the canonical
+  /// device. Thrown errors are rendered inline instead of closing the dialog.
+  final Future<PhysicalDevice> Function(String? userName) onSubmit;
+
   @override
   State<_DetailRenameDialog> createState() => _DetailRenameDialogState();
 }
@@ -2150,19 +2146,35 @@ class _DetailRenameDialogState extends State<_DetailRenameDialog> {
     text: widget.initialName,
   );
   String? _error;
+  bool _busy = false;
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
   }
 
-  void _submit() {
-    final v = _controller.text.trim();
-    if (v.isEmpty) {
+  Future<void> _submit({bool reset = false}) async {
+    if (_busy) return;
+    final value = reset ? null : _controller.text.trim();
+    if (!reset && value!.isEmpty) {
       setState(() => _error = 'El nombre no puede estar vacío.');
       return;
     }
-    Navigator.of(context).pop(v);
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final updated = await widget.onSubmit(value);
+      if (!mounted) return;
+      Navigator.of(context).pop(updated);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = deviceMutationErrorMessage(error);
+      });
+    }
   }
 
   @override
@@ -2172,6 +2184,7 @@ class _DetailRenameDialogState extends State<_DetailRenameDialog> {
       content: TextField(
         controller: _controller,
         autofocus: true,
+        enabled: !_busy,
         decoration: InputDecoration(
           labelText: 'Nombre',
           errorText: _error,
@@ -2182,14 +2195,23 @@ class _DetailRenameDialogState extends State<_DetailRenameDialog> {
       actions: [
         if (widget.canReset)
           TextButton(
-            onPressed: () => Navigator.of(context).pop(''),
+            onPressed: _busy ? null : () => _submit(reset: true),
             child: const Text('Restablecer'),
           ),
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancelar'),
         ),
-        FilledButton(onPressed: _submit, child: const Text('Guardar')),
+        FilledButton(
+          onPressed: _busy ? null : _submit,
+          child: _busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Guardar'),
+        ),
       ],
     );
   }

@@ -468,7 +468,8 @@ class _WallDevicesPageState extends State<WallDevicesPage> {
           // accessibility scales get extra vertical room instead of clipping.
           gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
             maxCrossAxisExtent: 420,
-            mainAxisExtent: 148 + (MediaQuery.textScalerOf(context).scale(1) - 1) * 110,
+            mainAxisExtent:
+                148 + (MediaQuery.textScalerOf(context).scale(1) - 1) * 110,
             mainAxisSpacing: 18,
             crossAxisSpacing: 18,
           ),
@@ -2081,21 +2082,20 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
     if (_renaming) return;
     setState(() => _renaming = true);
     try {
-      final result = await showDialog<_WallRenameResult>(
+      // The dialog owns the API call: it stays open on failure, renders the
+      // backend detail inline and keeps the typed value correctable.
+      final updated = await showDialog<PhysicalDevice>(
         context: context,
         builder: (_) => _WallRenameDialog(
           title: 'Cambiar nombre del dispositivo',
           initialName: _device.userName,
           fallbackName: _device.name,
           canReset: _device.userName != null,
+          onSubmit: (userName) =>
+              widget.repository.renameDevice(_device.id, userName),
         ),
       );
-      if (result is! _WallRenameSet && result is! _WallRenameClear) return;
-      final userName = result is _WallRenameSet ? result.name : null;
-      final updated = await widget.repository.renameDevice(
-        _device.id,
-        userName,
-      );
+      if (updated == null) return;
       _converge(updated);
       if (mounted) {
         unawaited(
@@ -2113,22 +2113,21 @@ class _WallDeviceDetailPageState extends State<_WallDeviceDetailPage> {
     if (_renaming) return;
     setState(() => _renaming = true);
     try {
-      final result = await showDialog<_WallRenameResult>(
+      final updated = await showDialog<PhysicalDevice>(
         context: context,
         builder: (_) => _WallRenameDialog(
           title: 'Cambiar nombre del control',
           initialName: endpoint.userName,
           fallbackName: endpoint.displayName,
           canReset: endpoint.userName != null,
+          onSubmit: (userName) => widget.repository.renameEndpoint(
+            _device.id,
+            endpoint.id,
+            userName,
+          ),
         ),
       );
-      if (result is! _WallRenameSet && result is! _WallRenameClear) return;
-      final userName = result is _WallRenameSet ? result.name : null;
-      final updated = await widget.repository.renameEndpoint(
-        _device.id,
-        endpoint.id,
-        userName,
-      );
+      if (updated == null) return;
       _converge(updated);
       if (mounted) {
         unawaited(
@@ -3607,38 +3606,30 @@ class _WallRoutinesCard extends StatelessWidget {
   }
 }
 
-/// Wall rename outcome: set, clear (null) or cancelled.
-sealed class _WallRenameResult {
-  const _WallRenameResult();
-}
-
-class _WallRenameSet extends _WallRenameResult {
-  const _WallRenameSet(this.name);
-  final String name;
-}
-
-class _WallRenameClear extends _WallRenameResult {
-  const _WallRenameClear();
-}
-
-class _WallRenameCancelled extends _WallRenameResult {
-  const _WallRenameCancelled();
-}
-
 /// Touch-first rename dialog with explicit null-clear semantics and >= 64dp
 /// action targets.
+///
+/// The dialog owns the rename call through [onSubmit]: it shows a busy state
+/// while the request is in flight and, on failure, stays open with the
+/// backend detail rendered inline and the typed value preserved. It pops the
+/// canonical [PhysicalDevice] only on success; cancel pops `null`.
 class _WallRenameDialog extends StatefulWidget {
   const _WallRenameDialog({
     required this.title,
     required this.initialName,
     required this.fallbackName,
     required this.canReset,
+    required this.onSubmit,
   });
 
   final String title;
   final String? initialName;
   final String fallbackName;
   final bool canReset;
+
+  /// Runs the rename (`null` clears the custom name) and returns the canonical
+  /// device. Thrown errors are rendered inline instead of closing the dialog.
+  final Future<PhysicalDevice> Function(String? userName) onSubmit;
 
   @override
   State<_WallRenameDialog> createState() => _WallRenameDialogState();
@@ -3649,6 +3640,7 @@ class _WallRenameDialogState extends State<_WallRenameDialog> {
     text: widget.initialName ?? '',
   );
   String? _error;
+  bool _busy = false;
 
   @override
   void dispose() {
@@ -3656,13 +3648,28 @@ class _WallRenameDialogState extends State<_WallRenameDialog> {
     super.dispose();
   }
 
-  void _submit() {
-    final value = _controller.text.trim();
-    if (value.isEmpty) {
+  Future<void> _submit({bool reset = false}) async {
+    if (_busy) return;
+    final value = reset ? null : _controller.text.trim();
+    if (!reset && value!.isEmpty) {
       setState(() => _error = 'El nombre no puede estar vacío.');
       return;
     }
-    Navigator.of(context).pop(_WallRenameSet(value));
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final updated = await widget.onSubmit(value);
+      if (!mounted) return;
+      Navigator.of(context).pop(updated);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = deviceMutationErrorMessage(error);
+      });
+    }
   }
 
   @override
@@ -3738,6 +3745,7 @@ class _WallRenameDialogState extends State<_WallRenameDialog> {
               TextField(
                 controller: _controller,
                 autofocus: true,
+                enabled: !_busy,
                 style: const TextStyle(fontSize: 18),
                 decoration: InputDecoration(
                   hintText: 'Escribí el nombre',
@@ -3779,8 +3787,7 @@ class _WallRenameDialogState extends State<_WallRenameDialog> {
       actions: [
         if (widget.canReset)
           TextButton(
-            onPressed: () =>
-                Navigator.of(context).pop(const _WallRenameClear()),
+            onPressed: _busy ? null : () => _submit(reset: true),
             style: TextButton.styleFrom(
               foregroundColor: AppColors.textDim,
               minimumSize: const Size(120, 64),
@@ -3789,8 +3796,7 @@ class _WallRenameDialogState extends State<_WallRenameDialog> {
             child: const Text('Restablecer'),
           ),
         TextButton(
-          onPressed: () =>
-              Navigator.of(context).pop(const _WallRenameCancelled()),
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
           style: TextButton.styleFrom(
             foregroundColor: AppColors.textDim,
             minimumSize: const Size(120, 64),
@@ -3799,9 +3805,18 @@ class _WallRenameDialogState extends State<_WallRenameDialog> {
           child: const Text('Cancelar'),
         ),
         FilledButton.icon(
-          onPressed: _submit,
-          icon: const Icon(Icons.check, size: 24),
-          label: const Text('Guardar'),
+          onPressed: _busy ? null : _submit,
+          icon: _busy
+              ? const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: Colors.white,
+                  ),
+                )
+              : const Icon(Icons.check, size: 24),
+          label: Text(_busy ? 'Guardando…' : 'Guardar'),
           style: FilledButton.styleFrom(
             backgroundColor: AppColors.accent,
             foregroundColor: Colors.white,

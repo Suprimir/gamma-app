@@ -1424,27 +1424,23 @@ class _ChannelTileGridState extends State<_ChannelTileGrid> {
     if (_renaming) return;
     setState(() => _renaming = true);
     try {
-      final result = await showDialog<_RenameResult>(
+      // The dialog owns the API call: it stays open on failure, renders the
+      // backend detail inline and keeps the typed value correctable.
+      final updated = await showDialog<PhysicalDevice>(
         context: context,
         builder: (_) => _RenameDialog(
           title: 'Cambiar nombre del canal',
           initialName: endpoint.userName,
           fallbackName: endpoint.displayName,
           canReset: endpoint.userName != null,
+          onSubmit: (userName) => widget.repository.renameEndpoint(
+            device.id,
+            endpoint.id,
+            userName,
+          ),
         ),
       );
-      if (result is _RenameCancelled || result == null) return;
-      final userName = switch (result) {
-        _RenameSet(:final name) => name,
-        _RenameClear() => null,
-        _RenameCancelled() => null,
-      };
-      final updated = await widget.repository.renameEndpoint(
-        device.id,
-        endpoint.id,
-        userName,
-      );
-      if (!mounted) return;
+      if (!mounted || updated == null) return;
       widget.controller.applyCanonicalDevice(updated);
     } catch (error) {
       if (!mounted) return;
@@ -2362,26 +2358,19 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
     if (_renaming) return;
     setState(() => _renaming = true);
     try {
-      final result = await showDialog<_RenameResult>(
+      final updated = await showDialog<PhysicalDevice>(
         context: context,
         builder: (_) => _RenameDialog(
           title: 'Cambiar nombre del dispositivo',
           initialName: _device.userName,
           fallbackName: _device.name,
           canReset: _device.userName != null,
+          onSubmit: (userName) =>
+              widget.repository.renameDevice(_device.id, userName),
         ),
       );
-      if (result is _RenameCancelled || result == null) return;
-      final userName = switch (result) {
-        _RenameSet(:final name) => name,
-        _RenameClear() => null,
-        _RenameCancelled() => null,
-      };
-      final updated = await widget.repository.renameDevice(
-        _device.id,
-        userName,
-      );
-      if (mounted) setState(() => _device = updated);
+      if (!mounted || updated == null) return;
+      setState(() => _device = updated);
       widget.onCanonicalDeviceChanged?.call(updated);
       if (mounted) _showSaved('Nombre actualizado');
     } catch (error) {
@@ -2395,7 +2384,7 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
     if (_renaming) return;
     setState(() => _renaming = true);
     try {
-      final result = await showDialog<_RenameResult>(
+      final updated = await showDialog<PhysicalDevice>(
         context: context,
         builder: (_) => _RenameDialog(
           title: widget.presentation == DeviceDetailPresentation.wall
@@ -2404,20 +2393,15 @@ class DeviceDetailViewState extends State<DeviceDetailView> {
           initialName: endpoint.userName,
           fallbackName: endpoint.displayName,
           canReset: endpoint.userName != null,
+          onSubmit: (userName) => widget.repository.renameEndpoint(
+            _device.id,
+            endpoint.id,
+            userName,
+          ),
         ),
       );
-      if (result is _RenameCancelled || result == null) return;
-      final userName = switch (result) {
-        _RenameSet(:final name) => name,
-        _RenameClear() => null,
-        _RenameCancelled() => null,
-      };
-      final updated = await widget.repository.renameEndpoint(
-        _device.id,
-        endpoint.id,
-        userName,
-      );
-      if (mounted) setState(() => _device = updated);
+      if (!mounted || updated == null) return;
+      setState(() => _device = updated);
       widget.onCanonicalDeviceChanged?.call(updated);
       if (mounted) _showSaved('Nombre actualizado');
     } catch (error) {
@@ -4284,40 +4268,30 @@ class _LinkEntityDialogState extends State<_LinkEntityDialog> {
   }
 }
 
-/// F2-C rename outcome: set, clear (null) or cancelled.
-sealed class _RenameResult {
-  const _RenameResult();
-}
-
-class _RenameSet extends _RenameResult {
-  const _RenameSet(this.name);
-  final String name;
-}
-
-class _RenameClear extends _RenameResult {
-  const _RenameClear();
-}
-
-class _RenameCancelled extends _RenameResult {
-  const _RenameCancelled();
-}
-
 /// F2-C rename dialog with explicit null-clear semantics.
 ///
-/// Returns a [_RenameResult]: set (non-empty string), clear (null sentinel)
-/// or cancelled. The repository translates clear to the backend null.
+/// The dialog owns the rename call through [onSubmit] (`null` clears the
+/// custom name): it shows a busy state while the request is in flight and, on
+/// failure, stays open with the backend detail rendered inline and the typed
+/// value preserved. It pops the canonical [PhysicalDevice] only on success;
+/// cancel pops `null`.
 class _RenameDialog extends StatefulWidget {
   const _RenameDialog({
     required this.title,
     required this.initialName,
     required this.fallbackName,
     required this.canReset,
+    required this.onSubmit,
   });
 
   final String title;
   final String? initialName;
   final String fallbackName;
   final bool canReset;
+
+  /// Runs the rename (`null` clears the custom name) and returns the canonical
+  /// device. Thrown errors are rendered inline instead of closing the dialog.
+  final Future<PhysicalDevice> Function(String? userName) onSubmit;
 
   @override
   State<_RenameDialog> createState() => _RenameDialogState();
@@ -4328,6 +4302,7 @@ class _RenameDialogState extends State<_RenameDialog> {
     text: widget.initialName ?? '',
   );
   String? _error;
+  bool _busy = false;
 
   @override
   void dispose() {
@@ -4335,13 +4310,28 @@ class _RenameDialogState extends State<_RenameDialog> {
     super.dispose();
   }
 
-  void _submit() {
-    final value = _controller.text.trim();
-    if (value.isEmpty) {
+  Future<void> _submit({bool reset = false}) async {
+    if (_busy) return;
+    final value = reset ? null : _controller.text.trim();
+    if (!reset && value!.isEmpty) {
       setState(() => _error = 'El nombre no puede estar vacío.');
       return;
     }
-    Navigator.of(context).pop(_RenameSet(value));
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final updated = await widget.onSubmit(value);
+      if (!mounted) return;
+      Navigator.of(context).pop(updated);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = deviceMutationErrorMessage(error);
+      });
+    }
   }
 
   @override
@@ -4356,6 +4346,7 @@ class _RenameDialogState extends State<_RenameDialog> {
             TextField(
               controller: _controller,
               autofocus: true,
+              enabled: !_busy,
               decoration: InputDecoration(
                 labelText: 'Nombre personalizado',
                 errorText: _error,
@@ -4379,14 +4370,23 @@ class _RenameDialogState extends State<_RenameDialog> {
       actions: [
         if (widget.canReset)
           TextButton(
-            onPressed: () => Navigator.of(context).pop(const _RenameClear()),
+            onPressed: _busy ? null : () => _submit(reset: true),
             child: const Text('Restablecer nombre'),
           ),
         TextButton(
-          onPressed: () => Navigator.of(context).pop(const _RenameCancelled()),
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancelar'),
         ),
-        FilledButton(onPressed: _submit, child: const Text('Guardar')),
+        FilledButton(
+          onPressed: _busy ? null : _submit,
+          child: _busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Guardar'),
+        ),
       ],
     );
   }

@@ -112,9 +112,22 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // The server detail surfaces in a SnackBar and the canonical name stays.
+    // The server detail surfaces inline: the dialog stays open with the typed
+    // value preserved for correction, and the canonical name stays.
+    expect(find.byType(AlertDialog), findsOneWidget);
     expect(find.text('El nombre ya está en uso'), findsOneWidget);
-    expect(find.text('Nombre falso'), findsNothing);
+    expect(
+      tester
+          .widget<TextField>(
+            find.descendant(
+              of: find.byType(AlertDialog),
+              matching: find.byType(TextField),
+            ),
+          )
+          .controller!
+          .text,
+      'Nombre falso',
+    );
     expect(find.text('Interruptor triple'), findsWidgets);
     expect(controller.selectedDeviceId, 'dev_triple_01');
   });

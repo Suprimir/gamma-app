@@ -904,8 +904,22 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(repo.renamedDevices, contains(('dev_triple_01', 'Luz sala')));
-    // The server detail surfaces in a SnackBar; no false success.
+    // The server detail now surfaces inline: the dialog stays open with the
+    // typed value preserved for correction, and no false success is shown.
+    expect(find.byType(AlertDialog), findsOneWidget);
     expect(find.text('no se pudo renombrar'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(
+            find.descendant(
+              of: find.byType(AlertDialog),
+              matching: find.byType(TextField),
+            ),
+          )
+          .controller!
+          .text,
+      'Luz sala',
+    );
 
     // Canonical state is untouched: the repo device and the visible wall
     // detail keep the old name, never converging to the failed value.
@@ -916,9 +930,12 @@ void main() {
       isNull,
     );
     expect(find.text('Interruptor triple'), findsWidgets);
-    expect(find.text('Luz sala'), findsNothing);
 
-    // Back to the wall list: the card still shows the canonical old name.
+    // Dismiss the still-open dialog (typed value unsubmitted), then return to
+    // the wall list: the card still shows the canonical old name.
+    await tester.tap(find.text('Cancelar'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
     await tester.pageBack();
     await tester.pumpAndSettle();
     expect(

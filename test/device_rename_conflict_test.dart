@@ -11,12 +11,12 @@ import 'package:gamma_app/features/devices/desktop_devices_page.dart';
 
 /// Backend contract regression: renaming an endpoint to a normalized duplicate
 /// within the same semantic area answers HTTP 409 with a household-language
-/// `detail`. The app must surface that exact message and converge nothing: the
-/// rejected name never reaches the canonical controller snapshot and no reload
-/// is triggered.
+/// `detail`. The dialog must stay open, surface that exact message inline and
+/// preserve the typed value so the user can correct it; only a successful
+/// retry closes the dialog and converges the returned canonical device.
 void main() {
   testWidgets(
-    'endpoint rename conflict surfaces backend detail, no convergence',
+    'endpoint rename conflict keeps the dialog open with the detail inline',
     (tester) async {
       final repo = _ConflictFakeRepo(devices: const [_triple, _fan]);
       final controller = await pumpDesktop(tester, repo);
@@ -34,13 +34,11 @@ void main() {
 
       await tester.tap(find.byTooltip('Cambiar nombre del canal').first);
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.descendant(
-          of: find.byType(AlertDialog),
-          matching: find.byType(TextField),
-        ),
-        'Luz',
+      final dialogField = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
       );
+      await tester.enterText(dialogField, 'Luz');
       await tester.tap(find.text('Guardar'));
       await tester.pumpAndSettle();
 
@@ -54,6 +52,10 @@ void main() {
       );
       expect(find.text('Nombre actualizado'), findsNothing);
 
+      // The dialog stays open with the typed value preserved for correction.
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(tester.widget<TextField>(dialogField).controller!.text, 'Luz');
+
       // The canonical snapshot keeps the previous name; the conflict does not
       // converge the request value and does not trigger a refetch.
       final relayAfter = controller.snapshot!.devices
@@ -66,6 +68,25 @@ void main() {
         repo.renamedEndpointAttempts,
         contains(('dev_triple_01', 'relay_1', 'Luz')),
       );
+      expect(repo.loadCalls, loadsBefore);
+
+      // Correcting the name in place succeeds: the dialog closes, the repo
+      // receives the corrected value and the canonical state converges.
+      await tester.enterText(dialogField, 'Luz de techo');
+      await tester.tap(find.text('Guardar'));
+      await tester.pumpAndSettle();
+
+      expect(repo.renamedEndpointAttempts, [
+        ('dev_triple_01', 'relay_1', 'Luz'),
+        ('dev_triple_01', 'relay_1', 'Luz de techo'),
+      ]);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.text('Nombre actualizado'), findsOneWidget);
+      final relayConverged = controller.snapshot!.devices
+          .firstWhere((device) => device.id == 'dev_triple_01')
+          .endpoints
+          .firstWhere((endpoint) => endpoint.id == 'relay_1');
+      expect(relayConverged.userName, 'Luz de techo');
       expect(repo.loadCalls, loadsBefore);
     },
   );
@@ -153,8 +174,10 @@ const _fan = PhysicalDevice(
   ],
 );
 
-/// Fake that rejects both rename mutations with the backend duplicate-name
-/// conflict, so the UI can only pass by surfacing the 409 `detail` verbatim.
+/// Fake that rejects the FIRST endpoint rename with the backend duplicate-name
+/// conflict and succeeds afterwards, so the UI can only pass by surfacing the
+/// 409 `detail` verbatim while keeping the dialog open, preserving the typed
+/// value and converging the corrected retry.
 class _ConflictFakeRepo implements DeviceInventoryRepository {
   _ConflictFakeRepo({List<PhysicalDevice>? devices})
     : devices = List.of(devices ?? const []);
@@ -169,6 +192,7 @@ class _ConflictFakeRepo implements DeviceInventoryRepository {
   List<PhysicalDevice> devices;
 
   int loadCalls = 0;
+  int _endpointRenameAttempts = 0;
   final renamedEndpointAttempts = <(String, String, String?)>[];
 
   static const conflictMessage =
@@ -211,7 +235,23 @@ class _ConflictFakeRepo implements DeviceInventoryRepository {
     String? userName,
   ) async {
     renamedEndpointAttempts.add((deviceId, endpointId, userName));
-    throw ApiException(409, {'detail': conflictMessage});
+    _endpointRenameAttempts++;
+    if (_endpointRenameAttempts == 1) {
+      throw ApiException(409, {'detail': conflictMessage});
+    }
+    final index = devices.indexWhere((device) => device.id == deviceId);
+    final current = devices[index];
+    final updated = current.copyWith(
+      endpoints: [
+        for (final endpoint in current.endpoints)
+          if (endpoint.id == endpointId)
+            endpoint.copyWith(userName: userName)
+          else
+            endpoint,
+      ],
+    );
+    devices[index] = updated;
+    return updated;
   }
 
   @override

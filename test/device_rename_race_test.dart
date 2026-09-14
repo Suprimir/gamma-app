@@ -41,7 +41,9 @@ void main() {
       'Luz   Sala',
     );
     await tester.tap(find.text('Guardar'));
-    await tester.pumpAndSettle();
+    // The dialog owns the rename call now: its busy indicator animates until
+    // the held response resolves, so settle exactly one frame instead.
+    await tester.pump();
     expect(repo.pendingMutation, isNotNull);
 
     // Selection moves to the fan while the rename is still pending.
