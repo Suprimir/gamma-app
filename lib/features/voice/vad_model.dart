@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:vad/vad.dart';
 
 /// Precarga global del modelo Silero.
@@ -23,6 +23,10 @@ class VadModel {
   /// Si falla (p.ej. en tests sin ONNX nativo), la primera escucha real
   /// carga el modelo igual — la precarga es solo una optimización.
   static Future<void> ensureReady() {
+    // Voz deshabilitada en web por ahora: no se precarga el modelo (evita el
+    // error de creación de sesión Silero en la consola del navegador) y la
+    // escucha real queda bloqueada con un mensaje honesto en las dashboards.
+    if (kIsWeb) return Future<void>.value();
     return _ready ??= _prewarm();
   }
 

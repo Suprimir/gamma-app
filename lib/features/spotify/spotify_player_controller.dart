@@ -351,11 +351,18 @@ class SpotifyPlayerController extends ChangeNotifier {
     if (_disposed) return;
 
     Map<String, dynamic> queue = _queue;
-    try {
-      final data = await api.spotifyPlaybackQueue(limit: 20);
-      queue = _normalizeQueue(data);
-    } catch (_) {
-      // Non-fatal: a failed queue read keeps the last known queue.
+    // La cola en tiempo real (Soloist) solo se pide con reproducción activa:
+    // sin playback, el backend responde 503 (Soloist no disponible) y el
+    // fetch únicamente ensucia la consola del navegador.
+    final playbackActive =
+        player?['has_playback'] == true || player?['is_playing'] == true;
+    if (playbackActive) {
+      try {
+        final data = await api.spotifyPlaybackQueue(limit: 20);
+        queue = _normalizeQueue(data);
+      } catch (_) {
+        // Non-fatal: a failed queue read keeps the last known queue.
+      }
     }
     if (_disposed) return;
 

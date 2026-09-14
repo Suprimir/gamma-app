@@ -255,6 +255,10 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _toggleRecord() async {
+    if (kIsWeb) {
+      _fail('La voz no está disponible en la versión web todavía.');
+      return;
+    }
     if (_listening) {
       // Stop manual: en lugar de descartar el audio hablado, forzar el fin
       // del habla en el VAD (submitUserSpeechOnPause) — emite onSpeechEnd

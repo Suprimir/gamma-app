@@ -230,6 +230,10 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   }
 
   Future<void> _toggleRecord() async {
+    if (kIsWeb) {
+      _fail('La voz no está disponible en la versión web todavía.');
+      return;
+    }
     if (_listening) {
       await VadModel.vad.stopListening();
       if (!mounted) return;

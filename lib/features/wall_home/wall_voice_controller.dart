@@ -65,6 +65,10 @@ class WallVoiceController extends ChangeNotifier {
   }
 
   Future<void> toggle() async {
+    if (kIsWeb) {
+      _fail('La voz no está disponible en la versión web todavía.');
+      return;
+    }
     if (_listening) {
       await _stopAndIdle();
       return;
