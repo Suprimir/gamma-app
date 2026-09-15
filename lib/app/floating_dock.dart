@@ -35,8 +35,6 @@ class FloatingDock extends StatelessWidget {
   /// Cap on dock width; `null` lets the dock span the window inset.
   final double? maxWidth;
 
-  static const _radius = 32.0;
-
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
@@ -48,27 +46,11 @@ class FloatingDock extends StatelessWidget {
             constraints: BoxConstraints(
               maxWidth: math.min(maxWidth ?? double.infinity, width - 32),
             ),
-            child: Container(
+            child: Padding(
+              // Transparent dock: the page background (gradient, orb glow)
+              // stays visible behind the floating items. The active pill uses
+              // the runtime-themable accent.
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                // Light card matching the app surfaces; the active pill uses
-                // the runtime-themable accent.
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(_radius),
-                border: Border.all(color: AppColors.border),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.shadowStrong,
-                    blurRadius: 24,
-                    offset: const Offset(0, 10),
-                  ),
-                  BoxShadow(
-                    color: AppColors.shadow,
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
-                  ),
-                ],
-              ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [

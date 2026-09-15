@@ -58,4 +58,40 @@ void main() {
       expect(selected, 2);
     },
   );
+
+  testWidgets(
+    ': page area extends behind the dock while content keeps its inset',
+    (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      const pageKey = ValueKey('page-fills-shell');
+      late double bottomInset;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MobileShell(
+              destinations: appDestinations,
+              currentIndex: 0,
+              onSelected: (_) {},
+              // Pages consume the injected inset through their root SafeArea;
+              // read it back here to pin the contract.
+              page: Builder(
+                builder: (context) {
+                  bottomInset = MediaQuery.paddingOf(context).bottom;
+                  return const SizedBox.expand(key: pageKey);
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // The page paints edge to edge, so its background stays visible behind
+      // the transparent dock.
+      expect(tester.getRect(find.byKey(pageKey)).bottom, 844);
+      // Content stays clear of the dock through the injected bottom inset.
+      expect(bottomInset, greaterThanOrEqualTo(kMobileDockReserve));
+    },
+  );
 }

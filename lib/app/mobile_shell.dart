@@ -3,7 +3,9 @@ import 'package:flutter/cupertino.dart';
 import 'floating_dock.dart';
 import 'navigation_destinations.dart';
 
-/// Vertical space reserved below the page area for the dock geometry.
+/// Bottom content inset reserved for the floating dock geometry, injected as
+/// bottom MediaQuery padding so pages keep their content clear of the dock
+/// while their backgrounds still paint edge to edge behind it.
 /// Pill: inner padding 8 + capsule ~42 + bottom 24 + SafeArea ~8 = ~82 → 96 safe.
 const double kMobileDockReserve = 96;
 
@@ -24,12 +26,21 @@ class MobileShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
     return Stack(
       clipBehavior: Clip.none,
       children: [
         Positioned.fill(
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: kMobileDockReserve),
+          // The page paints edge to edge so its background (gradient, orb
+          // glow) stays visible behind the transparent dock. Content stays
+          // clear of the dock through the injected bottom inset consumed by
+          // each page's root SafeArea — the page area itself is not shrunk.
+          child: MediaQuery(
+            data: media.copyWith(
+              padding: media.padding.copyWith(
+                bottom: media.padding.bottom + kMobileDockReserve,
+              ),
+            ),
             child: page,
           ),
         ),
