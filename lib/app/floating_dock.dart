@@ -88,6 +88,10 @@ class _DockItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return MergeSemantics(
       child: Semantics(
+        // Every destination must expose its readable name, not just the
+        // active one: the label is visual-only when inactive, so assistive
+        // technology would otherwise announce four unnamed buttons.
+        label: destination.label,
         selected: active,
         button: true,
         child: AnimatedContainer(
@@ -115,15 +119,21 @@ class _DockItem extends StatelessWidget {
                           color: Colors.white,
                         ),
                         const SizedBox(width: 8),
-                        Text(
-                          destination.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 13.5,
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.2,
+                        // The Semantics wrapper above already supplies the
+                        // accessible name for every destination; keeping the
+                        // visible label out of the semantics tree avoids
+                        // announcing the active name twice.
+                        ExcludeSemantics(
+                          child: Text(
+                            destination.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13.5,
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.2,
+                            ),
                           ),
                         ),
                       ],
