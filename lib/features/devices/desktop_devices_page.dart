@@ -877,7 +877,7 @@ class _DesktopAddDialogState extends State<_DesktopAddDialog> {
             Text('Tipo', style: TextStyle(color: dimText, fontSize: 12)),
             const SizedBox(height: 6),
             DropdownButtonFormField<String>(
-              value: _type,
+              initialValue: _type,
               isExpanded: true,
               dropdownColor: AppColors.surface,
               style: const TextStyle(color: AppColors.text, fontSize: 14),
@@ -926,7 +926,7 @@ class _DesktopAddDialogState extends State<_DesktopAddDialog> {
             Text('Ubicación', style: TextStyle(color: dimText, fontSize: 12)),
             const SizedBox(height: 6),
             DropdownButtonFormField<String?>(
-              value: _areaId,
+              initialValue: _areaId,
               isExpanded: true,
               dropdownColor: AppColors.surface,
               style: const TextStyle(color: AppColors.text, fontSize: 14),

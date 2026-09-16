@@ -1191,7 +1191,7 @@ class _LocationBody extends StatelessWidget {
         const SizedBox(height: 6),
         DropdownButtonFormField<String?>(
           key: const Key('desktop-location-dropdown'),
-          value: effectiveValue,
+          initialValue: effectiveValue,
           isExpanded: true,
           decoration: const InputDecoration(
             isDense: true,
@@ -1421,7 +1421,7 @@ class _EndpointEditor extends StatelessWidget {
               const SizedBox(height: 6),
               DropdownButtonFormField<String?>(
                 key: Key('desktop-channel-role-${endpoint.id}'),
-                value: roleOptions.containsKey(endpoint.semanticRole)
+                initialValue: roleOptions.containsKey(endpoint.semanticRole)
                     ? endpoint.semanticRole
                     : null,
                 isExpanded: true,
@@ -1462,7 +1462,7 @@ class _EndpointEditor extends StatelessWidget {
             const SizedBox(height: 6),
             DropdownButtonFormField<String?>(
               key: Key('desktop-channel-area-${endpoint.id}'),
-              value: areas.any((a) => a.id == endpoint.controlledAreaId)
+              initialValue: areas.any((a) => a.id == endpoint.controlledAreaId)
                   ? endpoint.controlledAreaId
                   : null,
               isExpanded: true,
@@ -1625,7 +1625,7 @@ class _ControlsBody extends StatelessWidget {
         const SizedBox(height: 6),
         DropdownButtonFormField<String>(
           key: const Key('desktop-type-dropdown'),
-          value: type,
+          initialValue: type,
           isExpanded: true,
           decoration: const InputDecoration(
             isDense: true,

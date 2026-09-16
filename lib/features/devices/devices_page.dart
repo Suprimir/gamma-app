@@ -378,7 +378,7 @@ class _DashboardAddDialogState extends State<_DashboardAddDialog> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: _type,
+              initialValue: _type,
               decoration: const InputDecoration(
                 labelText: 'Tipo',
                 border: OutlineInputBorder(),
@@ -396,7 +396,7 @@ class _DashboardAddDialogState extends State<_DashboardAddDialog> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String?>(
-              value: _areaId,
+              initialValue: _areaId,
               isExpanded: true,
               decoration: const InputDecoration(
                 labelText: 'Habitación',
