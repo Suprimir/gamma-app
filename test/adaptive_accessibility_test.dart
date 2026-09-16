@@ -91,7 +91,7 @@ void main() {
     expect(controller.selectedDeviceId, 'dev_fan_01');
   });
 
-  testWidgets('wall device and area cards meet touch targets', (tester) async {
+  testWidgets('wall device cards meet touch targets', (tester) async {
     final repo = _A11yFakeRepo(devices: const [_a11yTriple, _a11yFan]);
     await pumpWallDevices(tester, repo);
 
