@@ -7,8 +7,8 @@ import 'package:gamma_app/adaptive/adaptive_scope.dart';
 import 'package:gamma_app/adaptive/adaptive_surface_preferences.dart';
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/features/devices/desktop_devices_page.dart';
+import 'package:gamma_app/features/devices/desktop_device_detail_pane.dart';
 import 'package:gamma_app/data/device_inventory.dart';
-import 'package:gamma_app/features/devices/devices_page.dart';
 
 /// F3-C final: canonical mutation convergence. Mutations performed through
 /// DeviceDetailView must converge back into the AdaptiveFeatureController
@@ -59,7 +59,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.descendant(
-        of: find.byType(DeviceDetailView),
+        of: find.byType(DesktopDeviceDetailPane),
         matching: find.text('Luz Sala'),
       ),
       findsOneWidget,
@@ -105,15 +105,17 @@ void main() {
     expect(relay3.userName, isNull);
     expect(repo.loadCalls, loadsBefore);
 
-    // Reselection shows the converged endpoint name, not the stale one.
+    // Reselection shows the converged endpoint name, not the stale one. The
+    // desktop pane renders it in the endpoint header; the mobile-only
+    // 'Nombre personalizado:' copy has no desktop equivalent.
     controller.selectDevice('dev_fan_01');
     await tester.pumpAndSettle();
     controller.selectDevice('dev_triple_01');
     await tester.pumpAndSettle();
     expect(
       find.descendant(
-        of: find.byType(DeviceDetailView),
-        matching: find.text('Nombre personalizado: Luz pasillo'),
+        of: find.byType(DesktopDeviceDetailPane),
+        matching: find.text('Luz pasillo'),
       ),
       findsOneWidget,
     );
@@ -129,12 +131,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Dropdowns: 0 physical area, then per endpoint [Área que controla,
-    // Qué controla]. relay_2's Área que controla is index 3.
+    // Dropdowns: the device location plus a role + area pair per endpoint
+    // (7 total). Target relay_2's area by its stable key.
     final dropdowns = find.byType(DropdownButtonFormField<String?>);
     expect(dropdowns, findsNWidgets(7));
-    await tester.ensureVisible(dropdowns.at(3));
-    await tester.tap(dropdowns.at(3));
+    final relay2Area = find.byKey(const Key('desktop-channel-area-relay_2'));
+    await tester.ensureVisible(relay2Area);
+    await tester.tap(relay2Area);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Sala').last);
     await tester.pumpAndSettle();
@@ -166,10 +169,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // relay_1's 'Qué controla' dropdown is index 2.
-    final dropdowns = find.byType(DropdownButtonFormField<String?>);
-    await tester.ensureVisible(dropdowns.at(2));
-    await tester.tap(dropdowns.at(2));
+    // Target relay_1's 'Qué controla' selector by its stable key.
+    final roleDropdown = find.byKey(const Key('desktop-channel-role-relay_1'));
+    await tester.ensureVisible(roleDropdown);
+    await tester.tap(roleDropdown);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Luz').last);
     await tester.pumpAndSettle();
@@ -190,7 +193,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.descendant(
-        of: find.byType(DeviceDetailView),
+        of: find.byType(DesktopDeviceDetailPane),
         matching: find.text('Luz'),
       ),
       findsWidgets,
@@ -210,9 +213,9 @@ void main() {
     await tester.pumpAndSettle();
 
     // Set a user override first.
-    final dropdowns = find.byType(DropdownButtonFormField<String?>);
-    await tester.ensureVisible(dropdowns.at(2));
-    await tester.tap(dropdowns.at(2));
+    final roleDropdown = find.byKey(const Key('desktop-channel-role-relay_1'));
+    await tester.ensureVisible(roleDropdown);
+    await tester.tap(roleDropdown);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Luz').last);
     await tester.pumpAndSettle();
@@ -220,8 +223,8 @@ void main() {
 
     // Clear the override; the backend answers with a provider-effective role.
     final loadsBefore = repo.loadCalls;
-    await tester.ensureVisible(dropdowns.at(2));
-    await tester.tap(dropdowns.at(2));
+    await tester.ensureVisible(roleDropdown);
+    await tester.tap(roleDropdown);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Sin configurar').last);
     await tester.pumpAndSettle();

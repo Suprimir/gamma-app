@@ -77,7 +77,7 @@ void main() {
     await _focusRow(tester, 'dev_triple_01');
     expect(FocusManager.instance.primaryFocus, isNotNull);
     expect(FocusManager.instance.primaryFocus!.hasFocus, isTrue);
-    expect(_rowBorderColor(tester, 'dev_triple_01'), AppColors.accentStrong);
+    expect(_rowBorderColor(tester, 'dev_triple_01'), AppColors.gammaIndigo);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
@@ -85,7 +85,7 @@ void main() {
 
     await _focusRow(tester, 'dev_fan_01');
     expect(FocusManager.instance.primaryFocus!.hasFocus, isTrue);
-    expect(_rowBorderColor(tester, 'dev_fan_01'), AppColors.accentStrong);
+    expect(_rowBorderColor(tester, 'dev_fan_01'), AppColors.gammaIndigo);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.space);
     await tester.pumpAndSettle();

@@ -2,6 +2,9 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:gamma_app/adaptive/adaptive_layout.dart';
+import 'package:gamma_app/adaptive/adaptive_scope.dart';
+import 'package:gamma_app/adaptive/adaptive_surface_preferences.dart';
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/features/areas/areas_page.dart';
 import 'package:gamma_app/data/device_inventory.dart';
@@ -327,6 +330,28 @@ Future<void> _pumpDetail(WidgetTester tester, _FakeRepo repo) async {
   // Per-channel configuration is collapsed by default; expand it so the
   // area/role selectors and rename affordances are built.
   await tester.tap(find.text('Configuración'));
+  await tester.pumpAndSettle();
+}
+
+/// Pumps DevicesPage on the desktop surface at a narrow width: the desktop
+/// master list is where the 'Habitaciones' entry (and its refetch-on-pop
+/// contract) lives after the room grid left the mobile landing.
+Future<void> _pumpDesktopDevices(WidgetTester tester, _FakeRepo repo) async {
+  tester.view.physicalSize = const Size(800, 1600);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(
+    MaterialApp(
+      home: AppAdaptiveScope(
+        windowClass: AppWindowClass.expanded,
+        effectiveSurface: EffectiveAppSurface.desktop,
+        controller: AdaptiveSurfaceModeController(),
+        child: Scaffold(
+          body: DevicesPage(api: FakeApiForDetail(), repository: repo),
+        ),
+      ),
+    ),
+  );
   await tester.pumpAndSettle();
 }
 
@@ -730,25 +755,22 @@ void f2cClosureHardeningTests() {
           ),
         ],
       );
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: DevicesPage(api: FakeApiForDetail(), repository: repo),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
+      await _pumpDesktopDevices(tester, repo);
       expect(find.text('Sala · Luz'), findsNothing);
-      // Open Areas, rename, and return: DevicesPage refetches.
-      await tester.tap(find.byKey(const Key('areas-row')));
+      // Open the desktop Areas workspace ('Habitaciones'), rename, and return:
+      // the devices workspace refetches on pop.
+      await tester.tap(find.text('Habitaciones'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Sala'));
+      await tester.tap(find.byKey(const ValueKey('desktop-area-area_SALA')));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField).first, 'Sala principal');
       await tester.tap(find.widgetWithText(FilledButton, 'Guardar'));
       await tester.pumpAndSettle();
-      // Back to DevicesPage (refetch triggered by _open).
+      // Back to the Areas list, then to the devices workspace. The Areas
+      // workspace is a bare pane (no AppBar), so pop its route directly.
       await tester.pageBack();
+      await tester.pumpAndSettle();
+      tester.state<NavigatorState>(find.byType(Navigator).first).pop();
       await tester.pumpAndSettle();
       // The fake repo refreshes its devices with the new global display.
       expect(repo.loadCalls, greaterThan(1));
@@ -836,31 +858,27 @@ void f2cReferentialHardeningTests() {
           ),
         ],
       );
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: DevicesPage(api: FakeApiForDetail(), repository: repo),
-          ),
-        ),
-      );
+      await _pumpDesktopDevices(tester, repo);
+      // Rename through the desktop Areas workspace and return; the fake repo
+      // emulates the backend DTO refresh: after updateArea the device global
+      // display uses the new Area name WITHOUT Dart recomputation.
+      await tester.tap(find.text('Habitaciones'));
       await tester.pumpAndSettle();
-      // Rename through Areas and return; the fake repo emulates the backend
-      // DTO refresh: after updateArea the device global display uses the new
-      // Area name WITHOUT Dart recomputation.
-      await tester.tap(find.byKey(const Key('areas-row')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Sala'));
+      await tester.tap(find.byKey(const ValueKey('desktop-area-area_SALA')));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField).first, 'Sala principal');
       await tester.tap(find.widgetWithText(FilledButton, 'Guardar'));
       await tester.pumpAndSettle();
       await tester.pageBack();
       await tester.pumpAndSettle();
-      // Open the (renamed) area, then the device detail: the endpoint global
-      // display is the backend DTO value now reflecting the renamed Area.
-      await tester.tap(find.text('Sala principal'));
+      // The Areas workspace is a bare pane (no AppBar): pop its route directly.
+      tester.state<NavigatorState>(find.byType(Navigator).first).pop();
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Interruptor triple'));
+      // Open the device detail: the endpoint global display is the backend DTO
+      // value now reflecting the renamed Area.
+      await tester.tap(find.byKey(const ValueKey('desktop-device-dev_1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Configuración'));
       await tester.pumpAndSettle();
       expect(find.text('Sala principal · Luz'), findsOneWidget);
     });

@@ -21,7 +21,9 @@ void main() {
     );
     await tester.pump();
 
-    // The five canonical destinations render with visible labels.
+    // The active destination keeps its visible pill label; every destination
+    // (active or not) exposes its readable name through the dock semantics.
+    expect(find.text('Inicio'), findsOneWidget);
     for (final label in [
       'Inicio',
       'Dispositivos',
@@ -29,7 +31,15 @@ void main() {
       'Ajustes',
       'Cámaras',
     ]) {
-      expect(find.text(label), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(FloatingDock),
+          matching: find.byWidgetPredicate(
+            (widget) => widget is Semantics && widget.properties.label == label,
+          ),
+        ),
+        findsOneWidget,
+      );
     }
 
     // The floating dock is the primary navigation and sits at the bottom.

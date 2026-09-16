@@ -8,12 +8,23 @@ import 'package:gamma_app/adaptive/adaptive_layout.dart';
 import 'package:gamma_app/adaptive/adaptive_surface_preferences.dart';
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/app/app_shell.dart';
+import 'package:gamma_app/app/desktop_drawer.dart';
 import 'package:gamma_app/features/dashboard/dashboard_page.dart';
+import 'package:gamma_app/features/dashboard/desktop_dashboard_page.dart';
 import 'package:gamma_app/data/device_inventory.dart';
 import 'package:gamma_app/features/devices/devices_page.dart';
 import 'package:gamma_app/app/floating_dock.dart';
 import 'package:gamma_app/app/mobile_shell.dart';
 import 'package:gamma_app/app/wall_panel_shell.dart';
+
+/// Desktop sidebar destinations are collapsed to icon-only: the accessible
+/// name lives on the semantics wrapper, not on a visible `Text`.
+Finder _sidebarDestination(String label) => find.descendant(
+  of: find.byType(DesktopSidebar),
+  matching: find.byWidgetPredicate(
+    (widget) => widget is Semantics && widget.properties.label == label,
+  ),
+);
 
 /// F3-B baseline freeze. These invariants describe the current Home/data flow
 /// before Wall Home exists. Any F3-B change that breaks one of these without
@@ -66,7 +77,9 @@ void main() {
         await tester.pump();
 
         expect(find.byType(WallPanelShell), findsNothing);
-        expect(find.byType(DashboardPage), findsOneWidget);
+        // Desktop renders the dedicated desktop dashboard; mobile keeps the
+        // voice DashboardPage.
+        expect(find.byType(DesktopDashboardPage), findsOneWidget);
 
         debugDefaultTargetPlatformOverride = null;
       },
@@ -118,7 +131,7 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.text('Dispositivos'));
+      await tester.tap(_sidebarDestination('Dispositivos'));
       await tester.pump();
       await tester.pump();
       final devicesState = tester.state(find.byType(DevicesPage));
@@ -214,6 +227,9 @@ void main() {
       final dock = find.byType(FloatingDock);
       expect(dock, findsOneWidget);
       expect(tester.widget<FloatingDock>(dock).currentIndex, 0);
+      // Only the active destination renders a visible label now; every
+      // destination still exposes its readable name through the dock semantics.
+      expect(find.text('Inicio'), findsOneWidget);
       for (final label in [
         'Inicio',
         'Dispositivos',
@@ -221,7 +237,16 @@ void main() {
         'Ajustes',
         'Cámaras',
       ]) {
-        expect(find.text(label), findsOneWidget);
+        expect(
+          find.descendant(
+            of: dock,
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is Semantics && widget.properties.label == label,
+            ),
+          ),
+          findsOneWidget,
+        );
       }
 
       debugDefaultTargetPlatformOverride = null;

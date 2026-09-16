@@ -219,6 +219,33 @@ Future<AdaptiveSurfaceModeController> _pumpShell(
   return controller;
 }
 
+/// Locates a top-level destination on whichever shell is mounted. The mobile
+/// dock only renders a visible `Text` for the active destination and the
+/// desktop sidebar is icon-only, so both expose the name on a semantics
+/// wrapper; the wall rail still renders every label.
+Finder _destination(String label) {
+  if (find.byType(FloatingDock).evaluate().isNotEmpty) {
+    return find.descendant(
+      of: find.byType(FloatingDock),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is Semantics && widget.properties.label == label,
+      ),
+    );
+  }
+  if (find.byType(WallPanelShell).evaluate().isNotEmpty) {
+    return find.descendant(
+      of: find.byKey(const ValueKey('wall-panel-side-rail')),
+      matching: find.text(label),
+    );
+  }
+  return find.descendant(
+    of: find.byType(DesktopSidebar),
+    matching: find.byWidgetPredicate(
+      (widget) => widget is Semantics && widget.properties.label == label,
+    ),
+  );
+}
+
 void main() {
   void useLinuxPlatform() {
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
@@ -233,20 +260,7 @@ void main() {
 
   // Taps a top-level destination through whichever shell is mounted.
   Future<void> tapDestination(WidgetTester tester, String label) async {
-    final dockLabel = find.descendant(
-      of: find.byType(FloatingDock),
-      matching: find.text(label),
-    );
-    if (dockLabel.evaluate().isNotEmpty) {
-      await tester.tap(dockLabel);
-    } else {
-      await tester.tap(
-        find.descendant(
-          of: find.byType(DesktopSidebar),
-          matching: find.text(label),
-        ),
-      );
-    }
+    await tester.tap(_destination(label));
     await settle(tester);
   }
 
@@ -255,12 +269,12 @@ void main() {
     final api = _OffstageDeviceApi();
     final surface = await _pumpShell(tester, api, AppSurfaceMode.desktop);
 
-    // Home is visited/cached (DashboardPage — no inventory fetch), then
-    // Devices becomes active and fetches once.
+    // The desktop Home fetches the canonical inventory for its dashboard;
+    // Devices adds one controller load plus its bulk state sweep reload.
     await tapDestination(tester, 'Inicio');
-    expect(api.inventoryLoadCalls, 0);
-    await tapDestination(tester, 'Dispositivos');
     expect(api.inventoryLoadCalls, 1);
+    await tapDestination(tester, 'Dispositivos');
+    expect(api.inventoryLoadCalls, 3);
 
     // Baseline for the switch: only composition may add loads from here.
     api.inventoryLoadCalls = 0;
@@ -268,9 +282,10 @@ void main() {
     await settle(tester);
     await settle(tester);
 
-    // Exactly ONE new inventory load: the active WallDevicesPage. The
-    // offstage Home must NOT rebuild into WallPanelHomePage and fetch.
-    expect(api.inventoryLoadCalls, 1);
+    // Only the active WallDevicesPage loads (its own load plus one-shot bulk
+    // sweep). The offstage Home must NOT rebuild into WallPanelHomePage and
+    // fetch.
+    expect(api.inventoryLoadCalls, 2);
     expect(find.byType(WallPanelShell), findsOneWidget);
 
     // Home becomes active now: the Wall Home performs its FIRST load HERE.
@@ -291,7 +306,8 @@ void main() {
 
     await tapDestination(tester, 'Inicio');
     await tapDestination(tester, 'Dispositivos');
-    expect(api.inventoryLoadCalls, 1);
+    // Desktop Home load + one Devices controller load + its bulk sweep.
+    expect(api.inventoryLoadCalls, 3);
 
     // Baseline for the switch.
     api.inventoryLoadCalls = 0;
@@ -299,22 +315,23 @@ void main() {
     await settle(tester);
     await settle(tester);
 
-    // Only the active WallDevicesPage loads: 1, not 2.
-    expect(api.inventoryLoadCalls, 1);
+    // Only the active WallDevicesPage loads (load + bulk sweep).
+    expect(api.inventoryLoadCalls, 2);
     expect(find.byType(WallDevicesPage), findsOneWidget);
 
     // Back to desktop adds no inventory load (both controllers loaded).
     await surface.setMode(AppSurfaceMode.desktop);
     await settle(tester);
     await settle(tester);
-    expect(api.inventoryLoadCalls, 1);
+    expect(api.inventoryLoadCalls, 2);
 
-    // A second wall switch adds the same single bounded load (never 2).
+    // A second wall switch adds the same bounded controller load (never a
+    // second, independently-owned controller).
     api.inventoryLoadCalls = 0;
     await surface.setMode(AppSurfaceMode.wallPanel);
     await settle(tester);
     await settle(tester);
-    expect(api.inventoryLoadCalls, 1);
+    expect(api.inventoryLoadCalls, 2);
 
     debugDefaultTargetPlatformOverride = null;
   });
@@ -324,11 +341,11 @@ void main() {
     final api = _OffstageDeviceApi();
     final surface = await _pumpShell(tester, api, AppSurfaceMode.desktop);
 
-    // Home active (DashboardPage, no inventory), Devices active (one load).
+    // Desktop Home load, then Devices active (controller load + bulk sweep).
     await tapDestination(tester, 'Inicio');
-    expect(api.inventoryLoadCalls, 0);
-    await tapDestination(tester, 'Dispositivos');
     expect(api.inventoryLoadCalls, 1);
+    await tapDestination(tester, 'Dispositivos');
+    expect(api.inventoryLoadCalls, 3);
 
     // Baseline for the switch.
     api.inventoryLoadCalls = 0;
@@ -336,8 +353,9 @@ void main() {
     await settle(tester);
     await settle(tester);
 
-    // The switch loads only the active wall Devices (1); offstage Home: 0.
-    expect(api.inventoryLoadCalls, 1);
+    // The switch loads only the active wall Devices (load + bulk sweep); the
+    // offstage Home adds nothing.
+    expect(api.inventoryLoadCalls, 2);
 
     // Activating Home triggers the Wall Home's first load (+1, not consumed
     // offstage at the switch).
@@ -361,7 +379,8 @@ void main() {
     await _pumpShell(tester, api, AppSurfaceMode.desktop);
 
     await tapDestination(tester, 'Dispositivos');
-    expect(api.inventoryLoadCalls, 1);
+    // Desktop Home load + one Devices controller load + its bulk sweep.
+    expect(api.inventoryLoadCalls, 3);
 
     // Baseline: a pure geometry change must not re-fetch inventory.
     api.inventoryLoadCalls = 0;

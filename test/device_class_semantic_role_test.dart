@@ -164,6 +164,13 @@ Future<void> _pumpDetail(
   final deviceRow = find.text(deviceName ?? 'Relé').first;
   await tester.tap(deviceRow);
   await tester.pumpAndSettle();
+  // The endpoint editors (area + semantic role) live behind the collapsed
+  // Configuración section of the standard detail. Expand it so the role
+  // selector is in the tree before asserting.
+  final configSection = find.byKey(const Key('device-config-section'));
+  await tester.ensureVisible(configSection);
+  await tester.tap(configSection);
+  await tester.pumpAndSettle();
 }
 
 void main() {

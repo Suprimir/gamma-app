@@ -8,9 +8,9 @@ import 'package:gamma_app/adaptive/adaptive_layout.dart';
 import 'package:gamma_app/adaptive/adaptive_scope.dart';
 import 'package:gamma_app/adaptive/adaptive_surface_preferences.dart';
 import 'package:gamma_app/data/api_client.dart';
+import 'package:gamma_app/features/devices/desktop_device_detail_pane.dart';
 import 'package:gamma_app/features/devices/desktop_devices_page.dart';
 import 'package:gamma_app/data/device_inventory.dart';
-import 'package:gamma_app/features/devices/devices_page.dart';
 
 /// F3-C micro-closure II: RED convergence-race contract. A mutation response
 /// (rename / semantic role) resolved by the backend AFTER the user moved the
@@ -78,7 +78,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.descendant(
-        of: find.byType(DeviceDetailView),
+        of: find.byType(DesktopDeviceDetailPane),
         matching: find.text('Luz Sala'),
       ),
       findsOneWidget,
@@ -97,10 +97,10 @@ void main() {
     expect(controller.selectedDeviceId, 'dev_triple_01');
 
     // Set relay_1's semantic role; the fake holds the aggregate in flight.
-    final dropdowns = find.byType(DropdownButtonFormField<String?>);
-    expect(dropdowns, findsNWidgets(7));
-    await tester.ensureVisible(dropdowns.at(2));
-    await tester.tap(dropdowns.at(2));
+    final roleDropdown = find.byKey(const Key('desktop-channel-role-relay_1'));
+    expect(find.byType(DropdownButtonFormField<String?>), findsNWidgets(7));
+    await tester.ensureVisible(roleDropdown);
+    await tester.tap(roleDropdown);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Luz').last);
     await tester.pumpAndSettle();
@@ -144,10 +144,9 @@ void main() {
     // Reselecting the triple shows the converged role, not the stale one.
     controller.selectDevice('dev_triple_01');
     await tester.pumpAndSettle();
-    final roleDropdowns = find.byType(DropdownButtonFormField<String?>);
     final roleButton = tester.widget<DropdownButton<String?>>(
       find.descendant(
-        of: roleDropdowns.at(2),
+        of: find.byKey(const Key('desktop-channel-role-relay_1')),
         matching: find.byType(DropdownButton<String?>),
       ),
     );

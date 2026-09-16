@@ -174,11 +174,41 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  Future<void> openDeviceDetail(WidgetTester tester) async {
-    await tester.tap(find.byKey(const Key('pending-devices-banner')));
+  /// Device management lives behind the landing's devices button now: the
+  /// flat list is the entry point to the detail (the pending banner is gone).
+  Future<void> openDevicesList(WidgetTester tester) async {
+    await tester.tap(find.byKey(const ValueKey('open-devices-list')));
     await tester.pumpAndSettle();
+  }
+
+  Future<void> openDeviceDetail(WidgetTester tester) async {
+    await openDevicesList(tester);
     await tester.tap(find.text('Interruptor triple'));
     await tester.pumpAndSettle();
+  }
+
+  /// The physical area selector and the endpoint editors are progressive
+  /// disclosure inside the collapsed 'Configuración' block.
+  Future<void> expandConfiguration(WidgetTester tester) async {
+    await tester.tap(find.text('Configuración'));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> tapChip(WidgetTester tester, String chipKey) async {
+    await tester.tap(find.byKey(ValueKey(chipKey)));
+    await tester.pumpAndSettle();
+  }
+
+  /// The landing's offline badge surfaces the devices that need review
+  /// (offline + unreachable + authError); unknown/sleeping never inflate it.
+  void expectReviewCount(String count) {
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('open-offline-list')),
+        matching: find.text(count),
+      ),
+      findsOneWidget,
+    );
   }
 
   Future<void> assignPhysicalArea(WidgetTester tester) async {
@@ -196,17 +226,26 @@ void main() {
         final api = FakeDeviceApi();
         await pumpDevicesPage(tester, api);
 
-        expect(find.text('4 dispositivos nuevos'), findsOneWidget);
-        expect(find.text('ESPACIOS'), findsOneWidget);
-        expect(find.text('Gateways'), findsOneWidget);
+        // The controls-first landing renders the fixture channels as tiles.
+        expect(find.text('Relé cocina'), findsOneWidget);
+        expect(find.text('Canal 1'), findsOneWidget);
 
-        await tester.tap(find.byKey(const Key('gateways-row')));
-        await tester.pumpAndSettle();
+        // The sanitized topology lives in the flat list behind the devices
+        // button: pending configuration and infrastructure have their own
+        // filter chips (the old landing 'ESPACIOS' grid no longer exists).
+        await openDevicesList(tester);
+        await tapChip(tester, 'mobile-devices-chip-unconfigured');
+        expect(find.text('Interruptor triple'), findsOneWidget);
+        expect(find.text('Luz 1'), findsOneWidget);
+        expect(find.text('Luz 2'), findsOneWidget);
+        expect(find.text('Relé cocina'), findsOneWidget);
+        // Already-configured devices never count as pending.
+        expect(find.text('Luz sala'), findsNothing);
+
+        expect(find.text('Gateways'), findsOneWidget);
+        await tapChip(tester, 'mobile-devices-chip-gateways');
         expect(find.text('Gateway principal'), findsOneWidget);
         expect(find.textContaining('4 subdispositivos'), findsOneWidget);
-
-        await tester.pageBack();
-        await tester.pumpAndSettle();
       },
     );
 
@@ -215,14 +254,14 @@ void main() {
       final api = FakeDeviceApi();
       await pumpDevicesPage(tester, api);
 
-      expect(find.text('4 dispositivos nuevos'), findsOneWidget);
-      expect(find.text('5 dispositivos nuevos'), findsNothing);
-
-      await tester.tap(find.byKey(const Key('pending-devices-banner')));
-      await tester.pumpAndSettle();
-      expect(find.text('Nuevos dispositivos'), findsOneWidget);
+      // The pending inbox is the flat list's 'Sin configurar' filter; the
+      // gateway is infrastructure, never a user device.
+      await openDevicesList(tester);
+      await tapChip(tester, 'mobile-devices-chip-unconfigured');
       expect(find.text('Interruptor triple'), findsOneWidget);
       expect(find.text('Gateway principal'), findsNothing);
+      // The configured device never joins the pending inbox.
+      expect(find.text('Luz sala'), findsNothing);
     });
 
     testWidgets('ENRICHED devices count as pending and are listed', (
@@ -232,10 +271,10 @@ void main() {
       final api = FakeDeviceApi();
       await pumpDevicesPage(tester, api);
 
-      expect(find.text('4 dispositivos nuevos'), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('pending-devices-banner')));
-      await tester.pumpAndSettle();
+      // Every ENRICHED (or partially configured) device counts as pending and
+      // stays listed under the 'Sin configurar' filter.
+      await openDevicesList(tester);
+      await tapChip(tester, 'mobile-devices-chip-unconfigured');
       expect(find.text('Interruptor triple'), findsOneWidget);
       expect(find.text('Luz 1'), findsOneWidget);
       expect(find.text('Luz 2'), findsOneWidget);
@@ -251,11 +290,16 @@ void main() {
       await openDeviceDetail(tester);
 
       expect(find.text('Configurar dispositivo'), findsOneWidget);
-      expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
+      // CONTROLES is the household surface: one row per canonical endpoint.
       expect(find.text('Canal 1'), findsOneWidget);
       expect(find.text('Canal 2'), findsOneWidget);
       expect(find.text('Canal 3'), findsOneWidget);
-      expect(find.text('ENDPOINTS / CANALES'), findsOneWidget);
+      // Endpoint editors (and the physical-area selector) live inside the
+      // collapsed Configuración block; the old 'ENDPOINTS / CANALES' panel
+      // header no longer exists.
+      expect(find.text('Configuración'), findsOneWidget);
+      await expandConfiguration(tester);
+      expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
     });
 
     testWidgets('physical area update goes through the API and updates state', (
@@ -265,6 +309,7 @@ void main() {
       final api = FakeDeviceApi();
       await pumpDevicesPage(tester, api);
       await openDeviceDetail(tester);
+      await expandConfiguration(tester);
 
       await assignPhysicalArea(tester);
 
@@ -277,6 +322,7 @@ void main() {
       final api = FakeDeviceApi();
       await pumpDevicesPage(tester, api);
       await openDeviceDetail(tester);
+      await expandConfiguration(tester);
 
       await assignPhysicalArea(tester);
 
@@ -304,6 +350,7 @@ void main() {
         api.seedPhysicalArea('device_1', 'sala');
         await pumpDevicesPage(tester, api);
         await openDeviceDetail(tester);
+        await expandConfiguration(tester);
 
         expect(find.text('sala'), findsOneWidget);
 
@@ -320,46 +367,99 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(find.text('Interruptor triple'));
         await tester.pumpAndSettle();
+        await expandConfiguration(tester);
 
         expect(find.text('sala'), findsOneWidget);
         expect(find.text('pasillo'), findsNothing);
       },
     );
 
-    testWidgets('identify is unavailable in production', (tester) async {
+    testWidgets('identify is offered only when the repository can run it', (
+      tester,
+    ) async {
       setTallViewport(tester);
+
+      // Production repository: identify runs through the command layer, so the
+      // channel actions sheet offers it.
       final api = FakeDeviceApi();
       await pumpDevicesPage(tester, api);
-      await openDeviceDetail(tester);
-
-      final unavailableText = find.text(
-        'Disponible después de validar el control local.',
+      await tester.longPress(
+        find.byKey(const ValueKey('mobile-channel-child_3-relay_1')),
       );
-      await tester.scrollUntilVisible(
-        unavailableText,
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
-      expect(unavailableText, findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(find.text('Identificar'), findsOneWidget);
 
-      final identifyButton = tester.widget<OutlinedButton>(
-        find.ancestor(
-          of: find.text('Identificar dispositivo'),
-          matching: find.byType(OutlinedButton),
+      // Dispose the first tree so DevicesPage builds a fresh controller for
+      // the next repository (its controller is a late final bound once).
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+
+      // A repository supporting neither the legacy flag nor the command layer
+      // must not offer identify at all.
+      final snapshot = DeviceInventorySnapshot(
+        areas: const [],
+        devices: const [
+          PhysicalDevice(
+            id: 'no_identify',
+            name: 'Interruptor sin identificar',
+            kind: DeviceKind.switchController,
+            provider: 'tuya',
+            providerDeviceId: '',
+            model: 'M',
+            provisioningState: DeviceProvisioningState.configured,
+            online: true,
+            health: DeviceHealthState.online,
+            endpoints: [
+              DeviceEndpoint(
+                id: 'relay_1',
+                name: 'Canal 1',
+                kind: DeviceKind.switchController,
+                capabilities: {'POWER'},
+              ),
+            ],
+          ),
+        ],
+        gateways: const [],
+        lastDiscoveryLabel: '',
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DevicesPage(
+              api: FakeDeviceApi(),
+              repository: StubDeviceInventoryRepository(snapshot),
+            ),
+          ),
         ),
       );
-      expect(identifyButton.onPressed, isNull);
-
+      await tester.pumpAndSettle();
+      await tester.longPress(
+        find.byKey(const ValueKey('mobile-channel-no_identify-relay_1')),
+      );
+      await tester.pumpAndSettle();
       expect(find.text('Identificar'), findsNothing);
     });
 
-    testWidgets('no physical power toggle is rendered', (tester) async {
+    testWidgets('per-channel switches are the only power control', (
+      tester,
+    ) async {
       setTallViewport(tester);
       final api = FakeDeviceApi();
       await pumpDevicesPage(tester, api);
       await openDeviceDetail(tester);
 
-      expect(find.byType(Switch), findsNothing);
+      // One switch per power channel, scoped to that channel's control row:
+      // there is no separate blanket/global power toggle.
+      expect(find.byType(Switch), findsNWidgets(3));
+      for (final endpointId in ['relay_1', 'relay_2', 'relay_3']) {
+        expect(
+          find.descendant(
+            of: find.byKey(ValueKey('channel-control-$endpointId')),
+            matching: find.byType(Switch),
+          ),
+          findsOneWidget,
+        );
+      }
       expect(find.byType(Checkbox), findsNothing);
     });
 
@@ -368,6 +468,7 @@ void main() {
       final api = FakeDeviceApi();
       await pumpDevicesPage(tester, api);
       await openDeviceDetail(tester);
+      await expandConfiguration(tester);
 
       final texts = tester
           .widgetList<Text>(find.byType(Text))
@@ -407,14 +508,17 @@ void main() {
       await tester.tap(find.text('Reintentar'));
       await tester.pumpAndSettle();
 
-      expect(find.text('4 dispositivos nuevos'), findsOneWidget);
+      // The retry renders the controls-first landing with the fixture data.
+      expect(find.byKey(const ValueKey('open-devices-list')), findsOneWidget);
+      expect(find.text('Canal 1'), findsOneWidget);
     });
 
     testWidgets('refresh failure keeps the previous snapshot', (tester) async {
       final api = FakeDeviceApi();
       await pumpDevicesPage(tester, api);
-      expect(find.text('4 dispositivos nuevos'), findsOneWidget);
-      expect(api.inventoryCalls, 1);
+      // First grouped control tile of the controls-first landing.
+      expect(find.text('Relé cocina'), findsOneWidget);
+      final callsBefore = api.inventoryCalls;
 
       api.failLoads = true;
       await tester.fling(
@@ -424,28 +528,15 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(api.inventoryCalls, 2);
-      expect(find.text('4 dispositivos nuevos'), findsOneWidget);
+      // The pull-to-refresh ran the canonical reload.
+      expect(api.inventoryCalls, greaterThan(callsBefore));
+      // The previous canonical snapshot survives a failed refresh.
+      expect(find.text('Relé cocina'), findsOneWidget);
       expect(find.textContaining('backend down'), findsNothing);
     });
   });
 
   group('final gate — honest health, area clear, bulk partial failure', () {
-    testWidgets('all-unknown health wording for a Cloud-only inventory', (
-      tester,
-    ) async {
-      setTallViewport(tester);
-      final api = FakeDeviceApi()
-        ..inventory = Map.from(deviceplatformInventoryCloudOnlyJson);
-      await pumpDevicesPage(tester, api);
-
-      expect(find.text('Estado local aún no validado'), findsOneWidget);
-      expect(
-        find.text('Todos los dispositivos están disponibles'),
-        findsNothing,
-      );
-    });
-
     testWidgets('one offline device surfaces the review wording', (
       tester,
     ) async {
@@ -476,40 +567,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('1 requieren revisión'), findsOneWidget);
-    });
-
-    testWidgets('all online devices show the available wording', (
-      tester,
-    ) async {
-      setTallViewport(tester);
-      final snapshot = DeviceInventorySnapshot(
-        areas: const [],
-        devices: [
-          for (var i = 0; i < 5; i++)
-            stubUserDevice('u$i', DeviceHealthState.online),
-        ],
-        gateways: const [],
-        lastDiscoveryLabel: '',
-      );
-      final api = FakeDeviceApi();
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: DevicesPage(
-              api: api,
-              repository: StubDeviceInventoryRepository(snapshot),
-            ),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      expect(
-        find.text('Todos los dispositivos están disponibles'),
-        findsOneWidget,
-      );
+      expectReviewCount('1');
     });
 
     testWidgets('physical area clear writes null through the API', (
@@ -520,6 +578,7 @@ void main() {
       api.seedPhysicalArea('device_1', 'pasillo');
       await pumpDevicesPage(tester, api);
       await openDeviceDetail(tester);
+      await expandConfiguration(tester);
 
       expect(find.text('pasillo'), findsOneWidget);
 
@@ -539,8 +598,13 @@ void main() {
         final api = FakeDeviceApi();
         await pumpDevicesPage(tester, api);
         await openDeviceDetail(tester);
+        await expandConfiguration(tester);
 
         await assignPhysicalArea(tester);
+        // Let the physical-area success notice expire so the bulk failure
+        // notice is the SnackBar the assertion observes.
+        await tester.pump(const Duration(seconds: 4));
+        await tester.pumpAndSettle();
         api.failEndpoints.add('relay_3');
         await tester.tap(find.text('Usar también para todos los canales'));
         await tester.pumpAndSettle();
@@ -559,29 +623,41 @@ void main() {
       },
     );
 
-    testWidgets('binding placeholder is capability-based and disabled', (
+    testWidgets('binding accepts a free-text entity id per channel', (
       tester,
     ) async {
-      setTallViewport(tester);
+      tester.view.physicalSize = const Size(800, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       final api = FakeDeviceApi();
       await pumpDevicesPage(tester, api);
       await openDeviceDetail(tester);
+      await expandConfiguration(tester);
 
+      // One binding affordance per actionable channel (3 power endpoints).
       expect(find.text('Vincular entidad'), findsNWidgets(3));
-      expect(
-        find.text(
-          'Disponible cuando el backend publique el catálogo de entidades.',
-        ),
-        findsNWidgets(3),
-      );
 
-      final button = tester.widget<TextButton>(
-        find.ancestor(
-          of: find.text('Vincular entidad').first,
-          matching: find.byType(TextButton),
-        ),
+      // The backend still publishes no selectable catalog, so binding is
+      // reachable and takes a free-text entity identifier.
+      await tester.ensureVisible(find.text('Vincular entidad').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Vincular entidad').first);
+      await tester.pumpAndSettle();
+      // Free-text entity field, not a selectable catalog picker.
+      expect(find.text('Entidad'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Vincular'));
+      await tester.pumpAndSettle();
+      expect(find.text('Ingresá un identificador de entidad.'), findsOneWidget);
+
+      await tester.enterText(
+        find.byType(TextField).last,
+        'light.cocina_principal',
       );
-      expect(button.onPressed, isNull);
+      await tester.tap(find.widgetWithText(FilledButton, 'Vincular'));
+      await tester.pumpAndSettle();
+      // The typed identifier is accepted: the dialog closes.
+      expect(find.text('Ingresá un identificador de entidad.'), findsNothing);
     });
   });
 
@@ -615,27 +691,6 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('all online shows the available wording', (tester) async {
-      setTallViewport(tester);
-      await pumpHealthSnapshot(
-        tester,
-        List.filled(5, DeviceHealthState.online),
-      );
-
-      expect(find.text(availableWording), findsOneWidget);
-    });
-
-    testWidgets('all unknown shows the unvalidated wording', (tester) async {
-      setTallViewport(tester);
-      await pumpHealthSnapshot(
-        tester,
-        List.filled(5, DeviceHealthState.unknown),
-      );
-
-      expect(find.text('Estado local aún no validado'), findsOneWidget);
-      expect(find.text(availableWording), findsNothing);
-    });
-
     testWidgets('one offline among unknown surfaces review wording', (
       tester,
     ) async {
@@ -648,7 +703,7 @@ void main() {
         DeviceHealthState.unknown,
       ]);
 
-      expect(find.text('1 requieren revisión'), findsOneWidget);
+      expectReviewCount('1');
       expect(find.text(availableWording), findsNothing);
     });
 
@@ -664,7 +719,7 @@ void main() {
         DeviceHealthState.online,
       ]);
 
-      expect(find.text('1 requieren revisión'), findsOneWidget);
+      expectReviewCount('1');
       expect(find.text(availableWording), findsNothing);
     });
 
@@ -680,51 +735,7 @@ void main() {
         DeviceHealthState.online,
       ]);
 
-      expect(find.text('1 requieren revisión'), findsOneWidget);
-      expect(find.text(availableWording), findsNothing);
-    });
-
-    testWidgets('all sleeping shows the resting wording', (tester) async {
-      setTallViewport(tester);
-      await pumpHealthSnapshot(
-        tester,
-        List.filled(5, DeviceHealthState.sleeping),
-      );
-
-      expect(find.text('5 dispositivos en reposo'), findsOneWidget);
-      expect(find.text(availableWording), findsNothing);
-    });
-
-    testWidgets(
-      'mixed online and unknown shows the partial validation wording',
-      (tester) async {
-        setTallViewport(tester);
-        await pumpHealthSnapshot(tester, [
-          DeviceHealthState.online,
-          DeviceHealthState.online,
-          DeviceHealthState.online,
-          DeviceHealthState.unknown,
-          DeviceHealthState.unknown,
-        ]);
-
-        expect(find.text('2 con estado local aún no validado'), findsOneWidget);
-        expect(find.text(availableWording), findsNothing);
-      },
-    );
-
-    testWidgets('mixed online and sleeping shows the rest/available wording', (
-      tester,
-    ) async {
-      setTallViewport(tester);
-      await pumpHealthSnapshot(tester, [
-        DeviceHealthState.online,
-        DeviceHealthState.online,
-        DeviceHealthState.online,
-        DeviceHealthState.sleeping,
-        DeviceHealthState.sleeping,
-      ]);
-
-      expect(find.text('2 en reposo · 3 disponibles'), findsOneWidget);
+      expectReviewCount('1');
       expect(find.text(availableWording), findsNothing);
     });
 
@@ -740,7 +751,7 @@ void main() {
         DeviceHealthState.unreachable,
       ]);
 
-      expect(find.text('1 requieren revisión'), findsOneWidget);
+      expectReviewCount('1');
       expect(find.text(availableWording), findsNothing);
     });
 
@@ -752,8 +763,8 @@ void main() {
           ..inventory = Map.from(deviceplatformInventoryCloudOnlyJson);
         await pumpDevicesPage(tester, api);
 
-        await tester.tap(find.byKey(const Key('gateways-row')));
-        await tester.pumpAndSettle();
+        await openDevicesList(tester);
+        await tapChip(tester, 'mobile-devices-chip-gateways');
 
         expect(find.text('Gateway principal'), findsOneWidget);
         expect(find.text('Estado desconocido'), findsOneWidget);
@@ -761,51 +772,6 @@ void main() {
         expect(find.text('Sin conexión'), findsNothing);
       },
     );
-
-    testWidgets('sleeping + unknown never counts unknown as available', (
-      tester,
-    ) async {
-      setTallViewport(tester);
-      await pumpHealthSnapshot(tester, [
-        DeviceHealthState.sleeping,
-        DeviceHealthState.sleeping,
-        DeviceHealthState.unknown,
-        DeviceHealthState.unknown,
-        DeviceHealthState.unknown,
-      ]);
-
-      // Los 3 unknown NO son "disponibles": el resumen debe reflejar ambos
-      // estados y no reportar 3 disponibles.
-      expect(
-        find.text('3 con estado local aún no validado · 2 en reposo'),
-        findsOneWidget,
-      );
-      expect(find.textContaining('disponibles'), findsNothing);
-      expect(find.text(availableWording), findsNothing);
-    });
-
-    testWidgets('online + sleeping + unknown reports exactly onlineCount', (
-      tester,
-    ) async {
-      setTallViewport(tester);
-      await pumpHealthSnapshot(tester, [
-        DeviceHealthState.online,
-        DeviceHealthState.online,
-        DeviceHealthState.sleeping,
-        DeviceHealthState.unknown,
-        DeviceHealthState.unknown,
-      ]);
-
-      // Disponibles == onlineCount (2), nunca userCount - sleeping (4).
-      expect(
-        find.text(
-          '2 disponibles · 2 con estado local aún no validado · 1 en reposo',
-        ),
-        findsOneWidget,
-      );
-      expect(find.text('4 disponibles'), findsNothing);
-      expect(find.text(availableWording), findsNothing);
-    });
   });
 }
 

@@ -388,6 +388,33 @@ Future<AdaptiveSurfaceModeController> _pumpShellDeferred(
   return controller;
 }
 
+/// Locates a top-level destination on whichever shell is mounted. The mobile
+/// dock only renders a visible `Text` for the active destination and the
+/// desktop sidebar is icon-only, so both expose the name on a semantics
+/// wrapper; the wall rail still renders every label.
+Finder _destination(String label) {
+  if (find.byType(FloatingDock).evaluate().isNotEmpty) {
+    return find.descendant(
+      of: find.byType(FloatingDock),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is Semantics && widget.properties.label == label,
+      ),
+    );
+  }
+  if (find.byType(WallPanelShell).evaluate().isNotEmpty) {
+    return find.descendant(
+      of: find.byKey(const ValueKey('wall-panel-side-rail')),
+      matching: find.text(label),
+    );
+  }
+  return find.descendant(
+    of: find.byType(DesktopSidebar),
+    matching: find.byWidgetPredicate(
+      (widget) => widget is Semantics && widget.properties.label == label,
+    ),
+  );
+}
+
 void main() {
   void useLinuxPlatform() {
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
@@ -402,20 +429,13 @@ void main() {
 
   // Taps a top-level destination through whichever shell is mounted.
   Future<void> tapDeferred(WidgetTester tester, String label) async {
-    final dockLabel = find.descendant(
-      of: find.byType(FloatingDock),
-      matching: find.text(label),
-    );
-    if (dockLabel.evaluate().isNotEmpty) {
-      await tester.tap(dockLabel);
-    } else {
-      await tester.tap(
-        find.descendant(
-          of: find.byType(DesktopSidebar),
-          matching: find.text(label),
-        ),
-      );
-    }
+    await tester.tap(_destination(label));
+    await settleDeferred(tester);
+  }
+
+  // Controles is the wall default; the card list is one tap away.
+  Future<void> showWallDeviceList(WidgetTester tester) async {
+    await tester.tap(find.byKey(const ValueKey('wall-devices-button')));
     await settleDeferred(tester);
   }
 
@@ -430,9 +450,9 @@ void main() {
       AppSurfaceMode.desktop,
     );
 
-    // Dispositivos visited once on desktop: DevicesPage loads its controller.
+    // Desktop Home load, then one Devices controller load plus its bulk sweep.
     await tapDeferred(tester, 'Dispositivos');
-    expect(api.inventoryLoadCalls, 1);
+    expect(api.inventoryLoadCalls, 3);
 
     // Return to Inicio: Dispositivos stays mounted, now offstage.
     await tapDeferred(tester, 'Inicio');
@@ -452,10 +472,11 @@ void main() {
     expect(api.inventoryLoadCalls, 1);
     expect(find.byType(WallPanelShell), findsOneWidget);
 
-    // Activation of Dispositivos loads the wall Devices exactly once.
+    // Activation loads the wall Devices once (load + bulk sweep).
     final beforeDevices = api.inventoryLoadCalls;
     await tapDeferred(tester, 'Dispositivos');
-    expect(api.inventoryLoadCalls - beforeDevices, 1);
+    expect(api.inventoryLoadCalls - beforeDevices, 2);
+    await showWallDeviceList(tester);
     expect(
       find.byKey(const ValueKey('wall-device-dev_triple_01')),
       findsOneWidget,
@@ -477,7 +498,7 @@ void main() {
     );
 
     await tapDeferred(tester, 'Dispositivos');
-    expect(api.inventoryLoadCalls, 1);
+    expect(api.inventoryLoadCalls, 3);
     await tapDeferred(tester, 'Inicio');
 
     api.inventoryLoadCalls = 0;
@@ -489,21 +510,25 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(api.inventoryLoadCalls, 1);
 
-    // Activation loads the preserved offstage wall Devices exactly once.
+    // Activation loads the preserved offstage wall Devices once (load +
+    // bulk sweep).
     final before = api.inventoryLoadCalls;
     await tapDeferred(tester, 'Dispositivos');
-    expect(api.inventoryLoadCalls - before, 1);
+    expect(api.inventoryLoadCalls - before, 2);
+    await showWallDeviceList(tester);
     expect(
       find.byKey(const ValueKey('wall-device-dev_triple_01')),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
 
-    // Tap-away/tap-back keeps the loaded controller alive offstage: +0 more.
+    // Tap-away/tap-back keeps the loaded Devices controller alive offstage:
+    // the Devices controller adds nothing, while the wall Home refreshes once
+    // on re-activation by design.
     final frozen = api.inventoryLoadCalls;
     await tapDeferred(tester, 'Inicio');
     await tapDeferred(tester, 'Dispositivos');
-    expect(api.inventoryLoadCalls, frozen);
+    expect(api.inventoryLoadCalls, frozen + 1);
     expect(
       find.byKey(const ValueKey('wall-device-dev_triple_01')),
       findsOneWidget,
@@ -525,7 +550,7 @@ void main() {
     );
 
     await tapDeferred(tester, 'Dispositivos');
-    expect(api.inventoryLoadCalls, 1);
+    expect(api.inventoryLoadCalls, 3);
     await tapDeferred(tester, 'Inicio');
 
     api.inventoryLoadCalls = 0;
@@ -538,7 +563,7 @@ void main() {
     expect(api.inventoryLoadCalls, 1);
 
     await tapDeferred(tester, 'Dispositivos');
-    expect(api.inventoryLoadCalls, 2);
+    expect(api.inventoryLoadCalls, 3);
 
     // Bare rebuilds add no loads.
     final frozen = api.inventoryLoadCalls;
@@ -571,7 +596,7 @@ void main() {
       );
 
       await tapDeferred(tester, 'Dispositivos');
-      expect(api.inventoryLoadCalls, 1);
+      expect(api.inventoryLoadCalls, 3);
       await tapDeferred(tester, 'Inicio');
 
       api.inventoryLoadCalls = 0;
@@ -584,7 +609,8 @@ void main() {
       expect(api.inventoryLoadCalls, 1);
 
       await tapDeferred(tester, 'Dispositivos');
-      expect(api.inventoryLoadCalls, 2);
+      expect(api.inventoryLoadCalls, 3);
+      await showWallDeviceList(tester);
       expect(
         find.byKey(const ValueKey('wall-device-dev_triple_01')),
         findsOneWidget,
@@ -594,16 +620,18 @@ void main() {
       await surface.setMode(AppSurfaceMode.desktop);
       await settleDeferred(tester);
       await settleDeferred(tester);
-      expect(api.inventoryLoadCalls, 2);
+      expect(api.inventoryLoadCalls, 3);
       expect(tester.takeException(), isNull);
 
       // Second wall switch with Dispositivos ACTIVE: the fresh wall Devices
-      // performs its single bounded load (1); the offstage Home adds 0.
+      // performs one bounded controller load (load + bulk sweep); the
+      // offstage Home adds nothing.
       api.inventoryLoadCalls = 0;
       await surface.setMode(AppSurfaceMode.wallPanel);
       await settleDeferred(tester);
       await settleDeferred(tester);
-      expect(api.inventoryLoadCalls, 1);
+      expect(api.inventoryLoadCalls, 2);
+      await showWallDeviceList(tester);
       expect(
         find.byKey(const ValueKey('wall-device-dev_triple_01')),
         findsOneWidget,

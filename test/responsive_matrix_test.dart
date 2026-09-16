@@ -6,6 +6,7 @@ import 'package:gamma_app/adaptive/adaptive_layout.dart';
 import 'package:gamma_app/adaptive/adaptive_scope.dart';
 import 'package:gamma_app/adaptive/adaptive_surface_preferences.dart';
 import 'package:gamma_app/data/api_client.dart';
+import 'package:gamma_app/features/devices/desktop_device_detail_pane.dart';
 import 'package:gamma_app/features/devices/desktop_devices_page.dart';
 import 'package:gamma_app/data/device_inventory.dart';
 import 'package:gamma_app/features/devices/devices_page.dart';
@@ -35,9 +36,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 150));
 
     expect(tester.takeException(), isNull);
-    // Single-column sequential mobile page: header + sections, never a split.
-    expect(find.text('Dispositivos'), findsOneWidget);
-    expect(find.text('ESPACIOS'), findsOneWidget);
+    // Single-column sequential mobile page: header entries + control groups,
+    // never a split pane.
+    expect(find.byKey(const ValueKey('open-devices-list')), findsOneWidget);
+    expect(find.byKey(const ValueKey('open-offline-list')), findsOneWidget);
     expect(find.text('Selecciona un dispositivo'), findsNothing);
     expect(find.byType(DesktopDevicesPage), findsNothing);
   });
@@ -104,7 +106,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(controller.selectedDeviceId, 'dev_triple_01');
-    final pane = find.byType(DeviceDetailView);
+    final pane = find.byType(DesktopDeviceDetailPane);
     expect(pane, findsOneWidget);
     final paneWidth = tester.getSize(pane).width;
     // The detail pane is bounded: the fixed master column keeps it from

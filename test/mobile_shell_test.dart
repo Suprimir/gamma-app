@@ -5,6 +5,16 @@ import 'package:gamma_app/app/floating_dock.dart';
 import 'package:gamma_app/app/mobile_shell.dart';
 import 'package:gamma_app/app/navigation_destinations.dart';
 
+/// Locates a dock destination through the semantics wrapper that carries its
+/// accessible name; the redesigned dock only renders a visible `Text` for the
+/// active destination.
+Finder _dockDestination(String label) => find.descendant(
+  of: find.byType(FloatingDock),
+  matching: find.byWidgetPredicate(
+    (widget) => widget is Semantics && widget.properties.label == label,
+  ),
+);
+
 void main() {
   testWidgets(
     ': mobile shell renders five destinations and hosts the page slot',
@@ -22,6 +32,9 @@ void main() {
         ),
       );
 
+      // The active destination keeps its visible pill label; every other
+      // destination is reachable through the dock's accessible name.
+      expect(find.text('Inicio'), findsOneWidget);
       for (final label in [
         'Inicio',
         'Dispositivos',
@@ -29,7 +42,7 @@ void main() {
         'Ajustes',
         'Cámaras',
       ]) {
-        expect(find.text(label), findsOneWidget);
+        expect(_dockDestination(label), findsOneWidget);
       }
       expect(find.byType(FloatingDock), findsOneWidget);
       expect(find.text('page-area'), findsOneWidget);
@@ -53,7 +66,7 @@ void main() {
         ),
       );
 
-      await tester.tap(find.text('Rutinas'));
+      await tester.tap(_dockDestination('Rutinas'));
       await tester.pump();
       expect(selected, 2);
     },

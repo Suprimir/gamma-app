@@ -9,6 +9,7 @@ import 'package:gamma_app/adaptive/adaptive_surface_preferences.dart';
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/app/app_shell.dart';
 import 'package:gamma_app/features/dashboard/dashboard_page.dart';
+import 'package:gamma_app/features/dashboard/desktop_dashboard_page.dart';
 import 'package:gamma_app/features/devices/devices_page.dart';
 import 'package:gamma_app/app/mobile_shell.dart';
 import 'package:gamma_app/features/wall_home/wall_panel_home_page.dart';
@@ -66,7 +67,7 @@ void main() {
     await tester.pump();
 
     expect(find.byType(WallPanelHomePage), findsNothing);
-    expect(find.byType(DashboardPage), findsOneWidget);
+    expect(find.byType(DesktopDashboardPage), findsOneWidget);
 
     debugDefaultTargetPlatformOverride = null;
   });
@@ -145,7 +146,7 @@ void main() {
       await controller.setMode(AppSurfaceMode.desktop);
       await tester.pump();
       expect(find.byType(WallPanelHomePage), findsNothing);
-      expect(find.byType(DashboardPage), findsOneWidget);
+      expect(find.byType(DesktopDashboardPage), findsOneWidget);
 
       debugDefaultTargetPlatformOverride = null;
     },

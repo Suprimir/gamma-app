@@ -133,13 +133,18 @@ void main() {
     );
     await pumpWallDevices(tester, repo);
 
-    expect(find.text('Habitaciones'), findsOneWidget);
-    await tester.tap(find.text('Habitaciones'));
+    // Areas are managed inline from the wall Devices surface: the location
+    // control opens the area list with edit/delete per area. The standalone
+    // WallAreasPage screen is retired from navigation.
+    expect(find.text('Todas'), findsOneWidget);
+    await tester.tap(find.text('Todas'));
     await tester.pumpAndSettle();
 
-    expect(find.byType(WallAreasPage), findsOneWidget);
-    expect(find.byKey(const ValueKey('wall-area-area_SALA')), findsOneWidget);
-    expect(find.byKey(const ValueKey('wall-area-area_COCINA')), findsOneWidget);
+    expect(find.text('Ubicación'), findsOneWidget);
+    expect(find.text('Sala'), findsWidgets);
+    expect(find.text('Cocina'), findsWidgets);
+    expect(find.byTooltip('Editar área'), findsNWidgets(2));
+    expect(find.byTooltip('Eliminar área'), findsNWidgets(2));
   });
 }
 

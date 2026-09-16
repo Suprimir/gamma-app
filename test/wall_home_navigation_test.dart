@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/data/device_inventory.dart';
-import 'package:gamma_app/features/wall_home/wall_area_overview_page.dart';
 import 'package:gamma_app/features/devices/wall_devices_page.dart';
 import 'package:gamma_app/features/wall_home/wall_panel_home_page.dart';
 
@@ -32,17 +31,27 @@ void main() {
   ) async {
     await pumpWallHome(tester);
 
-    await tester.tap(find.text('Cocina'));
-    await tester.pumpAndSettle();
+    final areaCard = find.byKey(const ValueKey('wall-area-cocina'));
+    await tester.ensureVisible(areaCard);
+    await tester.tap(areaCard);
+    // The wall home keeps a continuous idle animation, so transitions use
+    // bounded pumps instead of pumpAndSettle.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.byType(WallAreaOverviewPage), findsOneWidget);
+    // The card opens the wall action menu; 'Ver dispositivos' drills into the
+    // touch-first wall devices list for that area.
+    expect(find.text('Ver dispositivos'), findsOneWidget);
+    await tester.tap(find.text('Ver dispositivos'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(WallDevicesPage), findsOneWidget);
     // Canonical control display names from the projection.
     expect(find.text('Plafón cocina'), findsOneWidget);
     expect(find.text('Luz cocina'), findsOneWidget);
-    // Overview says "2 controles".
-    expect(find.text('2 controles'), findsOneWidget);
-    // No physical control affordances.
-    expect(find.byType(Switch), findsNothing);
+    // The list stays filtered to the selected area.
+    expect(find.text('Cocina'), findsWidgets);
   });
 
   testWidgets('overview has an obvious back path to home', (
@@ -50,16 +59,22 @@ void main() {
   ) async {
     await pumpWallHome(tester);
 
-    await tester.tap(find.text('Cocina'));
-    await tester.pumpAndSettle();
-    expect(find.byType(WallAreaOverviewPage), findsOneWidget);
+    final areaCard = find.byKey(const ValueKey('wall-area-cocina'));
+    await tester.ensureVisible(areaCard);
+    await tester.tap(areaCard);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('Ver dispositivos'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byType(WallDevicesPage), findsOneWidget);
 
-    await tester.pageBack();
+    await tester.tap(find.text('Volver'));
     // No pumpAndSettle here: the wall home orb breathes forever by design,
     // so settle never completes. Fixed pumps cover the pop transition.
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.byType(WallAreaOverviewPage), findsNothing);
+    expect(find.byType(WallDevicesPage), findsNothing);
     expect(find.text('Mi casa'), findsOneWidget);
   });
 

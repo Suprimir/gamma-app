@@ -11,15 +11,14 @@ import 'package:gamma_app/adaptive/adaptive_surface_preferences.dart';
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/app/app_shell.dart';
 import 'package:gamma_app/app/desktop_drawer.dart';
-import 'package:gamma_app/features/dashboard/dashboard_page.dart';
-import 'package:gamma_app/features/areas/desktop_areas_page.dart';
+import 'package:gamma_app/features/dashboard/desktop_dashboard_page.dart';
+import 'package:gamma_app/features/devices/desktop_device_detail_pane.dart';
 import 'package:gamma_app/features/devices/desktop_devices_page.dart';
 import 'package:gamma_app/app/desktop_shell.dart';
 import 'package:gamma_app/data/device_inventory.dart';
 import 'package:gamma_app/features/devices/devices_page.dart';
 import 'package:gamma_app/app/floating_dock.dart';
 import 'package:gamma_app/features/routines/routines_page.dart';
-import 'package:gamma_app/features/wall_home/wall_area_overview_page.dart';
 import 'package:gamma_app/features/devices/wall_devices_page.dart';
 import 'package:gamma_app/features/wall_home/wall_panel_home_page.dart';
 import 'package:gamma_app/app/wall_panel_shell.dart';
@@ -505,6 +504,37 @@ Future<void> pumpWall(
     ),
   );
   await tester.pump(const Duration(milliseconds: 150));
+  // Controles is the wall default; the card list/detail tests need the
+  // Dispositivos view.
+  await tester.tap(find.byKey(const ValueKey('wall-devices-button')));
+  await tester.pumpAndSettle();
+}
+
+/// Locates a top-level destination on whichever shell is mounted. The mobile
+/// dock only renders a visible `Text` for the active destination and the
+/// desktop sidebar is icon-only, so both expose the name on a semantics
+/// wrapper; the wall rail still renders every label.
+Finder _destination(String label) {
+  if (find.byType(FloatingDock).evaluate().isNotEmpty) {
+    return find.descendant(
+      of: find.byType(FloatingDock),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is Semantics && widget.properties.label == label,
+      ),
+    );
+  }
+  if (find.byType(WallPanelShell).evaluate().isNotEmpty) {
+    return find.descendant(
+      of: find.byKey(const ValueKey('wall-panel-side-rail')),
+      matching: find.text(label),
+    );
+  }
+  return find.descendant(
+    of: find.byType(DesktopSidebar),
+    matching: find.byWidgetPredicate(
+      (widget) => widget is Semantics && widget.properties.label == label,
+    ),
+  );
 }
 
 void main() {
@@ -523,26 +553,7 @@ void main() {
 
   // Taps a top-level destination through whichever shell is mounted.
   Future<void> tapDestination(WidgetTester tester, String label) async {
-    final dockLabel = find.descendant(
-      of: find.byType(FloatingDock),
-      matching: find.text(label),
-    );
-    if (dockLabel.evaluate().isNotEmpty) {
-      await tester.tap(dockLabel);
-    } else {
-      // Desktop sidebar uses admin labels for the shared destinations.
-      final sidebarLabel = switch (label) {
-        'Rutinas' => 'Automatizaciones',
-        'Ajustes' => 'Configuración',
-        _ => label,
-      };
-      await tester.tap(
-        find.descendant(
-          of: find.byType(DesktopSidebar),
-          matching: find.text(sidebarLabel),
-        ),
-      );
-    }
+    await tester.tap(_destination(label));
     await settle(tester);
   }
 
@@ -590,7 +601,7 @@ void main() {
     );
     expect(
       find.descendant(
-        of: find.byType(DeviceDetailView),
+        of: find.byType(DesktopDeviceDetailPane),
         matching: find.text('Luz Sala'),
       ),
       findsOneWidget,
@@ -606,10 +617,13 @@ void main() {
     useLinuxPlatform();
     final api = _ProdFinalDeviceApi();
     final surface = await _pumpShell(tester, api, AppSurfaceMode.desktop);
-    expect(api.loadCalls, 0);
+    // The desktop Home is the DashboardPage replacement now and fetches the
+    // canonical inventory for its own panels.
+    expect(api.loadCalls, 1);
 
     await tapDestination(tester, 'Dispositivos');
-    expect(api.loadCalls, 1);
+    // One fresh controller load plus its one-shot bulk state sweep reload.
+    expect(api.loadCalls, 3);
 
     await tester.tap(
       find.byKey(const ValueKey('desktop-device-dev_triple_01')),
@@ -639,7 +653,7 @@ void main() {
     await settle(tester);
 
     // Rename converged with zero extra loads.
-    expect(api.loadCalls, 1);
+    expect(api.loadCalls, 3);
     final feature = tester
         .widget<DesktopDevicesPage>(find.byType(DesktopDevicesPage))
         .controller;
@@ -656,11 +670,14 @@ void main() {
     await surface.setMode(AppSurfaceMode.wallPanel);
     await settle(tester);
     await settle(tester);
-    // ONE production load on the wall switch: the active WallDevicesPage
-    // owns a fresh controller. The offstage home stays inert (its load is
+    // The active WallDevicesPage owns a fresh controller: one production load
+    // plus its bulk state sweep. The offstage home stays inert (its load is
     // deferred until the wall home is activated).
-    expect(api.loadCalls, 2);
+    expect(api.loadCalls, 5);
     expect(find.byType(WallPanelShell), findsOneWidget);
+    // Controles is the wall default; the card list is one tap away.
+    await tester.tap(find.byKey(const ValueKey('wall-devices-button')));
+    await settle(tester);
     final wallCard = find.byKey(const ValueKey('wall-device-dev_triple_01'));
     expect(wallCard, findsOneWidget);
     expect(
@@ -669,11 +686,11 @@ void main() {
     );
 
     // Back to desktop: same selection, same converged snapshot, no stale
-    // copy anywhere. No new load (the offstage home never loaded on wall).
+    // copy anywhere. No new load (both visited controllers stay mounted).
     await surface.setMode(AppSurfaceMode.desktop);
     await settle(tester);
     await settle(tester);
-    expect(api.loadCalls, 2);
+    expect(api.loadCalls, 5);
     expect(find.byType(DesktopShell), findsOneWidget);
     final back = tester
         .widget<DesktopDevicesPage>(find.byType(DesktopDevicesPage))
@@ -741,7 +758,7 @@ void main() {
     expect(controller.selectedDeviceId, 'dev_triple_01');
     expect(
       find.descendant(
-        of: find.byType(DeviceDetailView),
+        of: find.byType(DesktopDeviceDetailPane),
         matching: find.text('Luz Sala'),
       ),
       findsOneWidget,
@@ -755,7 +772,7 @@ void main() {
 
     // Destination 0 (Inicio) is built at mount; desktop renders Dashboard.
     expect(find.byType(AdaptiveHomePage), findsOneWidget);
-    expect(find.byType(DashboardPage), findsOneWidget);
+    expect(find.byType(DesktopDashboardPage), findsOneWidget);
 
     await tapDestination(tester, 'Dispositivos');
     expect(find.byType(DevicesPage), findsOneWidget);
@@ -809,16 +826,29 @@ void main() {
     // The legacy catalog location never fabricates an area card.
     expect(find.text('Cocina'), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('wall-area-sala')));
-    await tester.pumpAndSettle();
-    expect(find.byType(WallAreaOverviewPage), findsOneWidget);
-    expect(find.text('Sala'), findsOneWidget);
-    expect(find.text('1 control'), findsOneWidget);
+    final areaCard = find.byKey(const ValueKey('wall-area-sala'));
+    await tester.ensureVisible(areaCard);
+    await settle(tester);
+    await tester.tap(areaCard);
+    // The wall surfaces carry a continuous idle animation, so route
+    // transitions use bounded pumps instead of pumpAndSettle.
+    await settle(tester);
+    await settle(tester);
+
+    // The area card opens the wall action menu; 'Ver dispositivos' drills
+    // into the wall devices list pre-filtered to that area.
+    expect(find.text('Ver dispositivos'), findsOneWidget);
+    await tester.tap(find.text('Ver dispositivos'));
+    await settle(tester);
+    await settle(tester);
+    expect(find.byType(WallDevicesPage), findsWidgets);
+    expect(find.text('Sala'), findsWidgets);
     expect(find.text('Canal 1'), findsOneWidget);
 
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    expect(find.byType(WallAreaOverviewPage), findsNothing);
+    // The pushed wall page has no AppBar back button; pop the route directly.
+    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+    await settle(tester);
+    await settle(tester);
     expect(find.text('Mi casa'), findsOneWidget);
 
     debugDefaultTargetPlatformOverride = null;
@@ -850,26 +880,27 @@ void main() {
     await _pumpShell(tester, api, AppSurfaceMode.desktop);
 
     await tapDestination(tester, 'Dispositivos');
-    expect(find.text('Habitaciones'), findsOneWidget);
-    await tester.tap(find.text('Habitaciones'));
+
+    // Areas are managed inline from the master list now: the location picker
+    // lists the canonical areas with edit/delete and the add entry.
+    expect(find.byKey(const Key('desktop-location-filter')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('desktop-location-filter')));
     await settle(tester);
     await settle(tester);
 
-    expect(find.byType(DesktopAreasPage), findsOneWidget);
-    expect(find.text('Selecciona un área'), findsOneWidget);
+    expect(find.text('Ubicación'), findsOneWidget);
+    expect(find.text('Sala'), findsOneWidget);
+    expect(find.text('Agregar área'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('desktop-area-sala')));
+    // Choosing a location closes the dialog and keeps the master list usable.
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('Todas las ubicaciones'),
+      ),
+    );
     await settle(tester);
-    expect(find.text('Selecciona un área'), findsNothing);
-    expect(find.widgetWithText(TextField, 'Sala'), findsOneWidget);
-
-    // Round trip back to the Devices master list.
-    await tester.binding.handlePopRoute();
-    await settle(tester);
-    await settle(tester);
-
-    expect(find.byType(DesktopAreasPage), findsNothing);
-    expect(find.text('Habitaciones'), findsOneWidget);
+    expect(find.text('Ubicación'), findsNothing);
     expect(
       find.byKey(const ValueKey('desktop-device-dev_triple_01')),
       findsOneWidget,

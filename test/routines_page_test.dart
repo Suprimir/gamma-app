@@ -115,12 +115,16 @@ void main() {
     await tester.pump();
 
     await tester.tap(find.byIcon(CupertinoIcons.ellipsis));
-    await tester.pump();
+    // Let the popup menu finish entering: while it animates its route ignores
+    // pointers, so the item tap would otherwise miss.
+    await tester.pumpAndSettle();
     expect(find.text('Editar'), findsOneWidget);
     expect(find.text('Eliminar'), findsOneWidget);
 
     await tester.tap(find.text('Eliminar'));
-    await tester.pump();
+    // The popup menu owns the selection callback; settle its pop so the
+    // confirmation dialog appears.
+    await tester.pumpAndSettle();
 
     expect(find.text('Eliminar rutina'), findsOneWidget);
     expect(
@@ -160,6 +164,7 @@ void main() {
     await tester.pumpWidget(_host(api));
     await tester.pump();
 
-    expect(find.text('Requiere revisión'), findsOneWidget);
+    // The validation warning is part of the card subtitle.
+    expect(find.textContaining('requiere revisión'), findsOneWidget);
   });
 }

@@ -130,7 +130,16 @@ void main() {
       expect(find.text('Mi casa'), findsOneWidget);
       expect(find.text('Sala'), findsOneWidget);
       expect(find.text('No se pudo actualizar'), findsOneWidget);
-      expect(find.text('Reintentar'), findsOneWidget);
+      // The banner retry is scoped to the refresh banner: unrelated sections
+      // (e.g. the cameras card) render their own 'Reintentar' action.
+      final banner = find.ancestor(
+        of: find.text('No se pudo actualizar'),
+        matching: find.byType(Card),
+      );
+      expect(
+        find.descendant(of: banner, matching: find.text('Reintentar')),
+        findsOneWidget,
+      );
     },
   );
 }

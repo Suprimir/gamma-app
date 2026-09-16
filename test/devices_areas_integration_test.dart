@@ -9,11 +9,37 @@ import 'package:gamma_app/adaptive/adaptive_surface_preferences.dart';
 import 'package:gamma_app/data/api_client.dart';
 import 'package:gamma_app/app/app_shell.dart';
 import 'package:gamma_app/app/desktop_drawer.dart';
-import 'package:gamma_app/features/areas/desktop_areas_page.dart';
 import 'package:gamma_app/features/devices/desktop_devices_page.dart';
 import 'package:gamma_app/app/floating_dock.dart';
-import 'package:gamma_app/features/wall_home/wall_areas_page.dart';
 import 'package:gamma_app/features/devices/wall_devices_page.dart';
+import 'package:gamma_app/app/wall_panel_shell.dart';
+
+/// Locates a top-level destination on whichever shell is mounted. The mobile
+/// dock only renders a visible `Text` for the active destination and the
+/// desktop sidebar is icon-only, so both expose the name on a semantics
+/// wrapper; the wall rail still renders every label.
+Finder _destination(String label) {
+  if (find.byType(FloatingDock).evaluate().isNotEmpty) {
+    return find.descendant(
+      of: find.byType(FloatingDock),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is Semantics && widget.properties.label == label,
+      ),
+    );
+  }
+  if (find.byType(WallPanelShell).evaluate().isNotEmpty) {
+    return find.descendant(
+      of: find.byKey(const ValueKey('wall-panel-side-rail')),
+      matching: find.text(label),
+    );
+  }
+  return find.descendant(
+    of: find.byType(DesktopSidebar),
+    matching: find.byWidgetPredicate(
+      (widget) => widget is Semantics && widget.properties.label == label,
+    ),
+  );
+}
 
 const _powerCapability = <String, dynamic>{
   'capability': 'POWER',
@@ -211,20 +237,7 @@ void main() {
   }
 
   Future<void> tapDispositivos(WidgetTester tester) async {
-    final dockLabel = find.descendant(
-      of: find.byType(FloatingDock),
-      matching: find.text('Dispositivos'),
-    );
-    if (dockLabel.evaluate().isNotEmpty) {
-      await tester.tap(dockLabel);
-    } else {
-      await tester.tap(
-        find.descendant(
-          of: find.byType(DesktopSidebar),
-          matching: find.text('Dispositivos'),
-        ),
-      );
-    }
+    await tester.tap(_destination('Dispositivos'));
     await settle(tester);
   }
 
@@ -239,9 +252,12 @@ void main() {
     await tester.pumpAndSettle();
 
     // The wall surface must mount the touch-first wall page, never the
-    // mobile composition ('ESPACIOS') or the desktop master/detail.
+    // mobile composition or the desktop master/detail. Controles is the wall
+    // default; the device cards live in the list view one tap away.
     expect(find.byType(WallDevicesPage), findsOneWidget);
     expect(find.text('ESPACIOS'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('wall-devices-button')));
+    await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('wall-device-dev_triple_01')),
       findsOneWidget,
@@ -281,6 +297,11 @@ void main() {
     tester,
   ) async {
     useLinuxPlatform();
+    // The square widget-test font renders the active 'Dispositivos' dock pill
+    // wider than the dock's fixed cap; a reduced scale keeps this assertion
+    // free of test-font overflow without touching production layout.
+    tester.platformDispatcher.textScaleFactorTestValue = 0.5;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     final api = _FinalDeviceApi();
     await _pumpShell(tester, api, AppSurfaceMode.mobile);
 
@@ -288,8 +309,10 @@ void main() {
 
     expect(find.byType(DesktopDevicesPage), findsNothing);
     expect(find.byType(WallDevicesPage), findsNothing);
-    expect(find.text('ESPACIOS'), findsOneWidget);
-    expect(find.text('INFRAESTRUCTURA'), findsOneWidget);
+    // The mobile landing is controls-first: device management hangs off the
+    // header entry rather than the retired 'ESPACIOS'/'INFRAESTRUCTURA' grid.
+    expect(find.byKey(const ValueKey('open-devices-list')), findsOneWidget);
+    expect(find.byKey(const ValueKey('open-offline-list')), findsOneWidget);
 
     debugDefaultTargetPlatformOverride = null;
   });
@@ -301,14 +324,15 @@ void main() {
 
     await tapDispositivos(tester);
 
-    // Desktop workspace needs a visible Habitaciones entry that navigates
-    // to the desktop master/detail Areas workspace.
-    expect(find.text('Habitaciones'), findsOneWidget);
-    await tester.tap(find.text('Habitaciones'));
+    // Areas are managed inline from the master list now: the location picker
+    // lists the canonical areas with edit/delete and the add entry.
+    expect(find.byKey(const Key('desktop-location-filter')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('desktop-location-filter')));
     await settle(tester);
 
-    expect(find.byType(DesktopAreasPage), findsOneWidget);
-    expect(find.text('Selecciona un área'), findsOneWidget);
+    expect(find.text('Ubicación'), findsOneWidget);
+    expect(find.text('Sala'), findsOneWidget);
+    expect(find.text('Agregar área'), findsOneWidget);
 
     debugDefaultTargetPlatformOverride = null;
   });
@@ -321,12 +345,15 @@ void main() {
     await tapDispositivos(tester);
     await tester.pumpAndSettle();
 
-    expect(find.text('Habitaciones'), findsOneWidget);
-    await tester.tap(find.text('Habitaciones'));
+    // Areas are managed inline from the wall devices page: the location
+    // control opens a touch dialog listing the canonical areas with
+    // edit/delete actions.
+    await tester.tap(find.text('Todas'));
     await tester.pumpAndSettle();
 
-    expect(find.byType(WallAreasPage), findsOneWidget);
-    expect(find.text('Nueva habitación'), findsOneWidget);
+    expect(find.text('Ubicación'), findsOneWidget);
+    expect(find.text('Sala'), findsWidgets);
+    expect(find.byTooltip('Editar área'), findsWidgets);
 
     debugDefaultTargetPlatformOverride = null;
   });
@@ -337,13 +364,14 @@ void main() {
     await _pumpShell(tester, api, AppSurfaceMode.wallPanel);
 
     // The wall home (index 0) already fetched once; entering Dispositivos
-    // must add exactly ONE repository load. A second, independently-owned
-    // controller (DevicesPage + WallDevicesPage) would add two.
+    // mounts exactly ONE controller. Each controller load owns one inventory
+    // fetch plus its one-shot bulk state sweep reload, so a single controller
+    // adds two; a second, independently-owned controller would add four.
     final before = api.loadCalls;
     await tapDispositivos(tester);
     await tester.pumpAndSettle();
 
-    expect(api.loadCalls, before + 1);
+    expect(api.loadCalls, before + 2);
 
     debugDefaultTargetPlatformOverride = null;
   });

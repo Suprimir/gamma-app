@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -21,20 +22,34 @@ void main() {
   });
 
   test('deviceTypeMeta mapea familia a icono y label', () {
-    expect(deviceTypeMeta('luz_sala_1'), (icon: Icons.lightbulb, label: 'Luz'));
-    expect(deviceTypeMeta('foco_2'), (icon: Icons.lightbulb, label: 'Luz'));
-    expect(deviceTypeMeta('enchufe_1'), (icon: Icons.power, label: 'Enchufe'));
+    // The device-type icons are iOS-style CupertinoIcons by design (the
+    // Material locationIcon originals stay for the wall surface).
+    expect(deviceTypeMeta('luz_sala_1'), (
+      icon: CupertinoIcons.lightbulb,
+      label: 'Luz',
+    ));
+    expect(deviceTypeMeta('foco_2'), (
+      icon: CupertinoIcons.lightbulb,
+      label: 'Luz',
+    ));
+    expect(deviceTypeMeta('enchufe_1'), (
+      icon: CupertinoIcons.power,
+      label: 'Enchufe',
+    ));
     expect(deviceTypeMeta('ventilador_1'), (
-      icon: Icons.air,
+      icon: CupertinoIcons.wind,
       label: 'Ventilador',
     ));
     expect(deviceTypeMeta('sensor_1'), (
-      icon: Icons.thermostat,
+      icon: CupertinoIcons.thermometer,
       label: 'Sensor',
     ));
-    expect(deviceTypeMeta('camara_3'), (icon: Icons.videocam, label: 'Cámara'));
+    expect(deviceTypeMeta('camara_3'), (
+      icon: CupertinoIcons.videocam,
+      label: 'Cámara',
+    ));
     expect(deviceTypeMeta('x1_abc'), (
-      icon: Icons.devices,
+      icon: CupertinoIcons.square_stack,
       label: 'Dispositivo',
     ));
   });

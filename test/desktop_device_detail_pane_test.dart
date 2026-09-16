@@ -75,10 +75,12 @@ void main() {
       (tester) async {
         await pumpDetail(tester, device: _lightOnline);
         expect(find.text('Controles del dispositivo'), findsOneWidget);
-        // Friendly per-channel function, no fake global switch/brightness.
+        // Friendly per-channel function; no fake global switch/power label.
         expect(find.text('Luz regulable'), findsWidgets);
         expect(find.text('Encendida'), findsNothing);
-        expect(find.text('Brillo'), findsNothing);
+        // The real brightness control belongs to the device-level Tipo group,
+        // not to the per-channel editors.
+        expect(find.text('Brillo'), findsOneWidget);
         expect(find.text('10%'), findsNothing);
         expect(find.byType(Switch), findsNothing);
         // Each channel exposes its real mutations.

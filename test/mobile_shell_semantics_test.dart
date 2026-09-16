@@ -1,6 +1,7 @@
 import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:gamma_app/app/mobile_shell.dart';
@@ -42,11 +43,21 @@ Matcher _dockSemantics({required String label, required bool isSelected}) =>
       hasFocusAction: true,
     );
 
+/// Locates a dock destination through its accessible name. The redesigned dock
+/// only renders a visible `Text` for the active destination, so the locator
+/// must not depend on `find.text`; the semantics label stays available on the
+/// `Semantics` wrapper for every destination.
+Finder _dockItem(String label) => find.bySemanticsLabel(label).first;
+
+/// Resolves the merged semantics node of a dock destination by its label.
+SemanticsNode _dockNode(WidgetTester tester, String label) =>
+    tester.getSemantics(_dockItem(label));
+
 /// Number of top-level navigation destinations currently flagged selected.
 int _selectedDockCount(WidgetTester tester) {
   var count = 0;
   for (final label in _dockLabels) {
-    final node = tester.getSemantics(find.text(label));
+    final node = _dockNode(tester, label);
     if (node.getSemanticsData().flagsCollection.isSelected == Tristate.isTrue) {
       count++;
     }
@@ -55,7 +66,17 @@ int _selectedDockCount(WidgetTester tester) {
 }
 
 void main() {
+  // Semantics must be enabled before consulting `find.bySemanticsLabel`; the
+  // handle is disposed at the end of each test (the framework verifies it).
+  late SemanticsHandle semanticsHandle;
+
   Future<void> pumpMobileShell(WidgetTester tester) async {
+    semanticsHandle = tester.ensureSemantics();
+    // The square widget-test font renders the active 'Dispositivos' pill wider
+    // than the dock's fixed cap; a reduced scale keeps the semantics harness
+    // free of test-font overflow without touching the production layout.
+    tester.platformDispatcher.textScaleFactorTestValue = 0.5;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -78,31 +99,33 @@ void main() {
     await pumpMobileShell(tester);
 
     expect(
-      tester.getSemantics(find.text('Inicio')),
+      _dockNode(tester, 'Inicio'),
       _dockSemantics(label: 'Inicio', isSelected: true),
     );
     expect(
-      tester.getSemantics(find.text('Dispositivos')),
+      _dockNode(tester, 'Dispositivos'),
       _dockSemantics(label: 'Dispositivos', isSelected: false),
     );
     expect(_selectedDockCount(tester), 1);
+    semanticsHandle.dispose();
   });
 
   testWidgets('A11Y-02: mobile selection moves on tap', (tester) async {
     await pumpMobileShell(tester);
 
-    await tester.tap(find.text('Dispositivos'));
+    await tester.tap(_dockItem('Dispositivos'));
     await tester.pump();
 
     expect(
-      tester.getSemantics(find.text('Inicio')),
+      _dockNode(tester, 'Inicio'),
       _dockSemantics(label: 'Inicio', isSelected: false),
     );
     expect(
-      tester.getSemantics(find.text('Dispositivos')),
+      _dockNode(tester, 'Dispositivos'),
       _dockSemantics(label: 'Dispositivos', isSelected: true),
     );
     expect(_selectedDockCount(tester), 1);
+    semanticsHandle.dispose();
   });
 
   testWidgets('A11Y-05: mobile dock exposes every readable label', (
@@ -112,11 +135,12 @@ void main() {
 
     for (final label in _dockLabels) {
       expect(
-        tester.getSemantics(find.text(label)),
+        _dockNode(tester, label),
         _dockSemantics(label: label, isSelected: label == 'Inicio'),
         reason: 'destination label must remain readable',
       );
     }
+    semanticsHandle.dispose();
   });
 
   testWidgets('A11Y-06: mobile dock has exactly one selected node', (
@@ -126,8 +150,9 @@ void main() {
 
     expect(_selectedDockCount(tester), 1);
 
-    await tester.tap(find.text('Ajustes'));
+    await tester.tap(_dockItem('Ajustes'));
     await tester.pump();
     expect(_selectedDockCount(tester), 1);
+    semanticsHandle.dispose();
   });
 }

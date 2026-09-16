@@ -39,6 +39,25 @@ class _FakeSettingsApi extends ApiClient {
   Stream<Map<String, dynamic>> events() => const Stream.empty();
 }
 
+/// Mobile dock destinations are located through the semantics wrapper that
+/// carries their accessible name: the redesigned dock only renders a visible
+/// `Text` for the active destination.
+Finder _dockDestination(String label) => find.descendant(
+  of: find.byType(FloatingDock),
+  matching: find.byWidgetPredicate(
+    (widget) => widget is Semantics && widget.properties.label == label,
+  ),
+);
+
+/// Desktop sidebar destinations are collapsed to icon-only: the accessible
+/// name lives on the semantics wrapper, not on a visible `Text`.
+Finder _sidebarDestination(String label) => find.descendant(
+  of: find.byType(DesktopSidebar),
+  matching: find.byWidgetPredicate(
+    (widget) => widget is Semantics && widget.properties.label == label,
+  ),
+);
+
 void main() {
   // Auto-selection of desktop for wide widths depends on a desktop platform.
   // The override must be reset inside the test body (the framework checks the
@@ -49,11 +68,20 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
   }
 
+  // The square widget-test font renders the active 'Dispositivos' pill wider
+  // than the dock's fixed cap; a reduced scale keeps the shell assertions free
+  // of test-font overflow without touching the production layout.
+  void useCompactTestFont(WidgetTester tester) {
+    tester.platformDispatcher.textScaleFactorTestValue = 0.5;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+  }
+
   testWidgets(
     ': live resize compact to desktop keeps selection and page state',
     (WidgetTester tester) async {
       MediaKit.ensureInitialized();
       useLinuxPlatform();
+      useCompactTestFont(tester);
       SharedPreferences.setMockInitialValues({});
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -69,7 +97,7 @@ void main() {
       expect(find.byType(MobileShell), findsOneWidget);
       expect(find.byType(DesktopShell), findsNothing);
 
-      await tester.tap(find.text('Dispositivos'));
+      await tester.tap(_dockDestination('Dispositivos'));
       await tester.pump();
       await tester.pump();
       expect(find.byType(DevicesPage), findsOneWidget);
@@ -99,6 +127,7 @@ void main() {
     (WidgetTester tester) async {
       MediaKit.ensureInitialized();
       useLinuxPlatform();
+      useCompactTestFont(tester);
       SharedPreferences.setMockInitialValues({});
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -111,7 +140,7 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      await tester.tap(find.text('Dispositivos'));
+      await tester.tap(_dockDestination('Dispositivos'));
       await tester.pump();
       await tester.pump();
       final devicesState = tester.state(find.byType(DevicesPage));
@@ -158,7 +187,7 @@ void main() {
 
       expect(find.byType(DesktopShell), findsOneWidget);
 
-      await tester.tap(find.text('Dispositivos'));
+      await tester.tap(_sidebarDestination('Dispositivos'));
       await tester.pump();
       await tester.pump();
       expect(find.byType(DevicesPage), findsOneWidget);
@@ -169,8 +198,10 @@ void main() {
 
       expect(find.byType(WallPanelShell), findsOneWidget);
       expect(find.byType(DesktopShell), findsNothing);
+      // The wall surface routes through its side rail now; the shell still
+      // carries the shared selection index.
       expect(
-        tester.widget<FloatingDock>(find.byType(FloatingDock)).currentIndex,
+        tester.widget<WallPanelShell>(find.byType(WallPanelShell)).currentIndex,
         1,
       );
       expect(tester.state(find.byType(DevicesPage)), same(devicesState));
@@ -345,6 +376,9 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.byType(MobileShell), findsOneWidget);
+    // Only the active destination renders a visible label; every destination
+    // still exposes its readable name through the dock semantics at 1.5x.
+    expect(find.text('Inicio'), findsOneWidget);
     for (final label in [
       'Inicio',
       'Dispositivos',
@@ -352,7 +386,7 @@ void main() {
       'Ajustes',
       'Cámaras',
     ]) {
-      expect(find.text(label), findsOneWidget);
+      expect(_dockDestination(label), findsOneWidget);
     }
   });
 }

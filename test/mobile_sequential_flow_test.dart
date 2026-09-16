@@ -29,25 +29,34 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(find.text('Dispositivos'), findsOneWidget);
+    // Controls-first landing: device management hangs off the header entry.
+    expect(find.byKey(const ValueKey('open-devices-list')), findsOneWidget);
 
-    // Sequential flow: pending banner -> device list -> detail.
-    await tester.tap(find.byKey(const Key('pending-devices-banner')));
+    // Sequential flow: landing -> device list -> detail.
+    await tester.tap(find.byKey(const ValueKey('open-devices-list')));
     await tester.pumpAndSettle();
-    expect(find.text('Nuevos dispositivos'), findsOneWidget);
+    expect(find.text('Dispositivos'), findsOneWidget); // flat list AppBar
 
     await tester.tap(find.text('Interruptor triple'));
     await tester.pumpAndSettle();
 
     expect(find.text('Configurar dispositivo'), findsOneWidget);
-    expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
-    expect(find.text('ENDPOINTS / CANALES'), findsOneWidget);
     expect(find.text('Canal 1'), findsOneWidget);
+    // The physical-area selector lives in the collapsed Configuración block.
+    await tester.scrollUntilVisible(
+      find.text('Configuración'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Configuración'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('physical-area-dropdown')), findsOneWidget);
 
     // Back returns to the list, not to a master/detail layout.
     await tester.pageBack();
     await tester.pumpAndSettle();
-    expect(find.text('Nuevos dispositivos'), findsOneWidget);
+    expect(find.text('Dispositivos'), findsOneWidget);
   });
 
   testWidgets('compact area list to editor remains sequential', (

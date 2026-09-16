@@ -51,7 +51,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('No se pudieron cargar los dispositivos'), findsNothing);
-    expect(find.text('Dispositivos'), findsOneWidget);
+    // The controls-first landing is up: its device-management entry is present.
+    expect(find.byKey(const ValueKey('open-devices-list')), findsOneWidget);
   });
 
   testWidgets('refresh failure retains the snapshot', (tester) async {

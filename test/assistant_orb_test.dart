@@ -53,13 +53,16 @@ void main() {
 }
 
 double _ringT(WidgetTester tester) {
-  final paint = tester.widget<CustomPaint>(
+  // The orb's breathing animation now drives AnimatedBuilders (the retired
+  // ring CustomPaint is gone), so read the live controller value through the
+  // public AnimatedBuilder animation.
+  final builder = tester.widget<AnimatedBuilder>(
     find
         .descendant(
           of: find.byType(AssistantOrb),
-          matching: find.byType(CustomPaint),
+          matching: find.byType(AnimatedBuilder),
         )
         .first,
   );
-  return (paint.painter as dynamic).t as double;
+  return (builder.animation as Animation<double>).value;
 }
