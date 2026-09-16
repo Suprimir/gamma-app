@@ -60,9 +60,6 @@ class ApiClient {
 
   Future<Map<String, dynamic>> catalog() => _get('/api/v1/catalog');
 
-  Future<Map<String, dynamic>> status({bool refresh = false}) =>
-      _get(refresh ? '/api/v1/status?refresh=true' : '/api/v1/status');
-
   Future<Map<String, dynamic>> setPower(
     String location,
     String deviceId,

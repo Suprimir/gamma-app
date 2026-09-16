@@ -55,5 +55,3 @@ DevicePlatform (`/api/v1/devices`). El contrato exacto está en
 - Selector real de `DeviceBinding`: el backend expone CRUD de bindings pero
   aún no publica un catálogo de entidades lógicas seleccionables. Se conserva
   el placeholder y se documenta la falta de contrato.
-- `LegacyDevicesPage` sigue disponible temporalmente como diagnóstico;
-  se retirará cuando el inventario nuevo soporte control/estado real.

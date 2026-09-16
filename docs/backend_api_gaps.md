@@ -81,10 +81,11 @@ en el resultado.
 - Las respuestas de las acciones incluyen el `observed_state` actual.
 - El DTO suma `bindings` por capability (aditivo).
 - **Nota de identidad**: no existe señal canónica de reachability/last_seen.
-  El legacy `GET /api/v1/status` (402 entradas, ids `luz_1@comedor_1`)
-  **no mapea** a los ids canónicos `dev_*`; si la UI debe mostrar "en
-  línea"/"última conexión" por dispositivo, esa señal tiene que vivir en el
-  contrato canónico (p. ej. dentro de `observed_state`).
+  El legacy `GET /api/v1/status` (402 entradas, ids `luz_1@comedor_1`) se
+  retiró justamente porque **no mapeaba** a los ids canónicos `dev_*`; esa
+  señal sigue sin existir, y si la UI debe mostrar "en línea"/"última
+  conexión" por dispositivo, tiene que vivir en el contrato canónico
+  (p. ej. dentro de `observed_state`).
 
 ## 4. Spotify: reproducción — ✅ implementada y verificada (2026-09-12)
 
@@ -165,9 +166,8 @@ quiere server-side: endpoint de clima por ubicación configurable.
   fix del punto 1.
 - `POST /devices/{provider_id}/scan` existe; la app usa discovery global.
 - `GET /api/v1/shadow/*` es diagnóstico; sin UI.
-- Legacy `GET /api/v1/status`, `GET /api/v1/catalog` y
-  `PUT /devices/{location}/{device_id}/power`: la app canónica ya no los usa
-  (solo la página legacy fuera de navegación). Candidatos a retiro.
+- Legacy `GET /api/v1/catalog` y
+  `PUT /devices/{location}/{device_id}/power`: candidatos a retiro.
 
 ---
 
