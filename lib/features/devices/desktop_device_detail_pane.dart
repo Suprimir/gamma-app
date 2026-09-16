@@ -543,7 +543,11 @@ class _DesktopDeviceDetailPaneState extends State<DesktopDeviceDetailPane> {
     );
     // Honest failure: the dialog renders the backend error inline and the
     // previous canonical name stays in place; no fake success is shown.
-    if (updated == null || !mounted) return;
+    if (updated == null) return;
+    // The backend already renamed the device, so the canonical response must
+    // reach shared state even when this pane was disposed while the request
+    // was in flight (same contract as _setEndpointRole). Only the UI parts
+    // below are mount-gated.
     widget.controller.applyCanonicalDevice(updated);
     if (!mounted) return;
     _showSnack('Nombre actualizado');
@@ -1352,7 +1356,7 @@ class _EndpointEditor extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    endpoint.displayName,
+                    endpointChannelName(endpoint),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -1514,7 +1518,7 @@ String _channelFunctionLabel(DeviceEndpoint endpoint) {
   if (caps.contains('HUMIDITY_READ') || caps.contains('HUMIDITY')) {
     return 'Sensor de humedad';
   }
-  return 'Controla ${endpoint.displayName}';
+  return 'Controla ${endpointChannelName(endpoint)}';
 }
 
 bool _isReadOnlyEndpoint(DeviceEndpoint endpoint) {
