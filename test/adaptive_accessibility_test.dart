@@ -14,7 +14,6 @@ import 'package:gamma_app/ui/app_colors.dart';
 import 'package:gamma_app/features/areas/desktop_areas_page.dart';
 import 'package:gamma_app/features/devices/desktop_devices_page.dart';
 import 'package:gamma_app/data/device_inventory.dart';
-import 'package:gamma_app/features/wall_home/wall_areas_page.dart';
 import 'package:gamma_app/features/devices/wall_devices_page.dart';
 
 import 'fixtures/areas_fake_repo.dart';
@@ -98,21 +97,6 @@ void main() {
 
     for (final id in ['dev_triple_01', 'dev_fan_01']) {
       final size = tester.getSize(find.byKey(ValueKey('wall-device-$id')));
-      expect(size.height, greaterThanOrEqualTo(72), reason: id);
-      expect(size.width, greaterThanOrEqualTo(64), reason: id);
-    }
-
-    await pumpWallAreas(
-      tester,
-      AreasFakeRepo(
-        areas: const [
-          HomeArea(id: 'area_SALA', name: 'Sala'),
-          HomeArea(id: 'area_COCINA', name: 'Cocina'),
-        ],
-      ),
-    );
-    for (final id in ['area_SALA', 'area_COCINA']) {
-      final size = tester.getSize(find.byKey(ValueKey('wall-area-$id')));
       expect(size.height, greaterThanOrEqualTo(72), reason: id);
       expect(size.width, greaterThanOrEqualTo(64), reason: id);
     }
@@ -331,26 +315,6 @@ Future<void> pumpWallDevices(
   // Controles is the wall default; card size proofs live in Dispositivos.
   await tester.tap(find.byKey(const ValueKey('wall-devices-button')));
   await tester.pumpAndSettle();
-}
-
-Future<void> pumpWallAreas(
-  WidgetTester tester,
-  DeviceInventoryRepository repo,
-) async {
-  tester.view.physicalSize = const Size(1280, 800);
-  tester.view.devicePixelRatio = 1.0;
-  addTearDown(tester.view.reset);
-  await tester.pumpWidget(
-    MaterialApp(
-      home: Scaffold(
-        body: WallAreasPage(
-          api: ApiClient(baseUrl: 'http://127.0.0.1:8420'),
-          repository: repo,
-        ),
-      ),
-    ),
-  );
-  await tester.pump(const Duration(milliseconds: 150));
 }
 
 const _a11yTriple = PhysicalDevice(

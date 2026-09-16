@@ -21,7 +21,7 @@ import '../wall_home/wall_activity_bus.dart';
 /// 1. Tapping a suggestion (type + room based, zero typing).
 /// 2. The built-in finger keyboard (always available, >= 60dp keys).
 /// 3. Dictating with the mic key (reuses the backend transcription behind
-///    [ApiClient.audioTurn], same contract as [MicPage]).
+///    [ApiClient.audioTurn]).
 ///
 /// Returns the confirmed text, or null when the user cancels.
 Future<String?> showWallNameEditor({

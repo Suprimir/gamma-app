@@ -352,9 +352,8 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     });
   }
 
-  /// Sends a text order to the assistant through the frozen turns contract
-  /// (same as ChatPage). Refreshes home counts afterwards so Estado del
-  /// hogar stays canonical.
+  /// Sends a text order to the assistant through the frozen turns contract.
+  /// Refreshes home counts afterwards so Estado del hogar stays canonical.
   Future<void> _sendAssistantText(String raw) async {
     final text = raw.trim();
     if (text.isEmpty || _sendingText) return;
