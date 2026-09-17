@@ -2,42 +2,53 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:gamma_app/features/routines/routine_actions.dart';
 
-const catalog = <Map<String, dynamic>>[
-  {
-    'name': 'salon',
-    'devices': [
-      {
-        'id': 'luz_salon',
-        'capabilities': ['TURN_ON', 'TURN_OFF', 'SET_VALUE'],
-      },
-      {
-        'id': 'vent_salon',
-        'capabilities': ['TURN_ON', 'TURN_OFF'],
-      },
-    ],
-  },
-  {
-    'name': 'cocina',
-    'devices': [
-      {
-        'id': 'luz_cocina',
-        'capabilities': ['TURN_ON', 'TURN_OFF'],
-      },
-    ],
-  },
+/// Objetivos endpoint-canonical como los proyecta `inventoryTargetView`.
+const targets = <RoutineTarget>[
+  RoutineTarget(
+    id: 'dev_1:relay_1',
+    deviceId: 'dev_1',
+    endpointId: 'relay_1',
+    areaId: 'salon',
+    label: 'Salón · Luz',
+    capabilities: ['TURN_ON', 'TURN_OFF', 'SET_VALUE'],
+  ),
+  RoutineTarget(
+    id: 'dev_2:relay_1',
+    deviceId: 'dev_2',
+    endpointId: 'relay_1',
+    areaId: 'salon',
+    label: 'Salón · Ventilador',
+    capabilities: ['TURN_ON', 'TURN_OFF'],
+  ),
+  RoutineTarget(
+    id: 'dev_3:relay_1',
+    deviceId: 'dev_3',
+    endpointId: 'relay_1',
+    areaId: 'cocina',
+    label: 'Cocina · Luz',
+    capabilities: ['TURN_ON', 'TURN_OFF'],
+  ),
 ];
+
+const labels = RoutineLabels(
+  targets: targets,
+  areas: [
+    {'id': 'salon', 'name': 'Salón'},
+    {'id': 'cocina', 'name': 'Cocina'},
+  ],
+);
 
 Map<String, dynamic> domotic(
   String intent, {
+  String? deviceId,
   String? location,
-  String? device,
   int? value,
 }) {
   return {
     'scope': 'SINGLE',
     'intent': intent,
+    'device_id': ?deviceId,
     'location': ?location,
-    'device': ?device,
     'value': ?value,
   };
 }
@@ -54,27 +65,35 @@ Map<String, dynamic> spotify(String op, {String? uri, String? vol}) {
 
 void main() {
   group('actionSummary', () {
-    test('domótico SINGLE con nivel', () {
+    test('domótico SINGLE canónico resuelve nombre y nivel', () {
       expect(
         actionSummary(
-          domotic(
-            'SET_VALUE',
-            location: 'salon',
-            device: 'luz_salon',
-            value: 40,
-          ),
+          domotic('SET_VALUE', deviceId: 'dev_1:relay_1', value: 40),
+          labels: labels,
         ),
+        'Ajusta Salón · Luz al 40%',
+      );
+    });
+
+    test('acción legacy con token sigue mostrándose', () {
+      expect(
+        actionSummary({
+          'scope': 'SINGLE',
+          'intent': 'SET_VALUE',
+          'location': 'salon',
+          'device': 'luz_salon',
+          'value': 40,
+        }),
         'Ajusta Luz salon en Salon al 40%',
       );
     });
 
     test('LOCATION_ALL y HOUSE_ALL', () {
       expect(
-        actionSummary({
-          'intent': 'TURN_OFF',
-          'scope': 'LOCATION_ALL',
-          'location': 'cocina',
-        }),
+        actionSummary(
+          {'intent': 'TURN_OFF', 'scope': 'LOCATION_ALL', 'location': 'cocina'},
+          labels: labels,
+        ),
         'Apaga todos los dispositivos en Cocina',
       );
       expect(
@@ -117,7 +136,7 @@ void main() {
 
   test('actionCategory y actionSub', () {
     expect(
-      actionCategory(domotic('TURN_ON', location: 'a', device: 'b')),
+      actionCategory(domotic('TURN_ON', deviceId: 'dev_1:relay_1')),
       'device',
     );
     expect(actionCategory({'intent': 'FETCH_NEWS'}), 'news');
@@ -128,7 +147,9 @@ void main() {
     );
   });
 
-  group('nuevas categorías (clima, espera, anuncio, encadenar)', () {
+  group('categorías legacy (clima, espera, anuncio, encadenar)', () {
+    // Ya no se ofrecen en la paleta (el whitelist del backend no las admite),
+    // pero se siguen renderizando de forma tolerante por si existieran.
     test('categoría y subtítulo', () {
       expect(actionCategory({'intent': 'CLIMATE_CONTROL'}), 'climate');
       expect(actionCategory({'intent': 'WAIT'}), 'wait');
@@ -198,81 +219,84 @@ void main() {
         'value': 22,
       };
       expect(
-        conflictReason(heat22, cool22, catalog),
+        conflictReason(heat22, cool22, targets),
         'Contradice el modo anterior',
       );
       expect(
-        conflictReason(cool24, cool22, catalog),
+        conflictReason(cool24, cool22, targets),
         'Contradice la temperatura anterior',
       );
-      expect(conflictReason(cool22, cool22, catalog), isNull);
-      expect(conflictReason(coolOtherZone, cool22, catalog), isNull);
+      expect(conflictReason(cool22, cool22, targets), isNull);
+      expect(conflictReason(coolOtherZone, cool22, targets), isNull);
     });
   });
 
-  test('deviceCapabilities respeta el catálogo y cae a on/off', () {
-    expect(deviceCapabilities('salon', 'luz_salon', catalog), [
-      'TURN_ON',
-      'TURN_OFF',
-      'SET_VALUE',
-    ]);
-    expect(deviceCapabilities('cocina', 'luz_cocina', catalog), [
-      'TURN_ON',
-      'TURN_OFF',
-    ]);
+  group('targetCapabilities', () {
+    test('respeta las capabilities del objetivo', () {
+      expect(targetCapabilities('dev_1:relay_1', targets), [
+        'TURN_ON',
+        'TURN_OFF',
+        'SET_VALUE',
+      ]);
+      expect(targetCapabilities('dev_3:relay_1', targets), [
+        'TURN_ON',
+        'TURN_OFF',
+      ]);
+    });
+
+    test('objetivo ausente cae al fallback conservador', () {
+      expect(targetCapabilities('dev_x:relay_1', targets), [
+        'TURN_ON',
+        'TURN_OFF',
+      ]);
+    });
   });
 
   group('conflictReason', () {
     test('TURN_ON contradice TURN_OFF en el mismo objetivo', () {
-      final on = domotic('TURN_ON', location: 'salon', device: 'luz_salon');
-      final off = domotic('TURN_OFF', location: 'salon', device: 'luz_salon');
-      expect(conflictReason(on, off, catalog), 'Contradice «Apagar»');
-      expect(conflictReason(off, on, catalog), 'Contradice «Encender»');
+      final on = domotic('TURN_ON', deviceId: 'dev_1:relay_1');
+      final off = domotic('TURN_OFF', deviceId: 'dev_1:relay_1');
+      expect(conflictReason(on, off, targets), 'Contradice «Apagar»');
+      expect(conflictReason(off, on, targets), 'Contradice «Encender»');
     });
 
     test('objetivos distintos no generan conflicto', () {
-      final on = domotic('TURN_ON', location: 'salon', device: 'luz_salon');
-      final off = domotic('TURN_OFF', location: 'cocina', device: 'luz_cocina');
-      expect(conflictReason(on, off, catalog), isNull);
+      final on = domotic('TURN_ON', deviceId: 'dev_1:relay_1');
+      final off = domotic('TURN_OFF', deviceId: 'dev_3:relay_1');
+      expect(conflictReason(on, off, targets), isNull);
     });
 
     test('SET_VALUE con nivel distinto contradice', () {
-      final low = domotic(
-        'SET_VALUE',
-        location: 'salon',
-        device: 'luz_salon',
-        value: 10,
-      );
-      final high = domotic(
-        'SET_VALUE',
-        location: 'salon',
-        device: 'luz_salon',
-        value: 80,
-      );
-      expect(conflictReason(low, high, catalog), 'Contradice el nivel 80%');
+      final low = domotic('SET_VALUE', deviceId: 'dev_1:relay_1', value: 10);
+      final high = domotic('SET_VALUE', deviceId: 'dev_1:relay_1', value: 80);
+      expect(conflictReason(low, high, targets), 'Contradice el nivel 80%');
     });
 
     test('TURN_ON + SET_VALUE no contradice', () {
-      final on = domotic('TURN_ON', location: 'salon', device: 'luz_salon');
-      final value = domotic(
-        'SET_VALUE',
-        location: 'salon',
-        device: 'luz_salon',
-        value: 50,
-      );
-      expect(conflictReason(on, value, catalog), isNull);
+      final on = domotic('TURN_ON', deviceId: 'dev_1:relay_1');
+      final value = domotic('SET_VALUE', deviceId: 'dev_1:relay_1', value: 50);
+      expect(conflictReason(on, value, targets), isNull);
     });
 
-    test('HOUSE_ALL abarca todos los dispositivos', () {
+    test('HOUSE_ALL abarca todos los objetivos', () {
       final candidate = {'intent': 'TURN_OFF', 'scope': 'HOUSE_ALL'};
-      final existing = domotic(
-        'TURN_ON',
-        location: 'salon',
-        device: 'luz_salon',
+      final existing = domotic('TURN_ON', deviceId: 'dev_1:relay_1');
+      expect(conflictReason(candidate, existing, targets), 'Contradice «Encender»');
+    });
+
+    test('LOCATION_ALL abarca solo su área', () {
+      final candidate = {
+        'intent': 'TURN_OFF',
+        'scope': 'LOCATION_ALL',
+        'location': 'cocina',
+      };
+      expect(
+        conflictReason(candidate, domotic('TURN_ON', deviceId: 'dev_3:relay_1'), targets),
+        'Contradice «Encender»',
       );
       expect(
-        conflictReason(candidate, existing, catalog),
-        'Contradice «Encender»',
+        conflictReason(candidate, domotic('TURN_ON', deviceId: 'dev_1:relay_1'), targets),
+        isNull,
       );
     });
 
@@ -280,22 +304,22 @@ void main() {
       final play = spotify('play', uri: 'https://x/1');
       final pause = spotify('pause');
       expect(
-        conflictReason(play, pause, catalog),
+        conflictReason(play, pause, targets),
         'Contradice la pausa anterior',
       );
       expect(
-        conflictReason(pause, play, catalog),
+        conflictReason(pause, play, targets),
         'Contradice la reproducción anterior',
       );
       expect(
-        conflictReason(spotify('play', uri: 'https://x/2'), play, catalog),
+        conflictReason(spotify('play', uri: 'https://x/2'), play, targets),
         'Reemplaza la selección anterior',
       );
       expect(
         conflictReason(
           spotify('volume', vol: '20'),
           spotify('volume', vol: '80'),
-          catalog,
+          targets,
         ),
         'Contradice el volumen anterior',
       );
@@ -304,31 +328,38 @@ void main() {
 
   group('findConflicts', () {
     test('index y label de la acción en conflicto', () {
-      final candidate = domotic(
-        'TURN_ON',
-        location: 'salon',
-        device: 'luz_salon',
-      );
+      final candidate = domotic('TURN_ON', deviceId: 'dev_1:relay_1');
       final existing = [
-        domotic('TURN_OFF', location: 'salon', device: 'luz_salon'),
-        domotic('TURN_OFF', location: 'cocina', device: 'luz_cocina'),
+        domotic('TURN_OFF', deviceId: 'dev_1:relay_1'),
+        domotic('TURN_OFF', deviceId: 'dev_3:relay_1'),
       ];
-      final conflicts = findConflicts(candidate, existing, catalog);
+      final conflicts = findConflicts(
+        candidate,
+        existing,
+        targets,
+        labels: labels,
+      );
       expect(conflicts, hasLength(1));
       expect(conflicts[0]['index'], '1');
-      expect(conflicts[0]['label'], contains('Luz salon'));
+      expect(conflicts[0]['label'], contains('Salón · Luz'));
     });
   });
 
-  group('inventoryCatalogView', () {
+  group('inventoryTargetView', () {
     Map<String, dynamic> endpoint(
       String id, {
+      bool? enabled,
+      bool? exposedToResolver,
       List<Map<String, dynamic>> capabilities = const [],
       String? controlledAreaId,
+      String? displayNameGlobal,
     }) {
       return {
         'endpoint_id': id,
+        'enabled': enabled,
+        'exposed_to_resolver': exposedToResolver,
         'controlled_area_id': controlledAreaId,
+        'display_name_global': displayNameGlobal,
         'capabilities': capabilities,
       };
     }
@@ -342,20 +373,28 @@ void main() {
       {'id': 'cocina', 'name': 'Cocina'},
     ];
 
-    test('mapea POWER a on/off y BRIGHTNESS a nivel', () {
-      final view = inventoryCatalogView(
+    test('proyecta objetivos endpoint-canonical con id y label', () {
+      final view = inventoryTargetView(
         areas: areas,
         devices: [
           {
-            'device_id': 'luz_salon',
+            'device_id': 'dev_6',
+            'display_name': 'Descasó y patio',
             'physical_area_id': 'salon',
             'endpoints': [
               endpoint(
-                'ep1',
+                'relay_1',
+                enabled: true,
+                exposedToResolver: true,
+                displayNameGlobal: 'Salón · Luz',
                 capabilities: [cap('POWER', writable: true)],
               ),
               endpoint(
-                'ep2',
+                'relay_2',
+                enabled: true,
+                exposedToResolver: true,
+                controlledAreaId: 'cocina',
+                displayNameGlobal: 'Cocina · Luz descanso',
                 capabilities: [
                   cap('POWER', writable: true),
                   cap('BRIGHTNESS', writable: true),
@@ -365,85 +404,118 @@ void main() {
           },
         ],
       );
-      expect(view.map((e) => e['name']), ['salon', 'cocina']);
-      final devices = view.first['devices'] as List;
-      expect(devices.single['id'], 'luz_salon');
-      expect(devices.single['capabilities'], [
-        'TURN_ON',
-        'TURN_OFF',
-        'SET_VALUE',
-      ]);
+      expect(view.map((t) => t.id), ['dev_6:relay_1', 'dev_6:relay_2']);
+      expect(view[0].areaId, 'salon');
+      expect(view[0].label, 'Salón · Luz');
+      expect(view[0].capabilities, ['TURN_ON', 'TURN_OFF']);
+      expect(view[1].areaId, 'cocina');
+      expect(view[1].capabilities, ['TURN_ON', 'TURN_OFF', 'SET_VALUE']);
     });
 
-    test('writable false excluye; sin metadatos se asume elegible', () {
-      final view = inventoryCatalogView(
+    test('excluye endpoints no elegibles para el resolver', () {
+      final view = inventoryTargetView(
         areas: areas,
         devices: [
           {
-            'device_id': 'sensor',
+            'device_id': 'dev_1',
             'physical_area_id': 'salon',
             'endpoints': [
               endpoint(
-                'ep1',
+                'disabled',
+                enabled: false,
+                exposedToResolver: true,
+                capabilities: [cap('POWER', writable: true)],
+              ),
+              endpoint(
+                'hidden',
+                enabled: true,
+                exposedToResolver: false,
+                capabilities: [cap('POWER', writable: true)],
+              ),
+              endpoint(
+                'ok',
+                enabled: true,
+                exposedToResolver: true,
+                capabilities: [cap('POWER', writable: true)],
+              ),
+            ],
+          },
+        ],
+      );
+      expect(view.map((t) => t.id), ['dev_1:ok']);
+    });
+
+    test('writable false excluye la capability; sin metadatos asume on/off', () {
+      final view = inventoryTargetView(
+        areas: areas,
+        devices: [
+          {
+            'device_id': 'dev_sensor',
+            'physical_area_id': 'salon',
+            'endpoints': [
+              endpoint(
+                'readonly',
                 capabilities: [cap('POWER', writable: false)],
               ),
             ],
           },
           {
-            'device_id': 'legacy',
+            'device_id': 'dev_legacy',
             'physical_area_id': 'salon',
-            'endpoints': [
-              endpoint('ep1', capabilities: [cap('POWER')]),
-            ],
+            'endpoints': [endpoint('relay_1', capabilities: [cap('POWER')])],
           },
         ],
       );
-      final devices = view.first['devices'] as List;
-      final byId = {for (final d in devices) d['id']: d['capabilities']};
-      expect(byId['sensor'], isEmpty);
-      expect(byId['legacy'], ['TURN_ON', 'TURN_OFF']);
+      // El sensor de solo lectura queda fuera; el legacy sin metadatos entra
+      // con el fallback conservador.
+      expect(view.map((t) => t.id), ['dev_legacy:relay_1']);
+      expect(view.single.capabilities, ['TURN_ON', 'TURN_OFF']);
     });
 
-    test('agrupa por área controlada y omite áreas desconocidas', () {
-      final view = inventoryCatalogView(
+    test('usa área controlada, omite áreas desconocidas y entradas rotas', () {
+      final view = inventoryTargetView(
         areas: areas,
         devices: [
           {
-            'device_id': 'luz_movil',
+            'device_id': 'dev_movil',
             'endpoints': [
-              endpoint('ep1', controlledAreaId: 'cocina'),
+              endpoint(
+                'relay_1',
+                controlledAreaId: 'cocina',
+                capabilities: [cap('POWER', writable: true)],
+              ),
             ],
           },
           {
-            'device_id': 'fantasma',
+            'device_id': 'dev_fantasma',
             'physical_area_id': 'sotano',
-            'endpoints': [],
+            'endpoints': [
+              endpoint('relay_1', capabilities: [cap('POWER', writable: true)]),
+            ],
           },
           {
-            'device_id': 'sin_area',
-            'endpoints': [],
+            'device_id': 'dev_sin_area',
+            'endpoints': [
+              endpoint('relay_1', capabilities: [cap('POWER', writable: true)]),
+            ],
           },
           'no-es-un-mapa',
         ],
       );
-      final cocina = view
-          .firstWhere((e) => e['name'] == 'cocina')['devices'] as List;
-      expect(cocina.map((d) => d['id']), ['luz_movil']);
-      final salon = view
-          .firstWhere((e) => e['name'] == 'salon')['devices'] as List;
-      expect(salon, isEmpty);
+      expect(view.map((t) => t.id), ['dev_movil:relay_1']);
+      expect(view.single.areaId, 'cocina');
     });
 
-    test('extremo a extremo con deviceCapabilities', () {
-      final view = inventoryCatalogView(
+    test('extremo a extremo con targetCapabilities', () {
+      final view = inventoryTargetView(
         areas: areas,
         devices: [
           {
-            'device_id': 'luz_salon',
+            'device_id': 'dev_1',
             'physical_area_id': 'salon',
             'endpoints': [
               endpoint(
-                'ep1',
+                'relay_1',
                 capabilities: [
                   cap('POWER', writable: true),
                   cap('BRIGHTNESS', writable: true),
@@ -453,16 +525,20 @@ void main() {
           },
         ],
       );
-      expect(deviceCapabilities('salon', 'luz_salon', view), [
+      expect(targetCapabilities('dev_1:relay_1', view), [
         'TURN_ON',
         'TURN_OFF',
         'SET_VALUE',
       ]);
-      // Dispositivo ausente de la vista: fallback conservador intacto.
-      expect(deviceCapabilities('salon', 'otro', view), [
-        'TURN_ON',
-        'TURN_OFF',
-      ]);
+      // Objetivo ausente de la vista: fallback conservador intacto.
+      expect(targetCapabilities('dev_9:relay_1', view), ['TURN_ON', 'TURN_OFF']);
+    });
+
+    test('RoutineLabels resuelve objetivo y área', () {
+      expect(labels.targetLabel('dev_1:relay_1'), 'Salón · Luz');
+      expect(labels.targetLabel('dev_x:relay_1'), isNull);
+      expect(labels.areaLabel('cocina'), 'Cocina');
+      expect(labels.areaLabel('area_unknown'), isNull);
     });
   });
 }

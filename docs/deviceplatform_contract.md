@@ -113,10 +113,24 @@ has-child solo se usa para agrupar (`GatewayInfo.childDeviceIds`).
 
 ## Áreas
 
-DevicePlatform no tiene catálogo de áreas. El único directorio de áreas es el
-legacy `GET /api/v1/catalog` → `locations: [{name, devices: [...]}]` donde
-`name` es el id estable del área (`comedor_1`, `cocina_1`, ...). Flutter lo
-reusa **solo** como directorio de `HomeArea`; nunca para devices/status.
+El directorio de áreas es `GET /api/v1/areas` → `{"areas": [{id, name,
+aliases, parent_id, created_at, updated_at}]}`. Los ids son canónicos
+(`area_<hex>`), sin nombre embebido; `name` es la etiqueta legible. El
+catálogo legacy `GET /api/v1/catalog` fue retirado y ya no se consume.
+
+## Rutinas (6c — retirement)
+
+`RoutineAction.device_id` es el único id de dispositivo admitido y es un
+**objetivo endpoint-canonical**: `"<device_id>:<endpoint_id>"` (p. ej.
+`dev_6:relay_1`, ver `composition.py`), restringido a endpoints con
+`enabled && exposed_to_resolver`. La forma token legacy (`device`) se
+rechaza en validación (422). `location` / `floor`, cuando presentes, deben
+ser ids canónicos de área (`area_<hex>`).
+
+El whitelist del backend (`utils/catalog_validation.py`) admite solo los
+intents `TURN_ON`, `TURN_OFF`, `SET_VALUE`, `MEDIA_CONTROL`, `GET_STATUS`,
+`FETCH_NEWS`, `CAMERA_CONTROL`; el editor no ofrece clima, esperar, anuncio
+ni encadenar rutina porque sus intents/scopes no están admitidos.
 
 ## Bindings
 
@@ -133,8 +147,8 @@ Faltante: ningún endpoint lista entidades lógicas seleccionables
 
 1. Sin salud operacional por dispositivo en ninguna ruta (solo a nivel
    provider).
-2. Sin catálogo de áreas en la API de dispositivos (se reusa el catálogo
-   legacy).
+2. El directorio de áreas vive en `/api/v1/areas` (ruta propia, fuera del
+   namespace de dispositivos); `GET /catalog` quedó retirado.
 3. Sin catálogo de entidades lógicas para bindings (el placeholder queda).
 4. Discovery es un POST que muta persistencia (sin dry-run); el fallo mapea a
    404.

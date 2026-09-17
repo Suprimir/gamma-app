@@ -31,6 +31,30 @@ void main() {
     expect(countRelatedRoutines(routines, 'dev_unknown'), 0);
   });
 
+  test('composite endpoint targets count for their device', () {
+    final routines = <Map<String, dynamic>>[
+      {
+        'id': 'r1',
+        'acciones': [
+          {'device_id': 'dev_6:relay_1', 'intent': 'TURN_ON'},
+          {'device_id': 'dev_6:relay_2', 'intent': 'TURN_ON'},
+        ],
+      },
+      {
+        'id': 'r2',
+        'acciones': [
+          {'device_id': 'dev_66:relay_1', 'intent': 'TURN_OFF'},
+        ],
+      },
+    ];
+
+    // Ambos endpoints pertenecen a dev_6 y la rutina cuenta una sola vez.
+    expect(countRelatedRoutines(routines, 'dev_6'), 1);
+    // dev_66 no debe confundirse con dev_6 pese al prefijo textual.
+    expect(countRelatedRoutines(routines, 'dev_66'), 1);
+    expect(countRelatedRoutines(routines, 'dev_7'), 0);
+  });
+
   test('duplicate actions for the same device count the routine once', () {
     final routines = <Map<String, dynamic>>[
       {

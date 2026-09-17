@@ -86,17 +86,12 @@ const routineCategories = <String, RoutineCategory>{
 /// Orden de la paleta del editor. `house` no es una tarjeta: «Toda la casa»
 /// se elige dentro de «Una ubicación» y solo se usa para renderizar acciones
 /// antiguas con scope HOUSE_ALL.
-const paletteCategoryOrder = [
-  'device',
-  'location',
-  'music',
-  'news',
-  'camera',
-  'climate',
-  'wait',
-  'announce',
-  'runroutine',
-];
+///
+/// Clima, esperar, anuncio y encadenar no se ofrecen: el whitelist del
+/// backend (`utils/catalog_validation.py`) no admite sus intents/scopes, así
+/// que guardarlos daría 422. Sus entradas de [routineCategories] se conservan
+/// solo para renderizar (tolerante) acciones antiguas.
+const paletteCategoryOrder = ['device', 'location', 'music', 'news', 'camera'];
 
 /// Nombre del módulo que habilita cada tarjeta (null = siempre disponible).
 const moduleEnablers = <String, String>{
@@ -121,90 +116,130 @@ const domoticIntents = {'TURN_ON', 'TURN_OFF', 'SET_VALUE'};
 /// El editor razona en intents ([domoticIntents]); el inventory habla
 /// capacidades canónicas (`POWER`, `BRIGHTNESS`, ...). Solo cuentan las
 /// declaradas escribibles: sin metadatos (`writable` ausente) se asume
-/// elegible —comportamiento histórico del catálogo—; `writable: false`
-/// explícito excluye. Las capacidades sin token (p. ej. `POSITION`) no
-/// aportan nada y caen al fallback on/off, como hasta ahora.
+/// elegible —comportamiento histórico—; `writable: false` explícito
+/// excluye. Las capacidades sin token (p. ej. `POSITION`) no aportan nada y
+/// caen al fallback on/off, como hasta ahora.
 const canonicalToDomoticIntents = <String, Set<String>>{
   'POWER': {'TURN_ON', 'TURN_OFF'},
   'BRIGHTNESS': {'SET_VALUE'},
 };
 
-/// Vista ubicación→dispositivos en la forma legacy del catálogo, proyectada
-/// del inventory (`/devices` + `/areas`) en vez de `GET /catalog`.
+/// Objetivo canónico de rutina: un endpoint resolver-exposed del inventory.
 ///
-/// Cada entrada es `{'name': areaId, 'devices': [{'id': deviceId,
-/// 'capabilities': [intents...]}]}`: el mismo contrato que consumen
-/// [deviceCapabilities] y el resolutor de objetivos, así que esos no
-/// cambian. Agrupación espejo del backend y de `devicesInArea`: área física
-/// del dispositivo o área controlada de cualquiera de sus endpoints; los
-/// dispositivos sin área conocida se omiten, igual que en el catálogo.
+/// El backend 6c persiste `device_id` como `"<device_id>:<endpoint_id>"`
+/// (ver `composition.py`), así que [id] replica exactamente esa forma: es lo
+/// único que el editor debe mandar en una acción SINGLE.
+class RoutineTarget {
+  const RoutineTarget({
+    required this.id,
+    required this.deviceId,
+    required this.endpointId,
+    required this.areaId,
+    required this.label,
+    required this.capabilities,
+  });
+
+  /// Id canónico `"<device_id>:<endpoint_id>"`.
+  final String id;
+  final String deviceId;
+  final String endpointId;
+
+  /// Área canónica que controla el endpoint (`controlled_area_id`) o, en su
+  /// defecto, el área física del dispositivo. Vacía cuando no tiene área.
+  final String areaId;
+
+  /// Etiqueta legible (`display_name_global`, p. ej. «Patio · Luz»).
+  final String label;
+
+  /// Intents domóticos admitidos por el endpoint (on/off y/o nivel).
+  final List<String> capabilities;
+}
+
+/// Vista de objetivos de rutina proyectada del inventory (`/devices` +
+/// `/areas`), en vez del catálogo legacy retirado.
+///
+/// Solo incluye endpoints elegibles para el resolver: `enabled` y
+/// `exposed_to_resolver` no pueden ser `false` explícitos (ausentes se
+/// asumen elegibles, igual que `writable`), y deben caer en un área conocida.
 /// Nunca lanza: las entradas malformadas se saltan en silencio.
-List<Map<String, dynamic>> inventoryCatalogView({
+List<RoutineTarget> inventoryTargetView({
   required List areas,
   required List devices,
 }) {
-  final areaIds = <String>[];
+  final areaIds = <String>{};
   for (final area in areas) {
     if (area is! Map) continue;
     final id = area['id']?.toString() ?? '';
-    if (id.isEmpty || areaIds.contains(id)) continue;
-    areaIds.add(id);
+    if (id.isNotEmpty) areaIds.add(id);
   }
-  final byArea = <String, List<Map<String, dynamic>>>{};
-  final seenInArea = <String, Set<String>>{};
+  final targets = <RoutineTarget>[];
   for (final device in devices) {
     if (device is! Map) continue;
     final deviceId = device['device_id']?.toString() ?? '';
     if (deviceId.isEmpty) continue;
-    final deviceAreas = <String>{};
-    final physical = device['physical_area_id']?.toString() ?? '';
-    if (physical.isNotEmpty) deviceAreas.add(physical);
+    final physicalArea = device['physical_area_id']?.toString() ?? '';
+    final deviceLabel =
+        _displayLabel(device['display_name']) ??
+        _displayLabel(device['provider_name']) ??
+        '';
     final endpoints = device['endpoints'];
-    if (endpoints is List) {
-      for (final endpoint in endpoints) {
-        if (endpoint is! Map) continue;
-        final controlled =
-            endpoint['controlled_area_id']?.toString() ?? '';
-        if (controlled.isNotEmpty) deviceAreas.add(controlled);
-      }
-    }
-    final intents = _deviceIntents(device);
-    for (final areaId in deviceAreas) {
-      if (!areaIds.contains(areaId)) continue;
-      final seen = seenInArea.putIfAbsent(areaId, () => <String>{});
-      if (!seen.add(deviceId)) continue;
-      byArea
-          .putIfAbsent(areaId, () => <Map<String, dynamic>>[])
-          .add({'id': deviceId, 'capabilities': intents});
-    }
-  }
-  return [
-    for (final areaId in areaIds)
-      {
-        'name': areaId,
-        'devices': byArea[areaId] ?? const <Map<String, dynamic>>[],
-      },
-  ];
-}
-
-/// Intents domóticos de un dispositivo del inventory, en orden estable
-/// (on/off antes que nivel). Vacío cuando nada es mapeable: el llamante
-/// aplica el fallback conservador.
-List<String> _deviceIntents(Map device) {
-  final declared = <String>{};
-  final endpoints = device['endpoints'];
-  if (endpoints is List) {
+    if (endpoints is! List) continue;
     for (final endpoint in endpoints) {
       if (endpoint is! Map) continue;
+      if (endpoint['enabled'] == false) continue;
+      if (endpoint['exposed_to_resolver'] == false) continue;
+      final endpointId = endpoint['endpoint_id']?.toString() ?? '';
+      if (endpointId.isEmpty) continue;
+      final controlled = endpoint['controlled_area_id']?.toString() ?? '';
+      final areaId = controlled.isNotEmpty ? controlled : physicalArea;
+      if (areaId.isEmpty || !areaIds.contains(areaId)) continue;
       final capabilities = endpoint['capabilities'];
-      if (capabilities is! List) continue;
-      for (final capability in capabilities) {
-        if (capability is! Map) continue;
-        if (capability['writable'] == false) continue;
-        final name =
-            capability['capability']?.toString().trim().toUpperCase() ?? '';
-        if (name.isNotEmpty) declared.add(name);
+      final intents = _endpointIntents(endpoint);
+      // Con metadatos de capacidades presentes pero nada mapeable/escribible
+      // (p. ej. un sensor de solo lectura) el endpoint no es accionable: no se
+      // ofrece. Sin metadatos se mantiene el fallback conservador on/off.
+      if (capabilities is List && capabilities.isNotEmpty && intents.isEmpty) {
+        continue;
       }
+      final label =
+          _displayLabel(endpoint['display_name_global']) ??
+          _displayLabel(endpoint['display_name_semantic']) ??
+          _displayLabel(endpoint['user_name']) ??
+          _displayLabel(endpoint['display_name']) ??
+          (deviceLabel.isNotEmpty ? deviceLabel : deviceId);
+      targets.add(
+        RoutineTarget(
+          id: '$deviceId:$endpointId',
+          deviceId: deviceId,
+          endpointId: endpointId,
+          areaId: areaId,
+          label: label,
+          capabilities: intents,
+        ),
+      );
+    }
+  }
+  return targets;
+}
+
+String? _displayLabel(Object? value) {
+  final text = value?.toString().trim() ?? '';
+  return text.isEmpty ? null : text;
+}
+
+/// Intents domóticos de un endpoint del inventory, en orden estable (on/off
+/// antes que nivel). Vacío cuando nada es mapeable: el llamante aplica el
+/// fallback conservador.
+List<String> _endpointIntents(Map endpoint) {
+  final declared = <String>{};
+  final capabilities = endpoint['capabilities'];
+  if (capabilities is List) {
+    for (final capability in capabilities) {
+      if (capability is! Map) continue;
+      if (capability['writable'] == false) continue;
+      final name =
+          capability['capability']?.toString().trim().toUpperCase() ?? '';
+      if (name.isNotEmpty) declared.add(name);
     }
   }
   final intents = <String>[];
@@ -212,6 +247,45 @@ List<String> _deviceIntents(Map device) {
     if (declared.contains(entry.key)) intents.addAll(entry.value);
   }
   return intents;
+}
+
+/// Intents admitidos por un objetivo; fallback conservador on/off cuando el
+/// endpoint no declara nada mapeable (nunca se inventa el ajuste de nivel).
+List<String> targetCapabilities(String targetId, List<RoutineTarget> targets) {
+  for (final target in targets) {
+    if (target.id == targetId) {
+      return target.capabilities.isEmpty
+          ? const ['TURN_ON', 'TURN_OFF']
+          : target.capabilities;
+    }
+  }
+  return const ['TURN_ON', 'TURN_OFF'];
+}
+
+/// Resolver de nombres para renderizar acciones canónicas: objetivos
+/// (`device_id:endpoint_id` → etiqueta) y áreas (`area_*` → nombre).
+class RoutineLabels {
+  const RoutineLabels({this.targets = const [], this.areas = const []});
+
+  final List<RoutineTarget> targets;
+  final List<Map<String, dynamic>> areas;
+
+  String? targetLabel(String id) {
+    for (final target in targets) {
+      if (target.id == id) return target.label;
+    }
+    return null;
+  }
+
+  String? areaLabel(String id) {
+    for (final area in areas) {
+      if (area['id']?.toString() == id) {
+        final name = area['name']?.toString().trim() ?? '';
+        if (name.isNotEmpty) return name;
+      }
+    }
+    return null;
+  }
 }
 
 /// Categoría visual de una acción (refleja `actionCategory` del web).
@@ -235,7 +309,14 @@ IconData actionIcon(Map<String, dynamic> action) =>
     CupertinoIcons.square_grid_2x2;
 
 /// Resumen de una acción, copia exacta de `actionSummary` del web.
-String actionSummary(Map<String, dynamic> action) {
+///
+/// [labels] resuelve ids canónicos (`device_id:endpoint_id`, `area_*`) a
+/// nombres legibles; sin él cae a los formatters de tokens legacy, que siguen
+/// funcionando para acciones antiguas.
+String actionSummary(
+  Map<String, dynamic> action, {
+  RoutineLabels labels = const RoutineLabels(),
+}) {
   final intent = action['intent']?.toString() ?? '';
   if (intent == 'FETCH_NEWS') return 'Lee las noticias del día';
   if (intent == 'MEDIA_CONTROL') {
@@ -281,7 +362,7 @@ String actionSummary(Map<String, dynamic> action) {
     final location = action['location']?.toString();
     final where = (location == null || location.isEmpty)
         ? 'toda la casa'
-        : formatLocationName(location);
+        : (labels.areaLabel(location) ?? formatLocationName(location));
     if (mode == 'off') return 'Apaga el clima en $where';
     final value = action['value'];
     final temp = value != null ? ' a $value°' : '';
@@ -312,21 +393,35 @@ String actionSummary(Map<String, dynamic> action) {
   final scope = action['scope']?.toString() ?? 'SINGLE';
   if (scope == 'HOUSE_ALL') return '$verb toda la casa';
   if (scope == 'LOCATION_ALL') {
+    final location = action['location']?.toString() ?? '';
     return '$verb todos los dispositivos en '
-        '${formatLocationName(action['location']?.toString() ?? '')}';
+        '${labels.areaLabel(location) ?? formatLocationName(location)}';
   }
   if (scope == 'DEVICE_GLOBAL') {
-    return '$verb todos los ${formatDeviceName(action['device']?.toString() ?? '')} '
+    return '$verb todos los ${_targetText(action, labels)} '
         'de la casa';
   }
-  var target = formatDeviceName(action['device']?.toString() ?? '');
+  var target = _targetText(action, labels);
   final location = action['location']?.toString();
   if (location != null && location.isNotEmpty) {
-    target += ' en ${formatLocationName(location)}';
+    target += ' en ${labels.areaLabel(location) ?? formatLocationName(location)}';
   }
   final value = action['value'];
   if (intent == 'SET_VALUE' && value != null) target += ' al $value%';
   return '$verb $target';
+}
+
+/// Nombre legible del objetivo de una acción domótica: id canónico
+/// (`device_id:endpoint_id`) resuelto por [labels]; sin resolver, se usa la
+/// parte de dispositivo; acciones sin `device_id` caen al token legacy.
+String _targetText(Map<String, dynamic> action, RoutineLabels labels) {
+  final canonical = action['device_id']?.toString() ?? '';
+  if (canonical.isNotEmpty) {
+    final label = labels.targetLabel(canonical);
+    if (label != null) return label;
+    return formatDeviceName(canonical.split(':').first);
+  }
+  return formatDeviceName(action['device']?.toString() ?? '');
 }
 
 /// Subtítulo de la acción, copia exacta de `actionSub` del web.
@@ -345,104 +440,39 @@ String actionSub(Map<String, dynamic> action) {
   return 'Dispositivo';
 }
 
-/// Capacidades admitidas por un dispositivo del catálogo. Sin metadatos se
-/// asume un comportamiento conservador de encendido/apagado; nunca se inventa
-/// el ajuste de nivel (refleja `deviceCapabilities` del web).
-List<String> deviceCapabilities(
-  String location,
-  String deviceId,
-  List<Map<String, dynamic>> catalogLocations,
-) {
-  Map<String, dynamic>? locationEntry;
-  for (final candidate in catalogLocations) {
-    if (candidate['name']?.toString() == location) {
-      locationEntry = candidate;
-      break;
-    }
-  }
-  Map<String, dynamic>? device;
-  final devices = (locationEntry?['devices'] as List?) ?? const [];
-  for (final candidate in devices.cast<Map<String, dynamic>>()) {
-    if (candidate['id']?.toString() == deviceId) {
-      device = candidate;
-      break;
-    }
-  }
-  if (device == null) return const ['TURN_ON', 'TURN_OFF'];
-  final capabilities =
-      (device['capabilities'] as List?)
-          ?.map((e) => e.toString())
-          .where(domoticIntents.contains)
-          .toList() ??
-      const [];
-  return capabilities.isEmpty ? const ['TURN_ON', 'TURN_OFF'] : capabilities;
-}
-
-/// Familia de un dispositivo («luz_1» → «luz»). Los ids `requested_N` no pueden
-/// resolverse sin el catálogo, así que se ignoran (devuelve null).
-String? _deviceFamily(String deviceId) {
-  if (deviceId.isEmpty || deviceId.startsWith('requested')) return null;
-  return deviceId.split('_').first;
-}
-
-/// Expande el alcance de una acción domótica a pares (location, device).
-/// Si no puede resolverse con seguridad devuelve null (no se advierte).
+/// Expande el alcance de una acción domótica a ids canónicos de objetivo
+/// (`device_id:endpoint_id`). Si no puede resolverse con seguridad devuelve
+/// null (no se advierte).
 Set<String>? _resolveDomoticTargets(
   Map<String, dynamic> action,
-  List<Map<String, dynamic>> catalogLocations,
+  List<RoutineTarget> targets,
 ) {
   final scope = action['scope']?.toString() ?? '';
-  final pairs = <String>{};
-
-  void addLocation(Map<String, dynamic>? location) {
-    final name = location?['name']?.toString();
-    if (name == null || name.isEmpty) return;
-    final devices = (location?['devices'] as List?) ?? const [];
-    for (final device in devices.cast<Map<String, dynamic>>()) {
-      final id = device['id']?.toString();
-      if (id != null && id.isNotEmpty) pairs.add('$name\u0000$id');
-    }
-  }
+  final ids = <String>{};
 
   if (scope == 'HOUSE_ALL') {
-    for (final location in catalogLocations) {
-      addLocation(location);
+    for (final target in targets) {
+      ids.add(target.id);
     }
   } else if (scope == 'LOCATION_ALL') {
-    Map<String, dynamic>? location;
-    final target = action['location']?.toString();
-    for (final candidate in catalogLocations) {
-      if (candidate['name']?.toString() == target) {
-        location = candidate;
-        break;
-      }
+    final area = action['location']?.toString() ?? '';
+    if (area.isEmpty) return null;
+    for (final target in targets) {
+      if (target.areaId == area) ids.add(target.id);
     }
-    if (location == null) return null;
-    addLocation(location);
   } else if (scope == 'SINGLE' || scope == 'DEVICE_LOCATION') {
-    final device = action['device']?.toString() ?? '';
-    final location = action['location']?.toString() ?? '';
-    if (device.isEmpty || location.isEmpty) return null;
-    pairs.add('$location\u0000$device');
-  } else if (scope == 'DEVICE_GLOBAL') {
-    final family = _deviceFamily(action['device']?.toString() ?? '');
-    if (family == null) return null;
-    for (final location in catalogLocations) {
-      final name = location['name']?.toString();
-      if (name == null || name.isEmpty) continue;
-      final devices = (location['devices'] as List?) ?? const [];
-      for (final device in devices.cast<Map<String, dynamic>>()) {
-        final id = device['id']?.toString();
-        if (id != null && _deviceFamily(id) == family) {
-          pairs.add('$name\u0000$id');
-        }
-      }
-    }
+    final canonical = action['device_id']?.toString() ?? '';
+    final token = canonical.isNotEmpty
+        ? canonical
+        : action['device']?.toString() ?? '';
+    if (token.isEmpty) return null;
+    ids.add(token);
   } else {
-    // FLOOR_*, agrupaciones y exclusiones opacas: no se resuelven.
+    // FLOOR_*, DEVICE_GLOBAL, agrupaciones y exclusiones opacas: no se
+    // resuelven (la heurística de familia token se retiró con el catálogo).
     return null;
   }
-  return pairs.isEmpty ? null : pairs;
+  return ids.isEmpty ? null : ids;
 }
 
 bool _overlaps(Set<String>? a, Set<String>? b) {
@@ -526,18 +556,15 @@ String? _climateConflictReason(
 String? conflictReason(
   Map<String, dynamic> candidate,
   Map<String, dynamic> existing,
-  List<Map<String, dynamic>> catalogLocations,
+  List<RoutineTarget> targets,
 ) {
   final candidateIntent = candidate['intent']?.toString() ?? '';
   final existingIntent = existing['intent']?.toString() ?? '';
 
   if (domoticIntents.contains(candidateIntent) &&
       domoticIntents.contains(existingIntent)) {
-    final candidateTargets = _resolveDomoticTargets(
-      candidate,
-      catalogLocations,
-    );
-    final existingTargets = _resolveDomoticTargets(existing, catalogLocations);
+    final candidateTargets = _resolveDomoticTargets(candidate, targets);
+    final existingTargets = _resolveDomoticTargets(existing, targets);
     if (!_overlaps(candidateTargets, existingTargets)) return null;
     if (candidateIntent == 'TURN_ON' && existingIntent == 'TURN_OFF') {
       return 'Contradice «Apagar»';
@@ -575,15 +602,16 @@ String? conflictReason(
 List<Map<String, String>> findConflicts(
   Map<String, dynamic> candidate,
   List<Map<String, dynamic>> existing,
-  List<Map<String, dynamic>> catalogLocations,
-) {
+  List<RoutineTarget> targets, {
+  RoutineLabels labels = const RoutineLabels(),
+}) {
   final conflicts = <Map<String, String>>[];
   for (var i = 0; i < existing.length; i++) {
-    final reason = conflictReason(candidate, existing[i], catalogLocations);
+    final reason = conflictReason(candidate, existing[i], targets);
     if (reason != null) {
       conflicts.add({
         'index': '${i + 1}',
-        'label': actionSummary(existing[i]),
+        'label': actionSummary(existing[i], labels: labels),
         'reason': reason,
       });
     }

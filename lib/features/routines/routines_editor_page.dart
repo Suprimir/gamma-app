@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../data/api_client.dart';
 import '../../adaptive/adaptive_scope.dart';
-import '../devices/devices_page.dart' show formatDeviceName, formatLocationName;
+import '../devices/devices_page.dart' show formatLocationName;
 import 'routine_actions.dart';
 import '../../ui/shared_widgets.dart';
 import '../../ui/app_colors.dart';
@@ -60,10 +60,11 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
   bool _saving = false;
 
   final _draft = _RoutineDraft();
-  List<Map<String, dynamic>> _locationsView = [];
+  List<RoutineTarget> _targets = [];
   List<Map<String, dynamic>> _areas = [];
-  List<Map<String, dynamic>> _allRoutines = [];
   Map<String, bool> _modulesEnabled = {};
+
+  RoutineLabels get _labels => RoutineLabels(targets: _targets, areas: _areas);
 
   final _nombreController = TextEditingController();
   final _descripcionController = TextEditingController();
@@ -92,23 +93,15 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
       ]);
       final inventoryData = results[0] as Map<String, dynamic>;
       final modulesList = results[1] as List<Map<String, dynamic>>;
-      // Directorio real de áreas (/api/v1/areas): el catálogo legacy trae
-      // ids canónicos (area_<hex>) sin nombre legible, así que las pills
-      // quedaban todas como «Área». Se carga tolerante: sin áreas igual se
-      // puede editar, solo que las pills muestran el fallback.
+      // Directorio real de áreas (/api/v1/areas): los ids canónicos
+      // (area_<hex>) no tienen nombre legible, así que las pills quedarían
+      // todas como «Área». Se carga tolerante: sin áreas igual se puede
+      // editar, solo que las pills muestran el fallback.
       List<Map<String, dynamic>> areas = const [];
       try {
         areas = await widget.api.areas();
       } catch (_) {
         areas = const [];
-      }
-      // Rutinas existentes para «Ejecutar otra rutina». Tolerante: sin ellas
-      // la tarjeta muestra su estado vacío en vez de romper el editor.
-      List<Map<String, dynamic>> routines = const [];
-      try {
-        routines = await widget.api.routines();
-      } catch (_) {
-        routines = const [];
       }
       Map<String, dynamic>? routine;
       if (widget.routineId != null) {
@@ -116,16 +109,13 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
       }
       if (!mounted) return;
       setState(() {
-        // Vista ubicación→dispositivos proyectada del inventory en vez del
-        // catálogo legacy: mismo contrato (`name`/`devices`/`capabilities`
-        // en intents), con capabilities reales del endpoint.
-        _locationsView = inventoryCatalogView(
+        // Objetivos endpoint-canonical (`device_id:endpoint_id`) proyectados
+        // del inventory: es la forma que valida el backend 6c.
+        _targets = inventoryTargetView(
           areas: areas,
-          devices:
-              (inventoryData['devices'] as List?) ?? const [],
+          devices: (inventoryData['devices'] as List?) ?? const [],
         );
         _areas = areas;
-        _allRoutines = routines;
         _modulesEnabled = {
           for (final m in modulesList)
             m['name'].toString(): m['enabled'] == true,
@@ -189,14 +179,8 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
     final sheet = _ActionConfigSheet(
       api: widget.api,
       type: type,
-      locationsView: _locationsView,
+      targets: _targets,
       areas: _areas,
-      routines: [
-        for (final r in _allRoutines)
-          if (r['id']?.toString() != _draft.id &&
-              (r['nombre']?.toString().trim().isNotEmpty ?? false))
-            r,
-      ],
       existing: _draft.acciones,
       moduleIsOff: moduleIsOff,
     );
@@ -701,7 +685,8 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
 
   Widget _wallSummaryRow(int index, Map<String, dynamic> action) {
     final category = actionCategory(action);
-    final label = routineCategories[category]?.label ?? actionSummary(action);
+    final label =
+        routineCategories[category]?.label ?? actionSummary(action, labels: _labels);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
@@ -849,6 +834,7 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
                     key: ObjectKey(_draft.acciones[index]),
                     index: index,
                     action: _draft.acciones[index],
+                    labels: _labels,
                     onDelete: () {
                       setState(() => _draft.acciones.removeAt(index));
                     },
@@ -1434,7 +1420,7 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  actionSummary(action),
+                  actionSummary(action, labels: _labels),
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
@@ -1598,11 +1584,13 @@ class _ActionRow extends StatelessWidget {
     super.key,
     required this.index,
     required this.action,
+    required this.labels,
     required this.onDelete,
   });
 
   final int index;
   final Map<String, dynamic> action;
+  final RoutineLabels labels;
   final VoidCallback onDelete;
 
   @override
@@ -1641,7 +1629,7 @@ class _ActionRow extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            actionSummary(action),
+                            actionSummary(action, labels: labels),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -1748,20 +1736,18 @@ class _ActionConfigSheet extends StatefulWidget {
   const _ActionConfigSheet({
     required this.api,
     required this.type,
-    required this.locationsView,
+    required this.targets,
     required this.areas,
-    required this.routines,
     required this.existing,
     required this.moduleIsOff,
   });
 
   final ApiClient api;
   final String type;
-  final List<Map<String, dynamic>> locationsView;
-  final List<Map<String, dynamic>> areas;
 
-  /// Rutinas encadenables (ya sin la que se está editando).
-  final List<Map<String, dynamic>> routines;
+  /// Objetivos endpoint-canonical del inventory (`device_id:endpoint_id`).
+  final List<RoutineTarget> targets;
+  final List<Map<String, dynamic>> areas;
   final List<Map<String, dynamic>> existing;
   final bool moduleIsOff;
 
@@ -1780,23 +1766,6 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
   String _cameraOp = 'snapshot';
   double _volume = 50;
 
-  // Ajustar clima.
-  String? _climateLocation;
-  bool _climateAll = true;
-  String _climateMode = 'cool';
-  double _climateTemp = 22;
-
-  // Esperar.
-  int _waitValue = 5;
-  String _waitUnit = 'min';
-
-  // Anuncio de voz.
-  String _announceTarget = 'house';
-  final _announceController = TextEditingController();
-
-  // Ejecutar otra rutina.
-  String? _runRoutineId;
-
   Map<String, dynamic>? _spot;
   final _searchController = TextEditingController();
   Map<String, List<Map<String, dynamic>>>? _results;
@@ -1814,12 +1783,14 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
   List<Map<String, String>>? _conflicts;
   Map<String, dynamic>? _pending;
 
+  RoutineLabels get _labels =>
+      RoutineLabels(targets: widget.targets, areas: widget.areas);
+
   @override
   void dispose() {
     _debounce?.cancel();
     _searchController.dispose();
     _cameraController.dispose();
-    _announceController.dispose();
     super.dispose();
   }
 
@@ -1936,7 +1907,7 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
               style: const TextStyle(fontSize: 13, color: _dimText),
               children: [
                 TextSpan(
-                  text: actionSummary(_pending!),
+                  text: actionSummary(_pending!, labels: _labels),
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
               ],
@@ -1988,10 +1959,6 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
             style: TextStyle(fontSize: 13, height: 1.5, color: _dimText),
           ),
           'camera' => _cameraConfig(),
-          'climate' => _climateConfig(),
-          'wait' => _waitConfig(),
-          'announce' => _announceConfig(),
-          'runroutine' => _runRoutineConfig(),
           _ => const SizedBox.shrink(),
         },
         if (_feedback.isNotEmpty) ...[
@@ -2067,30 +2034,37 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
     return formatLocationName(id);
   }
 
-  /// Opciones de ubicación: unión del catálogo (tiene dispositivos) con el
-  /// directorio real de áreas (tiene los nombres). Sin catálogo igual se
-  /// ofrecen las áreas para «Una ubicación»; para «Controla un dispositivo»
-  /// el paso 2 avisará si el área no tiene dispositivos.
+  /// Opciones de ubicación: el directorio real de áreas (/api/v1/areas) es la
+  /// fuente; `hasDevices` marca las que tienen objetivos endpoint-canonical.
   List<({String id, String label, bool hasDevices})> _locationOptions() {
     final options = <({String id, String label, bool hasDevices})>[];
     final seen = <String>{};
-    for (final location in widget.locationsView) {
-      final id = location['name']?.toString() ?? '';
-      if (id.isEmpty || !seen.add(id)) continue;
-      options.add((id: id, label: _areaLabel(id), hasDevices: true));
-    }
     for (final area in widget.areas) {
       final id = area['id']?.toString() ?? '';
       if (id.isEmpty || !seen.add(id)) continue;
       final name = area['name']?.toString().trim() ?? '';
       if (name.isEmpty) continue;
-      options.add((id: id, label: name, hasDevices: false));
+      final hasDevices = widget.targets.any((target) => target.areaId == id);
+      options.add((id: id, label: name, hasDevices: hasDevices));
     }
     return options;
   }
 
+  List<RoutineTarget> _targetsForArea(String areaId) =>
+      widget.targets.where((target) => target.areaId == areaId).toList();
+
+  String _targetLabel(String id) {
+    for (final target in widget.targets) {
+      if (target.id == id) return target.label;
+    }
+    return id;
+  }
+
   Widget _deviceConfig() {
     final options = _locationOptions();
+    final targets = _location == null
+        ? const <RoutineTarget>[]
+        : _targetsForArea(_location!);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2111,17 +2085,17 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
                 ),
             ],
           ),
-        if (_location != null && _devices().isNotEmpty) ...[
+        if (_location != null && targets.isNotEmpty) ...[
           const SizedBox(height: 16),
           _stepLabel('2. Dispositivo'),
           _pillWrap(
             children: [
-              for (final device in _devices())
+              for (final target in targets)
                 _pill(
-                  label: formatDeviceName(device['id'].toString()),
-                  selected: _device == device['id'],
+                  label: target.label,
+                  selected: _device == target.id,
                   onTap: () => setState(() {
-                    _device = device['id'].toString();
+                    _device = target.id;
                     _intent = null;
                     _feedback = '';
                   }),
@@ -2161,7 +2135,7 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
 
   Widget _selectionSummary() {
     if (_location == null) return const SizedBox.shrink();
-    if (_devices().isEmpty) {
+    if (_targetsForArea(_location!).isEmpty) {
       return Padding(
         padding: const EdgeInsets.only(top: 14),
         child: Text(
@@ -2174,7 +2148,7 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
       return const SizedBox.shrink();
     }
     final text =
-        '${formatDeviceName(_device!)} · '
+        '${_targetLabel(_device!)} · '
         '${_areaLabel(_location!)} · '
         '${intentLabels[_intent] ?? _intent}'
         '${_intent == 'SET_VALUE' ? ' · ${_value.round()}%' : ''}';
@@ -2335,279 +2309,6 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
     );
   }
 
-  String _climateModeLabel(String mode) => switch (mode) {
-    'heat' => 'Calor',
-    'off' => 'Apagar',
-    _ => 'Frío',
-  };
-
-  String _climateZoneLabel() {
-    if (_climateAll) return 'Toda la casa';
-    if (_climateLocation == null) return '—';
-    return _areaLabel(_climateLocation!);
-  }
-
-  Widget _climateConfig() {
-    final options = _locationOptions();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _stepLabel('1. Ubicación'),
-        if (options.isEmpty)
-          const Text(
-            'No hay áreas todavía. Crealas en Áreas para usarlas aquí.',
-            style: TextStyle(fontSize: 13, height: 1.5, color: _dimText),
-          )
-        else
-          _pillWrap(
-            children: [
-              _pill(
-                label: 'Toda la casa',
-                selected: _climateAll,
-                onTap: () => setState(() {
-                  _climateAll = true;
-                  _climateLocation = null;
-                  _feedback = '';
-                }),
-              ),
-              for (final option in options)
-                _pill(
-                  label: option.label,
-                  selected: !_climateAll && _climateLocation == option.id,
-                  onTap: () => setState(() {
-                    _climateAll = false;
-                    _climateLocation = option.id;
-                    _feedback = '';
-                  }),
-                ),
-            ],
-          ),
-        const SizedBox(height: 16),
-        _stepLabel('2. Modo'),
-        _pillWrap(
-          children: [
-            for (final mode in const ['cool', 'heat', 'off'])
-              _pill(
-                label: _climateModeLabel(mode),
-                selected: _climateMode == mode,
-                onTap: () => setState(() {
-                  _climateMode = mode;
-                  _feedback = '';
-                }),
-              ),
-          ],
-        ),
-        if (_climateMode != 'off') ...[
-          const SizedBox(height: 16),
-          _stepLabel('3. Temperatura'),
-          _stepper(
-            center: '${_climateTemp.round()}°C',
-            onMinus: () => setState(() {
-              if (_climateTemp > 16) _climateTemp -= 1;
-            }),
-            onPlus: () => setState(() {
-              if (_climateTemp < 30) _climateTemp += 1;
-            }),
-          ),
-        ],
-        _configSummary(
-          _climateMode == 'off'
-              ? '${_climateZoneLabel()} · Apagar'
-              : '${_climateZoneLabel()} · ${_climateModeLabel(_climateMode)} · ${_climateTemp.round()}°C',
-        ),
-      ],
-    );
-  }
-
-  String _waitUnitLabel(String unit) => unit == 's' ? 'Segundos' : 'Minutos';
-
-  int get _waitMax => _waitUnit == 's' ? 300 : 60;
-
-  Widget _waitConfig() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _stepLabel('1. Duración'),
-        _stepper(
-          center: _waitUnit == 's' ? '$_waitValue s' : '$_waitValue min',
-          onMinus: () => setState(() {
-            if (_waitValue > 1) _waitValue -= 1;
-          }),
-          onPlus: () => setState(() {
-            if (_waitValue < _waitMax) _waitValue += 1;
-          }),
-        ),
-        const SizedBox(height: 16),
-        _stepLabel('2. Unidad'),
-        _pillWrap(
-          children: [
-            for (final unit in const ['s', 'min'])
-              _pill(
-                label: _waitUnitLabel(unit),
-                selected: _waitUnit == unit,
-                onTap: () => setState(() {
-                  _waitUnit = unit;
-                  if (_waitValue > _waitMax) _waitValue = _waitMax;
-                  _feedback = '';
-                }),
-              ),
-          ],
-        ),
-        _configSummary(
-          'Esperar $_waitValue ${_waitUnit == 's' ? 'segundos' : 'minutos'}',
-        ),
-      ],
-    );
-  }
-
-  Widget _announceConfig() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _stepLabel('1. Dónde anunciar'),
-        _pillWrap(
-          children: [
-            _pill(
-              label: 'Toda la casa',
-              selected: _announceTarget == 'house',
-              onTap: () => setState(() {
-                _announceTarget = 'house';
-                _feedback = '';
-              }),
-            ),
-            _pill(
-              label: 'Mi teléfono',
-              selected: _announceTarget == 'phone',
-              onTap: () => setState(() {
-                _announceTarget = 'phone';
-                _feedback = '';
-              }),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        _stepLabel('2. Mensaje'),
-        TextField(
-          controller: _announceController,
-          maxLength: 200,
-          maxLines: 2,
-          textInputAction: TextInputAction.done,
-          onChanged: (_) {
-            if (_feedback.isNotEmpty) setState(() => _feedback = '');
-          },
-          decoration: _decoration(hint: 'La comida está lista'),
-        ),
-        _configSummary(
-          _announceController.text.trim().isEmpty
-              ? 'Escribe el mensaje que dirá GAMMA.'
-              : 'Anuncia: «${_announceController.text.trim()}»',
-        ),
-      ],
-    );
-  }
-
-  Widget _runRoutineConfig() {
-    if (widget.routines.isEmpty) {
-      return const Text(
-        'Todavía no tienes otra rutina para encadenar. Guarda esta y crea una más.',
-        style: TextStyle(fontSize: 13, height: 1.5, color: _dimText),
-      );
-    }
-    String selectedName = '';
-    for (final r in widget.routines) {
-      if (r['id']?.toString() == _runRoutineId) {
-        selectedName = r['nombre']?.toString() ?? '';
-      }
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _stepLabel('1. Rutina'),
-        _pillWrap(
-          children: [
-            for (final r in widget.routines)
-              _pill(
-                label: r['nombre']?.toString() ?? '',
-                selected: _runRoutineId == r['id']?.toString(),
-                onTap: () => setState(() {
-                  _runRoutineId = r['id']?.toString();
-                  _feedback = '';
-                }),
-              ),
-          ],
-        ),
-        _configSummary(
-          selectedName.isEmpty
-              ? 'Elige qué rutina se ejecutará.'
-              : 'Ejecuta la rutina «$selectedName»',
-        ),
-      ],
-    );
-  }
-
-  /// Cajita de resumen gris como la referencia («Recámara · Frío · 22°C»).
-  Widget _configSummary(String text) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(top: 14),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: _softFill,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _border),
-      ),
-      child: Text(
-        text,
-        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-      ),
-    );
-  }
-
-  /// Stepper − valor + en contenedor redondeado, como la referencia.
-  Widget _stepper({
-    required String center,
-    required VoidCallback onMinus,
-    required VoidCallback onPlus,
-  }) {
-    Widget circle(IconData icon, VoidCallback onTap) {
-      return SizedBox(
-        width: 56,
-        height: 56,
-        child: Material(
-          color: Colors.white,
-          shape: const CircleBorder(side: BorderSide(color: _border)),
-          child: InkWell(
-            onTap: onTap,
-            customBorder: const CircleBorder(),
-            child: Icon(icon, size: 22, color: _dimText),
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: _softFill,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _border),
-      ),
-      child: Row(
-        children: [
-          circle(CupertinoIcons.minus, onMinus),
-          Expanded(
-            child: Text(
-              center,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-            ),
-          ),
-          circle(CupertinoIcons.add, onPlus),
-        ],
-      ),
-    );
-  }
-
   void _selectLocation(String name) {
     setState(() {
       _location = name;
@@ -2617,18 +2318,9 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
     });
   }
 
-  List<Map<String, dynamic>> _devices() {
-    for (final location in widget.locationsView) {
-      if (location['name'] == _location) {
-        return (location['devices'] as List?)?.cast<Map<String, dynamic>>() ??
-            const [];
-      }
-    }
-    return const [];
-  }
-
   List<String> _capabilities() {
-    return deviceCapabilities(_location!, _device!, widget.locationsView);
+    if (_device == null) return const ['TURN_ON', 'TURN_OFF'];
+    return targetCapabilities(_device!, widget.targets);
   }
 
   // --- Búsqueda de Spotify ---------------------------------------------------
@@ -3401,7 +3093,12 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
   void _submit() {
     final action = _readAction();
     if (action == null) return;
-    final conflicts = findConflicts(action, widget.existing, widget.locationsView);
+    final conflicts = findConflicts(
+      action,
+      widget.existing,
+      widget.targets,
+      labels: _labels,
+    );
     if (conflicts.isNotEmpty) {
       setState(() {
         _pending = action;
@@ -3419,11 +3116,21 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
           _showFeedback('Elige una ubicación, un dispositivo y una acción.');
           return null;
         }
+        RoutineTarget? target;
+        for (final candidate in widget.targets) {
+          if (candidate.id == _device) {
+            target = candidate;
+            break;
+          }
+        }
         return {
           'scope': 'SINGLE',
           'intent': _intent,
-          'location': _location,
-          'device': _device,
+          // 6c: id canónico `device_id:endpoint_id`. El token legacy `device`
+          // ya no se envía porque el backend lo rechaza.
+          'device_id': _device,
+          if (target != null && target.areaId.isNotEmpty)
+            'location': target.areaId,
           if (_intent == 'SET_VALUE') ...{
             'value': _value.round(),
             'value_semantic': 'porcentaje',
@@ -3468,57 +3175,6 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
           'intent': 'CAMERA_CONTROL',
           'operation': _cameraOp,
           'query': query,
-        };
-      case 'climate':
-        if (!_climateAll && _climateLocation == null) {
-          _showFeedback('Elige una ubicación para el clima.');
-          return null;
-        }
-        return {
-          'scope': 'CLIMATE_CONTROL',
-          'intent': 'CLIMATE_CONTROL',
-          if (!_climateAll) 'location': _climateLocation,
-          'mode': _climateMode,
-          if (_climateMode != 'off') ...{
-            'value': _climateTemp.round(),
-            'value_semantic': 'grados',
-          },
-        };
-      case 'wait':
-        return {
-          'scope': 'WAIT',
-          'intent': 'WAIT',
-          'value': _waitValue,
-          'value_semantic': _waitUnit == 's' ? 'segundos' : 'minutos',
-        };
-      case 'announce':
-        final message = _announceController.text.trim();
-        if (message.isEmpty) {
-          _showFeedback('Escribe el mensaje que dirá GAMMA.');
-          return null;
-        }
-        return {
-          'scope': 'ANNOUNCE',
-          'intent': 'ANNOUNCE',
-          if (_announceTarget == 'phone') 'location': 'phone',
-          'query': message,
-        };
-      case 'runroutine':
-        if (_runRoutineId == null) {
-          _showFeedback('Elige qué rutina se ejecutará.');
-          return null;
-        }
-        String targetName = '';
-        for (final r in widget.routines) {
-          if (r['id']?.toString() == _runRoutineId) {
-            targetName = r['nombre']?.toString() ?? '';
-          }
-        }
-        return {
-          'scope': 'RUN_ROUTINE',
-          'intent': 'RUN_ROUTINE',
-          'routine_id': _runRoutineId,
-          if (targetName.isNotEmpty) 'query': targetName,
         };
     }
     return null;
