@@ -10,12 +10,10 @@ import 'fixtures/deviceplatform_fixtures.dart';
 class FakeDeviceClassApi extends ApiClient {
   FakeDeviceClassApi() : super(baseUrl: 'http://fake') {
     inventory = _deepCopy(deviceplatformInventoryJson);
-    catalogData = _deepCopy(deviceplatformCatalogJson);
     healthData = _deepCopy(deviceplatformHealthJson);
   }
 
   late Map<String, dynamic> inventory;
-  late Map<String, dynamic> catalogData;
   late Map<String, dynamic> healthData;
   final roleWrites = <(String, String, String?)>[];
   bool failRoleWrites = false;
@@ -28,9 +26,6 @@ class FakeDeviceClassApi extends ApiClient {
       inventory;
 
   @override
-  Future<Map<String, dynamic>> catalog() async => catalogData;
-
-  @override
   Future<Map<String, dynamic>> deviceProviderHealth() async => healthData;
 
   /// No SSE in this fake: the production repository's live-update surface
@@ -41,20 +36,17 @@ class FakeDeviceClassApi extends ApiClient {
 
   @override
   Future<List<Map<String, dynamic>>> areas() async {
-    final raw = catalogData['locations'];
-    if (raw is! List) return const [];
-    // Canonical /api/v1/areas DTO shape: {id, name, aliases}. The fake maps
-    // catalog locations into that contract so the repository never falls
-    // back to legacy (F3-B final closure: canonical empty stays empty).
-    return raw
-        .whereType<Map>()
-        .map(
-          (location) => {
-            'id': location['id'] ?? location['name'],
-            'name': location['name'],
-            'aliases': const <String>[],
-          },
-        )
+    // Áreas explícitas del contrato canónico (antes derivadas del catálogo
+    // legacy en el fake).
+    const areas = [
+      {'id': 'pasillo', 'name': 'pasillo', 'aliases': <String>[]},
+      {'id': 'cocina', 'name': 'cocina', 'aliases': <String>[]},
+      {'id': 'comedor', 'name': 'comedor', 'aliases': <String>[]},
+      {'id': 'sala', 'name': 'sala', 'aliases': <String>[]},
+      {'id': 'patio', 'name': 'patio', 'aliases': <String>[]},
+    ];
+    return areas
+        .map((area) => Map<String, dynamic>.from(area))
         .toList();
   }
 

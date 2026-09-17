@@ -922,14 +922,6 @@ class _SpotifyCardApi extends ApiClient {
       {'devices': []};
 
   @override
-  Future<Map<String, dynamic>> catalog() async => {
-    'locations': [],
-    'routines': [],
-    'device_count': 0,
-    'version': 1,
-  };
-
-  @override
   Future<Map<String, dynamic>> deviceProviderHealth() async => {
     'providers': [],
   };

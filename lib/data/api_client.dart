@@ -58,21 +58,6 @@ class ApiClient {
     return _decode(resp);
   }
 
-  Future<Map<String, dynamic>> catalog() => _get('/api/v1/catalog');
-
-  Future<Map<String, dynamic>> setPower(
-    String location,
-    String deviceId,
-    bool enabled,
-  ) async {
-    final resp = await _client.put(
-      Uri.parse('$baseUrl/api/v1/devices/$location/$deviceId/power'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'enabled': enabled}),
-    );
-    return _decode(resp);
-  }
-
   Future<Map<String, dynamic>> deviceInventory({bool pending = false}) =>
       _get(pending ? '/api/v1/devices?pending=true' : '/api/v1/devices');
 

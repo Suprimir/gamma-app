@@ -9,7 +9,8 @@ class _FakeApiClient extends ApiClient {
   _FakeApiClient() : super(baseUrl: 'http://test');
 
   @override
-  Future<Map<String, dynamic>> catalog() async => {'locations': []};
+  Future<Map<String, dynamic>> deviceInventory({bool pending = false}) async =>
+      {'devices': []};
 
   @override
   Future<List<Map<String, dynamic>>> modules() async => [

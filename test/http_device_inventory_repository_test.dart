@@ -11,27 +11,31 @@ import 'fixtures/deviceplatform_fixtures.dart';
 class FakeApiClient extends ApiClient {
   FakeApiClient({
     Map<String, dynamic>? inventoryData,
-    Map<String, dynamic>? catalogData,
     Map<String, dynamic>? healthData,
-    this.areasData,
+    List<Map<String, dynamic>>? areasData,
     this.inventoryError,
-    this.catalogError,
     this.healthError,
   }) : inventoryData = inventoryData ?? deviceplatformInventoryJson,
-       catalogData = catalogData ?? deviceplatformCatalogJson,
        healthData = healthData ?? deviceplatformHealthJson,
+       areasData = areasData ?? _defaultAreas,
        super(baseUrl: 'http://fake');
 
   Map<String, dynamic> inventoryData;
-  Map<String, dynamic> catalogData;
   Map<String, dynamic> healthData;
 
-  /// Explicit canonical `/api/v1/areas` payload. When null, the fake derives
-  /// areas from the catalog so pre-existing tests keep their behavior.
-  List<Map<String, dynamic>>? areasData;
+  /// Canonical `/api/v1/areas` payload por defecto (antes derivado del
+  /// catálogo legacy, hoy explícito: el repo ya no pide `/catalog`).
+  static const _defaultAreas = <Map<String, dynamic>>[
+    {'id': 'pasillo', 'name': 'pasillo', 'aliases': <String>[]},
+    {'id': 'cocina', 'name': 'cocina', 'aliases': <String>[]},
+    {'id': 'comedor', 'name': 'comedor', 'aliases': <String>[]},
+    {'id': 'sala', 'name': 'sala', 'aliases': <String>[]},
+    {'id': 'patio', 'name': 'patio', 'aliases': <String>[]},
+  ];
+
+  List<Map<String, dynamic>> areasData;
 
   ApiException? inventoryError;
-  ApiException? catalogError;
   ApiException? healthError;
   int discoveryCalls = 0;
 
@@ -42,34 +46,13 @@ class FakeApiClient extends ApiClient {
   }
 
   @override
-  Future<Map<String, dynamic>> catalog() async {
-    if (catalogError != null) throw catalogError!;
-    return catalogData;
-  }
-
-  @override
   Future<Map<String, dynamic>> deviceProviderHealth() async {
     if (healthError != null) throw healthError!;
     return healthData;
   }
 
   @override
-  Future<List<Map<String, dynamic>>> areas() async {
-    final explicit = areasData;
-    if (explicit != null) return explicit;
-    final raw = catalogData['locations'];
-    if (raw is! List) return const [];
-    return raw
-        .whereType<Map>()
-        .map(
-          (location) => {
-            'id': location['id'] ?? location['name'],
-            'name': location['name'],
-            'aliases': const <String>[],
-          },
-        )
-        .toList();
-  }
+  Future<List<Map<String, dynamic>>> areas() async => areasData;
 
   final deletedAreas = <String>[];
   Object? deleteError;
@@ -365,7 +348,7 @@ void main() {
       },
     );
 
-    test('areas come from the legacy catalog', () async {
+    test('areas come from the canonical endpoint', () async {
       final repository = HttpDeviceInventoryRepository(FakeApiClient());
       final snapshot = await repository.load();
 
@@ -579,7 +562,6 @@ void main() {
     test('no fallback to mock when every call fails', () async {
       final fake = FakeApiClient(
         inventoryError: ApiException(500, {'detail': 'boom'}),
-        catalogError: ApiException(500, {'detail': 'boom'}),
         healthError: ApiException(500, {'detail': 'boom'}),
       );
 

@@ -100,12 +100,6 @@ class _FakeDashboardApi extends ApiClient {
   }
 
   @override
-  Future<Map<String, dynamic>> catalog() async {
-    if (inventoryFails) throw StateError('backend offline');
-    return {'locations': [], 'routines': [], 'device_count': 0, 'version': 1};
-  }
-
-  @override
   Future<Map<String, dynamic>> deviceProviderHealth() async {
     if (inventoryFails) throw StateError('backend offline');
     return {'providers': []};

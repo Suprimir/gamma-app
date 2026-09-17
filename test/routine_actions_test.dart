@@ -319,4 +319,150 @@ void main() {
       expect(conflicts[0]['label'], contains('Luz salon'));
     });
   });
+
+  group('inventoryCatalogView', () {
+    Map<String, dynamic> endpoint(
+      String id, {
+      List<Map<String, dynamic>> capabilities = const [],
+      String? controlledAreaId,
+    }) {
+      return {
+        'endpoint_id': id,
+        'controlled_area_id': controlledAreaId,
+        'capabilities': capabilities,
+      };
+    }
+
+    Map<String, dynamic> cap(String name, {bool? writable}) {
+      return {'capability': name, 'writable': writable};
+    }
+
+    const areas = [
+      {'id': 'salon', 'name': 'Salón'},
+      {'id': 'cocina', 'name': 'Cocina'},
+    ];
+
+    test('mapea POWER a on/off y BRIGHTNESS a nivel', () {
+      final view = inventoryCatalogView(
+        areas: areas,
+        devices: [
+          {
+            'device_id': 'luz_salon',
+            'physical_area_id': 'salon',
+            'endpoints': [
+              endpoint(
+                'ep1',
+                capabilities: [cap('POWER', writable: true)],
+              ),
+              endpoint(
+                'ep2',
+                capabilities: [
+                  cap('POWER', writable: true),
+                  cap('BRIGHTNESS', writable: true),
+                ],
+              ),
+            ],
+          },
+        ],
+      );
+      expect(view.map((e) => e['name']), ['salon', 'cocina']);
+      final devices = view.first['devices'] as List;
+      expect(devices.single['id'], 'luz_salon');
+      expect(devices.single['capabilities'], [
+        'TURN_ON',
+        'TURN_OFF',
+        'SET_VALUE',
+      ]);
+    });
+
+    test('writable false excluye; sin metadatos se asume elegible', () {
+      final view = inventoryCatalogView(
+        areas: areas,
+        devices: [
+          {
+            'device_id': 'sensor',
+            'physical_area_id': 'salon',
+            'endpoints': [
+              endpoint(
+                'ep1',
+                capabilities: [cap('POWER', writable: false)],
+              ),
+            ],
+          },
+          {
+            'device_id': 'legacy',
+            'physical_area_id': 'salon',
+            'endpoints': [
+              endpoint('ep1', capabilities: [cap('POWER')]),
+            ],
+          },
+        ],
+      );
+      final devices = view.first['devices'] as List;
+      final byId = {for (final d in devices) d['id']: d['capabilities']};
+      expect(byId['sensor'], isEmpty);
+      expect(byId['legacy'], ['TURN_ON', 'TURN_OFF']);
+    });
+
+    test('agrupa por área controlada y omite áreas desconocidas', () {
+      final view = inventoryCatalogView(
+        areas: areas,
+        devices: [
+          {
+            'device_id': 'luz_movil',
+            'endpoints': [
+              endpoint('ep1', controlledAreaId: 'cocina'),
+            ],
+          },
+          {
+            'device_id': 'fantasma',
+            'physical_area_id': 'sotano',
+            'endpoints': [],
+          },
+          {
+            'device_id': 'sin_area',
+            'endpoints': [],
+          },
+          'no-es-un-mapa',
+        ],
+      );
+      final cocina = view
+          .firstWhere((e) => e['name'] == 'cocina')['devices'] as List;
+      expect(cocina.map((d) => d['id']), ['luz_movil']);
+      final salon = view
+          .firstWhere((e) => e['name'] == 'salon')['devices'] as List;
+      expect(salon, isEmpty);
+    });
+
+    test('extremo a extremo con deviceCapabilities', () {
+      final view = inventoryCatalogView(
+        areas: areas,
+        devices: [
+          {
+            'device_id': 'luz_salon',
+            'physical_area_id': 'salon',
+            'endpoints': [
+              endpoint(
+                'ep1',
+                capabilities: [
+                  cap('POWER', writable: true),
+                  cap('BRIGHTNESS', writable: true),
+                ],
+              ),
+            ],
+          },
+        ],
+      );
+      expect(deviceCapabilities('salon', 'luz_salon', view), [
+        'TURN_ON',
+        'TURN_OFF',
+        'SET_VALUE',
+      ]);
+      // Dispositivo ausente de la vista: fallback conservador intacto.
+      expect(deviceCapabilities('salon', 'otro', view), [
+        'TURN_ON',
+        'TURN_OFF',
+      ]);
+    });
+  });
 }

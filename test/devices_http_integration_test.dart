@@ -10,12 +10,10 @@ import 'fixtures/deviceplatform_fixtures.dart';
 class FakeDeviceApi extends ApiClient {
   FakeDeviceApi() : super(baseUrl: 'http://fake') {
     inventory = _deepCopy(deviceplatformInventoryJson);
-    catalogData = _deepCopy(deviceplatformCatalogJson);
     healthData = _deepCopy(deviceplatformHealthJson);
   }
 
   late Map<String, dynamic> inventory;
-  late Map<String, dynamic> catalogData;
   late Map<String, dynamic> healthData;
   int discoverCalls = 0;
   int inventoryCalls = 0;
@@ -79,12 +77,6 @@ class FakeDeviceApi extends ApiClient {
   }
 
   @override
-  Future<Map<String, dynamic>> catalog() async {
-    if (failLoads) throw ApiException(503, {'detail': 'backend down'});
-    return catalogData;
-  }
-
-  @override
   Future<Map<String, dynamic>> deviceProviderHealth() async {
     if (failLoads) throw ApiException(503, {'detail': 'backend down'});
     return healthData;
@@ -93,17 +85,17 @@ class FakeDeviceApi extends ApiClient {
   @override
   Future<List<Map<String, dynamic>>> areas() async {
     if (failLoads) throw ApiException(503, {'detail': 'backend down'});
-    final raw = catalogData['locations'];
-    if (raw is! List) return const [];
-    return raw
-        .whereType<Map>()
-        .map(
-          (location) => {
-            'id': location['id'] ?? location['name'],
-            'name': location['name'],
-            'aliases': const <String>[],
-          },
-        )
+    // Áreas explícitas del contrato canónico (antes derivadas del catálogo
+    // legacy en el fake; el repo ya no pide `/catalog`).
+    const areas = [
+      {'id': 'pasillo', 'name': 'pasillo', 'aliases': <String>[]},
+      {'id': 'cocina', 'name': 'cocina', 'aliases': <String>[]},
+      {'id': 'comedor', 'name': 'comedor', 'aliases': <String>[]},
+      {'id': 'sala', 'name': 'sala', 'aliases': <String>[]},
+      {'id': 'patio', 'name': 'patio', 'aliases': <String>[]},
+    ];
+    return areas
+        .map((area) => Map<String, dynamic>.from(area))
         .toList();
   }
 

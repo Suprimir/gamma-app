@@ -116,6 +116,104 @@ const intentLabels = <String, String>{
 
 const domoticIntents = {'TURN_ON', 'TURN_OFF', 'SET_VALUE'};
 
+/// Mapeo capacidad canónica (inventory) → intents domóticos del editor.
+///
+/// El editor razona en intents ([domoticIntents]); el inventory habla
+/// capacidades canónicas (`POWER`, `BRIGHTNESS`, ...). Solo cuentan las
+/// declaradas escribibles: sin metadatos (`writable` ausente) se asume
+/// elegible —comportamiento histórico del catálogo—; `writable: false`
+/// explícito excluye. Las capacidades sin token (p. ej. `POSITION`) no
+/// aportan nada y caen al fallback on/off, como hasta ahora.
+const canonicalToDomoticIntents = <String, Set<String>>{
+  'POWER': {'TURN_ON', 'TURN_OFF'},
+  'BRIGHTNESS': {'SET_VALUE'},
+};
+
+/// Vista ubicación→dispositivos en la forma legacy del catálogo, proyectada
+/// del inventory (`/devices` + `/areas`) en vez de `GET /catalog`.
+///
+/// Cada entrada es `{'name': areaId, 'devices': [{'id': deviceId,
+/// 'capabilities': [intents...]}]}`: el mismo contrato que consumen
+/// [deviceCapabilities] y el resolutor de objetivos, así que esos no
+/// cambian. Agrupación espejo del backend y de `devicesInArea`: área física
+/// del dispositivo o área controlada de cualquiera de sus endpoints; los
+/// dispositivos sin área conocida se omiten, igual que en el catálogo.
+/// Nunca lanza: las entradas malformadas se saltan en silencio.
+List<Map<String, dynamic>> inventoryCatalogView({
+  required List areas,
+  required List devices,
+}) {
+  final areaIds = <String>[];
+  for (final area in areas) {
+    if (area is! Map) continue;
+    final id = area['id']?.toString() ?? '';
+    if (id.isEmpty || areaIds.contains(id)) continue;
+    areaIds.add(id);
+  }
+  final byArea = <String, List<Map<String, dynamic>>>{};
+  final seenInArea = <String, Set<String>>{};
+  for (final device in devices) {
+    if (device is! Map) continue;
+    final deviceId = device['device_id']?.toString() ?? '';
+    if (deviceId.isEmpty) continue;
+    final deviceAreas = <String>{};
+    final physical = device['physical_area_id']?.toString() ?? '';
+    if (physical.isNotEmpty) deviceAreas.add(physical);
+    final endpoints = device['endpoints'];
+    if (endpoints is List) {
+      for (final endpoint in endpoints) {
+        if (endpoint is! Map) continue;
+        final controlled =
+            endpoint['controlled_area_id']?.toString() ?? '';
+        if (controlled.isNotEmpty) deviceAreas.add(controlled);
+      }
+    }
+    final intents = _deviceIntents(device);
+    for (final areaId in deviceAreas) {
+      if (!areaIds.contains(areaId)) continue;
+      final seen = seenInArea.putIfAbsent(areaId, () => <String>{});
+      if (!seen.add(deviceId)) continue;
+      byArea
+          .putIfAbsent(areaId, () => <Map<String, dynamic>>[])
+          .add({'id': deviceId, 'capabilities': intents});
+    }
+  }
+  return [
+    for (final areaId in areaIds)
+      {
+        'name': areaId,
+        'devices': byArea[areaId] ?? const <Map<String, dynamic>>[],
+      },
+  ];
+}
+
+/// Intents domóticos de un dispositivo del inventory, en orden estable
+/// (on/off antes que nivel). Vacío cuando nada es mapeable: el llamante
+/// aplica el fallback conservador.
+List<String> _deviceIntents(Map device) {
+  final declared = <String>{};
+  final endpoints = device['endpoints'];
+  if (endpoints is List) {
+    for (final endpoint in endpoints) {
+      if (endpoint is! Map) continue;
+      final capabilities = endpoint['capabilities'];
+      if (capabilities is! List) continue;
+      for (final capability in capabilities) {
+        if (capability is! Map) continue;
+        if (capability['writable'] == false) continue;
+        final name =
+            capability['capability']?.toString().trim().toUpperCase() ?? '';
+        if (name.isNotEmpty) declared.add(name);
+      }
+    }
+  }
+  final intents = <String>[];
+  for (final entry in canonicalToDomoticIntents.entries) {
+    if (declared.contains(entry.key)) intents.addAll(entry.value);
+  }
+  return intents;
+}
+
 /// Categoría visual de una acción (refleja `actionCategory` del web).
 String actionCategory(Map<String, dynamic> action) {
   final intent = action['intent']?.toString() ?? '';

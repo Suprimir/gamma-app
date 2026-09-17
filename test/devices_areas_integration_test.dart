@@ -151,14 +151,6 @@ class _FinalDeviceApi extends ApiClient {
   }
 
   @override
-  Future<Map<String, dynamic>> catalog() async => {
-    'locations': const <Map<String, dynamic>>[],
-    'routines': const <Map<String, dynamic>>[],
-    'device_count': 0,
-    'version': 1,
-  };
-
-  @override
   Future<Map<String, dynamic>> deviceProviderHealth() async => {
     'tuya': {
       'provider_id': 'tuya',

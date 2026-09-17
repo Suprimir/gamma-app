@@ -31,17 +31,13 @@ class HttpDeviceInventoryRepository
   Future<DeviceInventorySnapshot> load() async {
     final results = await Future.wait([
       _api.deviceInventory(),
-      _api.catalog(),
       _api.deviceProviderHealth(),
       _api.areas(),
     ]);
     final inventory = results[0] as Map<String, dynamic>;
-    // Provider health (results[2]) is fetched for contract parity but is NOT
+    // Provider health (results[1]) is fetched for contract parity but is NOT
     // projected onto gateway/device health: lanReady describes the Tuya
     // integration, never physical reachability of a specific device.
-    // The legacy catalog (results[1]) is likewise fetched for parity; the
-    // canonical /api/v1/areas result is authoritative and legacy locations
-    // never repopulate the canonical path.
 
     final parsed = _parseDevices(inventory);
     final gatewayIds = parsed
@@ -84,9 +80,8 @@ class HttpDeviceInventoryRepository
 
     // F2-C + F3-B: Areas come from the real AreaStore contract (/api/v1/areas)
     // and are authoritative — including an explicit empty list. A canonical
-    // success with [] is an empty home, never a reason to repopulate from the
-    // legacy catalog locations.
-    final areaDtos = results[3];
+    // success with [] is an empty home.
+    final areaDtos = results[2];
     final areas = areaDtos is List
         ? _parseAreasList(areaDtos)
         : const <HomeArea>[];

@@ -60,7 +60,7 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
   bool _saving = false;
 
   final _draft = _RoutineDraft();
-  List<Map<String, dynamic>> _catalog = [];
+  List<Map<String, dynamic>> _locationsView = [];
   List<Map<String, dynamic>> _areas = [];
   List<Map<String, dynamic>> _allRoutines = [];
   Map<String, bool> _modulesEnabled = {};
@@ -87,10 +87,10 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
   Future<void> _load() async {
     try {
       final results = await Future.wait<Object>([
-        widget.api.catalog(),
+        widget.api.deviceInventory(),
         widget.api.modules(),
       ]);
-      final catalogData = results[0] as Map<String, dynamic>;
+      final inventoryData = results[0] as Map<String, dynamic>;
       final modulesList = results[1] as List<Map<String, dynamic>>;
       // Directorio real de áreas (/api/v1/areas): el catálogo legacy trae
       // ids canónicos (area_<hex>) sin nombre legible, así que las pills
@@ -116,8 +116,14 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
       }
       if (!mounted) return;
       setState(() {
-        _catalog = (catalogData['locations'] as List)
-            .cast<Map<String, dynamic>>();
+        // Vista ubicación→dispositivos proyectada del inventory en vez del
+        // catálogo legacy: mismo contrato (`name`/`devices`/`capabilities`
+        // en intents), con capabilities reales del endpoint.
+        _locationsView = inventoryCatalogView(
+          areas: areas,
+          devices:
+              (inventoryData['devices'] as List?) ?? const [],
+        );
         _areas = areas;
         _allRoutines = routines;
         _modulesEnabled = {
@@ -183,7 +189,7 @@ class _RoutinesEditorPageState extends State<RoutinesEditorPage> {
     final sheet = _ActionConfigSheet(
       api: widget.api,
       type: type,
-      catalog: _catalog,
+      locationsView: _locationsView,
       areas: _areas,
       routines: [
         for (final r in _allRoutines)
@@ -1742,7 +1748,7 @@ class _ActionConfigSheet extends StatefulWidget {
   const _ActionConfigSheet({
     required this.api,
     required this.type,
-    required this.catalog,
+    required this.locationsView,
     required this.areas,
     required this.routines,
     required this.existing,
@@ -1751,7 +1757,7 @@ class _ActionConfigSheet extends StatefulWidget {
 
   final ApiClient api;
   final String type;
-  final List<Map<String, dynamic>> catalog;
+  final List<Map<String, dynamic>> locationsView;
   final List<Map<String, dynamic>> areas;
 
   /// Rutinas encadenables (ya sin la que se está editando).
@@ -2068,7 +2074,7 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
   List<({String id, String label, bool hasDevices})> _locationOptions() {
     final options = <({String id, String label, bool hasDevices})>[];
     final seen = <String>{};
-    for (final location in widget.catalog) {
+    for (final location in widget.locationsView) {
       final id = location['name']?.toString() ?? '';
       if (id.isEmpty || !seen.add(id)) continue;
       options.add((id: id, label: _areaLabel(id), hasDevices: true));
@@ -2612,7 +2618,7 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
   }
 
   List<Map<String, dynamic>> _devices() {
-    for (final location in widget.catalog) {
+    for (final location in widget.locationsView) {
       if (location['name'] == _location) {
         return (location['devices'] as List?)?.cast<Map<String, dynamic>>() ??
             const [];
@@ -2622,7 +2628,7 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
   }
 
   List<String> _capabilities() {
-    return deviceCapabilities(_location!, _device!, widget.catalog);
+    return deviceCapabilities(_location!, _device!, widget.locationsView);
   }
 
   // --- Búsqueda de Spotify ---------------------------------------------------
@@ -3395,7 +3401,7 @@ class _ActionConfigSheetState extends State<_ActionConfigSheet> {
   void _submit() {
     final action = _readAction();
     if (action == null) return;
-    final conflicts = findConflicts(action, widget.existing, widget.catalog);
+    final conflicts = findConflicts(action, widget.existing, widget.locationsView);
     if (conflicts.isNotEmpty) {
       setState(() {
         _pending = action;
