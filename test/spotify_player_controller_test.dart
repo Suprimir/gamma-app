@@ -1327,6 +1327,37 @@ void main() {
       await api.close();
     });
 
+    testWidgets('el gancho de soak fuerza el boost en segundo plano', (
+      tester,
+    ) async {
+      final api = _FakeSpotifyApi();
+      api.player = {...api.player, 'source': 'webapi'};
+      var now = 1000;
+      final controller = SpotifyPlayerController(
+        api,
+        nowMs: () => now,
+        forceRemoteCadence: true,
+      );
+
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(seconds: 3));
+      controller.setPollInterval(
+        const Duration(seconds: 30),
+        foreground: false,
+      );
+      final before = api.playerCalls;
+
+      await tester.pump(const Duration(seconds: 3));
+
+      expect(
+        api.playerCalls - before,
+        3,
+        reason: 'SPOTIFY_FORCE_REMOTE_CADENCE mide el soak en segundo plano',
+      );
+      controller.dispose();
+      await api.close();
+    });
+
     testWidgets('un 429 de ritmo no frena el sondeo', (tester) async {
       final api = _FakeSpotifyApi();
       api.player = {...api.player, 'source': 'webapi'};

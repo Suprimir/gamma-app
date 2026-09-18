@@ -76,14 +76,26 @@ const spotifyVolumeUnsupportedTooltip =
 /// [selectedDeviceId] when the user picked one and `null` otherwise, so the
 /// backend resolves the device.
 class SpotifyPlayerController extends ChangeNotifier {
-  SpotifyPlayerController(this.api, {int Function()? nowMs})
-    : _nowMs = nowMs ?? _systemNowMs;
+  SpotifyPlayerController(
+    this.api, {
+    int Function()? nowMs,
+    bool? forceRemoteCadence,
+  }) : _nowMs = nowMs ?? _systemNowMs,
+       // Gancho de prueba/soak: con SPOTIFY_FORCE_REMOTE_CADENCE=true el boost
+       // remoto no exige primer plano, para poder medir una hora entera con la
+       // ventana en segundo plano. En producción va apagado.
+       _forceRemoteCadence =
+           forceRemoteCadence ??
+           const bool.fromEnvironment('SPOTIFY_FORCE_REMOTE_CADENCE');
 
   final ApiClient api;
 
   /// Wall-clock source in epoch ms; tests inject a deterministic clock to
   /// exercise the optimistic seek preview without real delays.
   final int Function() _nowMs;
+
+  /// Test/soak hook (see [forceRemoteCadence]); false in production builds.
+  final bool _forceRemoteCadence;
 
   Map<String, dynamic>? _player;
   List<Map<String, dynamic>> _devices = const [];
@@ -398,7 +410,9 @@ class SpotifyPlayerController extends ChangeNotifier {
   /// remote boost, and the lifecycle-driven cadence is the baseline.
   Duration _desiredInterval() {
     if (_quotaBrakeActive()) return _quotaBrakeInterval;
-    if (_foreground && _remoteSourceActive) return _remotePollInterval;
+    if ((_foreground || _forceRemoteCadence) && _remoteSourceActive) {
+      return _remotePollInterval;
+    }
     return _pollInterval;
   }
 
