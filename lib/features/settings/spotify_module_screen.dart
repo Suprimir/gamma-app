@@ -50,6 +50,7 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
   String _soloistKeyStatus = '';
   bool _soloistKeyStatusOk = true;
   Timer? _soloistPoll;
+  Duration? _soloistPollInterval;
   String? _soloistJobId;
   String _soloistJobStatus = '';
   bool _soloistWorking = false;
@@ -268,22 +269,21 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
     _syncSoloistPoll();
   }
 
-  /// Polls while onboarding is incomplete (or a job runs): cheap, read-only,
-  /// and stops by itself once Soloist reports ready.
+  /// Polls the onboarding state: fast (5s) while incomplete or a job runs,
+  /// slow (30s) once ready so a lost WS connection converges back without
+  /// user action. Cheap and read-only; never shows the API key.
   void _syncSoloistPoll() {
-    final done =
+    final ready =
         _soloistStatus != null &&
         _soloistStatus!['ready'] == true &&
         _soloistJobId == null;
-    if (done) {
-      _soloistPoll?.cancel();
-      _soloistPoll = null;
-      return;
-    }
-    _soloistPoll ??= Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => _soloistTick(),
-    );
+    final wanted = ready
+        ? const Duration(seconds: 30)
+        : const Duration(seconds: 5);
+    if (_soloistPoll != null && _soloistPollInterval == wanted) return;
+    _soloistPoll?.cancel();
+    _soloistPollInterval = wanted;
+    _soloistPoll = Timer.periodic(wanted, (_) => _soloistTick());
   }
 
   Future<void> _soloistTick() async {
