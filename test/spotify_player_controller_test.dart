@@ -1300,6 +1300,33 @@ void main() {
       await api.close();
     });
 
+    testWidgets('en segundo plano el sondeo remoto no se acelera', (
+      tester,
+    ) async {
+      final api = _FakeSpotifyApi();
+      api.player = {...api.player, 'source': 'webapi'};
+      var now = 1000;
+      final controller = SpotifyPlayerController(api, nowMs: () => now);
+
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(seconds: 3));
+      controller.setPollInterval(
+        const Duration(seconds: 30),
+        foreground: false,
+      );
+      final before = api.playerCalls;
+
+      await tester.pump(const Duration(seconds: 30));
+
+      expect(
+        api.playerCalls - before,
+        1,
+        reason: 'nadie mira la pantalla: la cuota no se gasta a 1 s',
+      );
+      controller.dispose();
+      await api.close();
+    });
+
     testWidgets('un 429 de ritmo no frena el sondeo', (tester) async {
       final api = _FakeSpotifyApi();
       api.player = {...api.player, 'source': 'webapi'};

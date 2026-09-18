@@ -88,6 +88,7 @@ class _GammaAppState extends State<GammaApp> with WidgetsBindingObserver {
       state == AppLifecycleState.resumed
           ? widget.spotifyPollInterval
           : _idleInterval,
+      foreground: state == AppLifecycleState.resumed,
     );
   }
 

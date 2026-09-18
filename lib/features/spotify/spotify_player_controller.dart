@@ -398,7 +398,7 @@ class SpotifyPlayerController extends ChangeNotifier {
   /// remote boost, and the lifecycle-driven cadence is the baseline.
   Duration _desiredInterval() {
     if (_quotaBrakeActive()) return _quotaBrakeInterval;
-    if (_remoteSourceActive) return _remotePollInterval;
+    if (_foreground && _remoteSourceActive) return _remotePollInterval;
     return _pollInterval;
   }
 
@@ -707,13 +707,20 @@ class SpotifyPlayerController extends ChangeNotifier {
     _syncTicker();
   }
 
+  /// True while the app is in the foreground (its cadence is the live one).
+  /// The remote boost only applies then: with the app in the background nobody
+  /// is watching and the quota is better spent elsewhere.
+  bool _foreground = true;
+
   /// Changes the fallback poll cadence while keeping the SSE subscription and
   /// the canonical state (foreground/background switching). Zero pauses the
   /// poll; the stream stays live. The remote boost and the quota brake still
   /// apply on top of the new baseline.
-  void setPollInterval(Duration interval) {
+  void setPollInterval(Duration interval, {bool foreground = true}) {
     if (_disposed || !_live) return;
-    if (interval == _pollInterval && _pollTimer != null) return;
+    final unchanged = interval == _pollInterval && foreground == _foreground;
+    _foreground = foreground;
+    if (unchanged && _pollTimer != null) return;
     _pollInterval = interval;
     if (interval <= Duration.zero) {
       _pollTimer?.cancel();
