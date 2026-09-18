@@ -1041,6 +1041,124 @@ void main() {
       controller.dispose();
       await api.close();
     });
+    test('un error HTTP rezagado no borra la canción que llegó por SSE',
+        () async {
+      final api = _FakeSpotifyApi();
+      final controller = SpotifyPlayerController(api);
+      controller.startPolling(interval: const Duration(hours: 1));
+
+      // Hold the HTTP read, then let a fresher SSE state land first.
+      api.playerCompleter = Completer<Map<String, dynamic>>();
+      final refreshFuture = controller.refresh();
+      api.emitEvent('spotify_state_changed', {
+        'status': 'playing',
+        'is_active': true,
+        'item': {'uri': 'spotify:track:9', 'name': 'SSE Tema', 'artist': 'X'},
+      });
+      await pumpEventQueue();
+      expect(controller.track?['name'], 'SSE Tema');
+
+      // The error belongs to a read older than the event: it must not erase
+      // the track nor claim the account needs reconnecting.
+      api.playerCompleter!.completeError(
+        ApiException(503, {'detail': 'Sesión vieja'}),
+      );
+      await refreshFuture;
+
+      expect(controller.track?['name'], 'SSE Tema');
+      expect(controller.needsAuth, isFalse);
+      expect(controller.error, isNull);
+
+      controller.dispose();
+      await api.close();
+    });
+
+    test('varias lecturas concurrentes comparten una sola petición', () async {
+      final api = _FakeSpotifyApi();
+      final controller = SpotifyPlayerController(api);
+      controller.startPolling(interval: const Duration(hours: 1));
+
+      final reads = [
+        controller.refresh(),
+        controller.refresh(),
+        controller.refresh(),
+      ];
+      await pumpEventQueue();
+      expect(api.playerCalls, 1);
+
+      await Future.wait(reads);
+      expect(api.playerCalls, 1);
+
+      controller.dispose();
+      await api.close();
+    });
+
+    test('un pedido forzado durante una lectura encola una sola repetición',
+        () async {
+      final api = _FakeSpotifyApi();
+      final controller = SpotifyPlayerController(api);
+      controller.startPolling(interval: const Duration(hours: 1));
+
+      api.playerCompleter = Completer<Map<String, dynamic>>();
+      final poll = controller.refresh();
+      final forced = controller.refreshNow();
+      await pumpEventQueue();
+      expect(api.playerCalls, 1);
+
+      api.playerCompleter!.complete(api.player);
+      await Future.wait([poll, forced]);
+      expect(api.playerCalls, 2);
+
+      controller.dispose();
+      await api.close();
+    });
+
+    testWidgets(
+        'ni un snapshot inactivo ni un evento de cola suprimen el sondeo',
+        (tester) async {
+      final api = _FakeSpotifyApi();
+      var now = 1000;
+      final controller = SpotifyPlayerController(api, nowMs: () => now);
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(seconds: 3));
+      var calls = api.playerCalls;
+
+      // (a) Un snapshot del renderer local inactivo se ignora: no cuenta como
+      // estado fresco, así que el tick vuelve a leer lo que suena afuera.
+      api.emitEvent('spotify_state_changed', {
+        'status': 'paused',
+        'is_active': false,
+        'device_name': 'Soloist',
+        'item': {'uri': 'spotify:track:5', 'name': 'Fantasma', 'artist': 'X'},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+      calls += 1;
+      expect(api.playerCalls, calls);
+
+      // (b) Un cambio aplicado sí marca frescura y suprime el tick...
+      now += 10000;
+      api.emitEvent('spotify_state_changed', {'status': 'playing'});
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+      expect(api.playerCalls, calls);
+
+      // ...pero la cola no renueva esa frescura: al vencer la ventana el tick
+      // vuelve a sondear aunque acabe de llegar un evento de cola.
+      now += 3000;
+      api.emitEvent('spotify_queue_changed', {
+        'previous': [],
+        'upcoming': [],
+      });
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+      calls += 1;
+      expect(api.playerCalls, calls);
+
+      controller.dispose();
+      await api.close();
+    });
+
   });
 
   group('targetSupportsVolume', () {
