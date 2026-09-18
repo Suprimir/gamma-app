@@ -292,6 +292,24 @@ void main() {
     },
   );
 
+  test('un 429 transitorio conserva la última canción conocida', () async {
+    final api = _FakeSpotifyApi();
+    final controller = SpotifyPlayerController(api);
+    await controller.refresh();
+    expect(controller.track?['name'], 'Tema');
+
+    api.playerError = ApiException(429, {
+      'detail': 'Spotify pidió esperar un momento.',
+    });
+    await controller.refresh();
+
+    // Transitorio: la tarjeta no se vacía y solo se expone el aviso.
+    expect(controller.needsAuth, isFalse);
+    expect(controller.track?['name'], 'Tema');
+    expect(controller.error, 'Spotify pidió esperar un momento.');
+    controller.dispose();
+  });
+
   test(
     'los comandos usan selectedDeviceId y refrescan tras ejecutar',
     () async {
@@ -932,8 +950,102 @@ void main() {
     await api.close();
   });
 
+  group('sincronización de reproducción', () {
+    test('refresh() publica el player sin esperar los listados', () async {
+      final api = _FakeSpotifyApi();
+      final controller = SpotifyPlayerController(api);
+      final held = Completer<Map<String, dynamic>>();
+      api.devicesCompleter = held;
+
+      final refreshFuture = controller.refresh();
+      await pumpEventQueue();
+
+      // El player ya está publicado aunque el listado de dispositivos siga en
+      // vuelo: la canción/pausa no espera a las lecturas secundarias.
+      expect(controller.track?['name'], 'Tema');
+      expect(controller.loading, isFalse);
+
+      held.complete(api.devices);
+      await refreshFuture;
+      expect(controller.devices, hasLength(2));
+
+      controller.dispose();
+      await api.close();
+    });
+
+    test('un evento is_active false no se mezcla como estado', () async {
+      final api = _FakeSpotifyApi();
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(hours: 1));
+      final trackBefore = controller.track?['name'];
+
+      // El renderer local dejó de ser el activo: su snapshot no describe lo que
+      // suena (el teléfono tomó el control) y no debe pisar el estado.
+      api.emitEvent('spotify_state_changed', {
+        'status': 'playing',
+        'is_active': false,
+        'device_name': 'Otro',
+        'item': {'name': 'Fantasma', 'artist': 'X'},
+        'position': {'position_ms': 0, 'timestamp_ms': 0, 'speed': 1.0},
+      });
+      await pumpEventQueue();
+
+      expect(controller.track?['name'], trackBefore);
+      expect(controller.activeDevice?['name'], 'Parlante');
+
+      controller.dispose();
+      await api.close();
+    });
+
+    test('resync_required relanza la lectura canónica', () async {
+      final api = _FakeSpotifyApi();
+      final controller = SpotifyPlayerController(api);
+      controller.startPolling(interval: const Duration(hours: 1));
+      final callsBefore = api.playerCalls;
+
+      api.emitEnvelope({
+        'id': 1,
+        'event': 'resync_required',
+        'data': {'after_sequence': 10, 'oldest_sequence': 40},
+        'timestamp': 1,
+      });
+      await pumpEventQueue();
+
+      expect(api.playerCalls, callsBefore + 1);
+
+      controller.dispose();
+      await api.close();
+    });
+
+    testWidgets('un SSE reciente suprime el tick; al envejecer vuelve a '
+        'sondear', (tester) async {
+      final api = _FakeSpotifyApi();
+      var now = 1000;
+      final controller = SpotifyPlayerController(api, nowMs: () => now);
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(seconds: 3));
+
+      api.emitEvent('spotify_state_changed', {'status': 'paused'});
+      final callsAfterEvent = api.playerCalls;
+
+      // Tick dentro de la ventana: el SSE ya entregó el estado más nuevo.
+      await tester.pump(const Duration(seconds: 3));
+      expect(api.playerCalls, callsAfterEvent);
+
+      // La ventana vence: el tick vuelve a sondear la verdad canónica.
+      now += 10000;
+      await tester.pump(const Duration(seconds: 3));
+      expect(api.playerCalls, callsAfterEvent + 1);
+
+      controller.dispose();
+      await api.close();
+    });
+  });
+
   group('targetSupportsVolume', () {
-    test('resolves by id and reflects listing updates after refresh', () async {
+    test('resolves by id and reflects listing updates after a forced read',
+        () async {
       final api = _FakeSpotifyApi();
       final controller = SpotifyPlayerController(api);
       await controller.refresh();
@@ -948,7 +1060,9 @@ void main() {
         ],
         'default_device_id': 'dev_1',
       };
-      await controller.refresh();
+      // The device listing rides a slower cadence than the player: a forced
+      // read is what the picker/command convergence uses to see it fresh.
+      await controller.refreshNow();
       expect(controller.targetSupportsVolume, isFalse);
 
       api.devices = {
@@ -957,8 +1071,29 @@ void main() {
         ],
         'default_device_id': 'dev_1',
       };
-      await controller.refresh();
+      await controller.refreshNow();
       expect(controller.targetSupportsVolume, isTrue);
+
+      controller.dispose();
+      await api.close();
+    });
+
+    test('repeated refresh() keeps the listing cadence; refreshNow() forces it',
+        () async {
+      final api = _FakeSpotifyApi();
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+      final devicesBefore = api.deviceCalls;
+
+      await controller.refresh();
+      expect(
+        api.deviceCalls,
+        devicesBefore,
+        reason: 'dentro de la ventana: no vuelve a pedir la lista',
+      );
+
+      await controller.refreshNow();
+      expect(api.deviceCalls, devicesBefore + 1);
 
       controller.dispose();
       await api.close();

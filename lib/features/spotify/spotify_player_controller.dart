@@ -63,7 +63,12 @@ const spotifyVolumeUnsupportedHint =
 const spotifyVolumeUnsupportedTooltip =
     'Este dispositivo no permite controlar el volumen';
 
-/// Shared Spotify playback state for the desktop and wall surfaces.
+/// Canonical Spotify playback state for every surface.
+///
+/// [GammaApp] owns one instance and shares it through `SpotifyScope`, so the
+/// wall music card, the sleep chip and the desktop dashboard render the same
+/// state with a single poll and a single SSE subscription. On its own (tests,
+/// previews, a page mounted without the app shell) a surface owns a local one.
 ///
 /// Everything rendered from this controller reflects the last canonical
 /// response or SSE event (or null/empty while unknown) — never a fabricated
@@ -94,6 +99,10 @@ class SpotifyPlayerController extends ChangeNotifier {
   StreamSubscription<Map<String, dynamic>>? _eventsSub;
   bool _live = false;
   bool _disposed = false;
+
+  /// Current fallback poll cadence; swapped by [setPollInterval] without
+  /// touching the SSE subscription or the canonical state.
+  Duration _pollInterval = Duration.zero;
 
   /// Optimistic seek target while the backend round-trip is in flight: target
   /// ms, local wall-clock ms when it was issued and the playback speed
@@ -130,6 +139,33 @@ class SpotifyPlayerController extends ChangeNotifier {
 
   /// Delay before the single bounded follow-up refresh.
   static const _reactiveRetryDelay = Duration(milliseconds: 1500);
+
+  /// Bumped on every [refresh] call; only the newest read may publish its
+  /// player body. A slow response can never overwrite a newer one when the
+  /// fallback poll tick and a command-triggered read overlap.
+  int _refreshGeneration = 0;
+
+  /// Epoch ms of the last device listing read (null = never). Devices ride a
+  /// slower cadence than the player: the transport is the hot path and every
+  /// listing read costs a backend-to-Spotify call.
+  int? _devicesFetchedAtMs;
+
+  /// Epoch ms of the last playback-queue read (null = never). The queue also
+  /// arrives through `spotify_queue_changed`, so polling it is only a safety
+  /// net for a missed event.
+  int? _queueFetchedAtMs;
+
+  /// Serializes the secondary listing reads so overlapping refreshes do not
+  /// duplicate device/queue traffic.
+  bool _detailsInFlight = false;
+
+  /// Epoch ms of the last applied Spotify SSE event. A poll tick inside the
+  /// cadence window is skipped: the stream already delivered newer state.
+  int? _lastStateEventMs;
+
+  /// Secondary listing cadences, both slower than the player poll.
+  static const _devicesRefreshIntervalMs = 15000;
+  static const _queueRefreshIntervalMs = 20000;
 
   /// Last `GET /spotify/player` body (or SSE merge), or null while unknown.
   Map<String, dynamic>? get player => _player;
@@ -320,11 +356,15 @@ class SpotifyPlayerController extends ChangeNotifier {
     return actions.contains(action);
   }
 
-  /// Loads the player state, the device list and the playback queue. The
-  /// device and queue calls are non-fatal: a failed listing keeps the last
-  /// known data.
-  Future<void> refresh() async {
+  /// Loads the player state and publishes it as soon as it arrives; the device
+  /// listing and the playback queue refresh behind it (see [_refreshDetails]),
+  /// so the track/pause/seek state never waits on secondary reads.
+  ///
+  /// [forceDetails] refreshes the secondary listings regardless of their
+  /// cadence (user commands, picker open) without making the player read wait.
+  Future<void> refresh({bool forceDetails = false}) async {
     if (_disposed) return;
+    final generation = ++_refreshGeneration;
     _loading = true;
     notifyListeners();
 
@@ -336,40 +376,19 @@ class SpotifyPlayerController extends ChangeNotifier {
     } catch (error) {
       playerError = error;
     }
-    if (_disposed) return;
-
-    List<Map<String, dynamic>> devices = _devices;
-    String? defaultDeviceId = _defaultDeviceId;
-    try {
-      final data = await api.spotifyDevices();
-      devices =
-          (data['devices'] as List?)?.cast<Map<String, dynamic>>() ?? const [];
-      defaultDeviceId = data['default_device_id']?.toString();
-    } catch (_) {
-      // Non-fatal: device discovery failing never erases known devices.
-    }
-    if (_disposed) return;
-
-    Map<String, dynamic> queue = _queue;
-    // La cola en tiempo real (Soloist) solo se pide con reproducción activa:
-    // sin playback, el backend responde 503 (Soloist no disponible) y el
-    // fetch únicamente ensucia la consola del navegador.
-    final playbackActive =
-        player?['has_playback'] == true || player?['is_playing'] == true;
-    if (playbackActive) {
-      try {
-        final data = await api.spotifyPlaybackQueue(limit: 20);
-        queue = _normalizeQueue(data);
-      } catch (_) {
-        // Non-fatal: a failed queue read keeps the last known queue.
-      }
-    }
-    if (_disposed) return;
+    // A newer refresh superseded this one: its body is newer by definition.
+    if (_disposed || generation != _refreshGeneration) return;
 
     if (playerError != null) {
-      _player = null;
-      _needsAuth = _isAuthError(playerError);
-      _error = _needsAuth ? null : _describe(playerError);
+      final authFailure = _isAuthError(playerError);
+      _needsAuth = authFailure;
+      _error = authFailure ? null : _describe(playerError);
+      // Un fallo transitorio (límite de tasa, 5xx, red) conserva la última
+      // canción conocida en vez de vaciar la tarjeta; una respuesta definitiva
+      // (sin autorización, sin dispositivo activo) sí la limpia.
+      if (authFailure || !_keepsLastPlayerOnError(playerError)) {
+        _player = null;
+      }
     } else {
       // An SSE state event that landed while this read was in flight is
       // fresher: keep it instead of overwriting with the stale body.
@@ -382,15 +401,72 @@ class SpotifyPlayerController extends ChangeNotifier {
       _needsAuth = false;
       _error = null;
     }
-    // Devices and queue apply independently: a failed player call must not
-    // erase successful listings (and vice versa).
-    _devices = devices;
-    _defaultDeviceId = defaultDeviceId;
-    _queue = queue;
     _loading = false;
     _syncTicker();
     notifyListeners();
+
+    await _refreshDetails(generation, force: forceDetails);
   }
+
+  /// Refreshes the device listing and the playback queue behind the player
+  /// read, gated by their own cadences. Non-fatal: a failed listing keeps the
+  /// last known data and never erases the canonical player state.
+  Future<void> _refreshDetails(int generation, {bool force = false}) async {
+    if (_disposed || _detailsInFlight) return;
+    final now = _nowMs();
+    final devicesDue =
+        force ||
+        _devicesFetchedAtMs == null ||
+        now - _devicesFetchedAtMs! >= _devicesRefreshIntervalMs;
+    // La cola en tiempo real (Soloist) solo se pide con reproducción activa:
+    // sin playback, el backend responde 503 (Soloist no disponible) y el
+    // fetch únicamente ensucia la consola del navegador.
+    final playbackActive =
+        _player?['has_playback'] == true || _player?['is_playing'] == true;
+    final queueDue =
+        playbackActive &&
+        (force ||
+            _queueFetchedAtMs == null ||
+            now - _queueFetchedAtMs! >= _queueRefreshIntervalMs);
+    if (!devicesDue && !queueDue) return;
+
+    _detailsInFlight = true;
+    try {
+      if (devicesDue) {
+        try {
+          final data = await api.spotifyDevices();
+          if (_disposed || generation != _refreshGeneration) return;
+          _devices =
+              (data['devices'] as List?)?.cast<Map<String, dynamic>>() ??
+              const [];
+          _defaultDeviceId = data['default_device_id']?.toString();
+          _devicesFetchedAtMs = _nowMs();
+          notifyListeners();
+        } catch (_) {
+          // Non-fatal: device discovery failing never erases known devices.
+        }
+      }
+      if (_disposed || generation != _refreshGeneration) return;
+      if (queueDue) {
+        try {
+          final data = await api.spotifyPlaybackQueue(limit: 20);
+          if (_disposed || generation != _refreshGeneration) return;
+          _queue = _normalizeQueue(data);
+          _queueFetchedAtMs = _nowMs();
+          notifyListeners();
+        } catch (_) {
+          // Non-fatal: a failed queue read keeps the last known queue.
+        }
+      }
+    } finally {
+      _detailsInFlight = false;
+    }
+  }
+
+  /// Refreshes the player and the secondary listings on demand. Wired to the
+  /// device picker and to command convergence so a freshly started device
+  /// appears without waiting for the listing cadence.
+  Future<void> refreshNow() => refresh(forceDetails: true);
 
   Future<void> play() =>
       _command(() => api.spotifyResume(deviceId: _selectedDeviceId));
@@ -477,13 +553,43 @@ class SpotifyPlayerController extends ChangeNotifier {
     stopPolling();
     if (_disposed || interval <= Duration.zero) return;
     _live = true;
-    _pollTimer = Timer.periodic(interval, (_) => unawaited(refresh()));
+    _pollInterval = interval;
+    _pollTimer = Timer.periodic(interval, (_) => _pollTick(interval));
     _subscribeEvents();
     _syncTicker();
   }
 
+  /// Changes the fallback poll cadence while keeping the SSE subscription and
+  /// the canonical state (foreground/background switching). Zero pauses the
+  /// poll; the stream stays live.
+  void setPollInterval(Duration interval) {
+    if (_disposed || !_live) return;
+    if (interval == _pollInterval && _pollTimer != null) return;
+    _pollInterval = interval;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    if (interval <= Duration.zero) return;
+    _pollTimer = Timer.periodic(interval, (_) => _pollTick(interval));
+  }
+
+  /// One fallback poll tick. A Spotify SSE event applied inside the cadence
+  /// window already carries newer state, so the player read is skipped and only
+  /// the slower secondary listings check their cadence. This keeps the UI live
+  /// through the stream without burning backend-to-Spotify calls.
+  void _pollTick(Duration interval) {
+    if (_disposed) return;
+    final last = _lastStateEventMs;
+    final sseFresh = last != null && _nowMs() - last < interval.inMilliseconds;
+    if (sseFresh) {
+      unawaited(_refreshDetails(_refreshGeneration));
+    } else {
+      unawaited(refresh());
+    }
+  }
+
   void stopPolling() {
     _live = false;
+    _pollInterval = Duration.zero;
     _pollTimer?.cancel();
     _pollTimer = null;
     _resubscribeTimer?.cancel();
@@ -495,6 +601,9 @@ class SpotifyPlayerController extends ChangeNotifier {
     _lastReactiveRefreshMs = null;
     _pendingSeek = null;
     _pendingDevice = null;
+    _devicesFetchedAtMs = null;
+    _queueFetchedAtMs = null;
+    _lastStateEventMs = null;
     unawaited(_eventsSub?.cancel());
     _eventsSub = null;
   }
@@ -548,9 +657,17 @@ class SpotifyPlayerController extends ChangeNotifier {
     }
     switch (name) {
       case 'spotify_state_changed':
+        _lastStateEventMs = _nowMs();
         _applyStateEvent(data.cast<String, dynamic>());
       case 'spotify_queue_changed':
+        _lastStateEventMs = _nowMs();
         _applyQueueEvent(data.cast<String, dynamic>());
+      case 'resync_required':
+        // El bus no pudo replayar la historia solicitada: la única salida
+        // segura es releer el estado canónico y descartar la supresión de
+        // sondeo para que el siguiente tick no se salte.
+        _lastStateEventMs = null;
+        unawaited(refresh());
     }
   }
 
@@ -562,7 +679,24 @@ class SpotifyPlayerController extends ChangeNotifier {
   /// of the shown device, or an active name missing from a stale listing)
   /// trigger a debounced canonical read. It is proof of a usable account, so
   /// auth/error are cleared.
+  ///
+  /// An event with `is_active == false` is never merged: the local renderer
+  /// stopped being the active Connect device, so its snapshot does not describe
+  /// what is playing (e.g. the phone took over). It only arms the reactive
+  /// canonical read that resolves the new device.
   void _applyStateEvent(Map<String, dynamic> data) {
+    final isActive = data['is_active'];
+    final deviceName = data['device_name']?.toString();
+    if (isActive == false) {
+      // Solo reconcilia cuando el dispositivo que se muestra es el que dejó de
+      // estar activo: la desactivación de otro renderer no cambia lo que suena.
+      final shownName = _shownDeviceNamed(deviceName);
+      if (shownName != null) {
+        _scheduleReactiveRefresh(retryWhileShowing: shownName);
+      }
+      return;
+    }
+
     final merged = <String, dynamic>{...?_player};
     final status = data['status'];
     if (status is String) {
@@ -583,10 +717,8 @@ class SpotifyPlayerController extends ChangeNotifier {
     final actions = data['actions'];
     if (actions is List) merged['actions'] = actions;
     if (data.containsKey('is_active')) merged['is_active'] = data['is_active'];
-    final isActive = data['is_active'];
-    final deviceName = data['device_name']?.toString();
     var unresolvedActiveDevice = false;
-    if (isActive == true && deviceName != null && deviceName.isNotEmpty) {
+    if (deviceName != null && deviceName.isNotEmpty) {
       final entry = _deviceByName(deviceName);
       if (entry != null) {
         merged['device'] = entry;
@@ -596,7 +728,10 @@ class SpotifyPlayerController extends ChangeNotifier {
       }
       _clearPendingDeviceIfNamed(deviceName);
     }
-    merged['has_playback'] = true;
+    // has_playback refleja lo que el payload realmente trae: sin ítem y sin
+    // reproducción no se anuncia reproducción (antes se forzaba a true).
+    merged['has_playback'] =
+        merged['track'] is Map || merged['is_playing'] == true;
     _player = merged;
     _settlePendingDeviceByCanonical(merged);
     _needsAuth = false;
@@ -607,20 +742,22 @@ class SpotifyPlayerController extends ChangeNotifier {
     _syncTicker();
     notifyListeners();
 
-    // Reactive convergence: a device signal the merge cannot fully resolve
-    // needs a canonical read (debounced). The deactivation of the shown
-    // device gets one bounded follow-up, because the core may still serve the
-    // old device for a moment.
-    if (isActive == false && deviceName != null && deviceName.isNotEmpty) {
-      final shownName = activeDevice?['name']?.toString();
-      if (shownName != null &&
-          shownName.isNotEmpty &&
-          shownName.toLowerCase() == deviceName.toLowerCase()) {
-        _scheduleReactiveRefresh(retryWhileShowing: shownName);
-      }
-    } else if (unresolvedActiveDevice) {
+    // Reactive convergence: an active name missing from a stale listing needs
+    // a canonical read (debounced) to resolve the real device entry.
+    if (unresolvedActiveDevice) {
       _scheduleReactiveRefresh();
     }
+  }
+
+  /// Name of the currently shown device when it matches [deviceName]
+  /// (case-insensitive); null otherwise. Arms the bounded follow-up refresh
+  /// after a deactivation, because the core may still serve the old device for
+  /// a moment.
+  String? _shownDeviceNamed(String? deviceName) {
+    if (deviceName == null || deviceName.isEmpty) return null;
+    final shown = activeDevice?['name']?.toString();
+    if (shown == null || shown.isEmpty) return null;
+    return shown.toLowerCase() == deviceName.toLowerCase() ? shown : null;
   }
 
   /// Issues one canonical read at most every [_reactiveRefreshDebounceMs]
@@ -714,7 +851,9 @@ class SpotifyPlayerController extends ChangeNotifier {
       onCommandFailure?.call();
     }
 
-    await refresh();
+    // forceDetails: una orden puede haber arrancado/cambiado de dispositivo;
+    // la convergencia no debe esperar la cadencia de listados.
+    await refresh(forceDetails: true);
     if (_disposed) return;
 
     if (authFailure) {
@@ -749,6 +888,15 @@ class SpotifyPlayerController extends ChangeNotifier {
   bool _isAuthError(Object error) =>
       error is ApiException &&
       (error.statusCode == 401 || error.statusCode == 503);
+
+  /// True for transient failures (rate limit, server error, network) whose only
+  /// sane reaction is keeping the last known state and retrying later.
+  bool _keepsLastPlayerOnError(Object error) {
+    if (error is ApiException) {
+      return error.statusCode == 429 || error.statusCode >= 500;
+    }
+    return true;
+  }
 
   String _describe(Object error) {
     if (error is ApiException) {
