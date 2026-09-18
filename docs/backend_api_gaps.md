@@ -122,9 +122,13 @@ con comandos device-scoped y eventos SSE en tiempo real
 llega (los listados de devices/cola corren detrás con cadencia propia:
 15s/20s) y no bloquean la siguiente pasada del sondeo ni la convergencia tras
 una orden: un `/devices` lento ya no retrasa la canción/pausa. El poll de
-respaldo es de 3s en primer plano (30s en segundo) y solo lo salta un cambio de
-reproducción aplicado por SSE (ni la cola ni un snapshot de Soloist inactivo
-cuentan como frescura, para no ocultar lo que suena en el teléfono). Las
+respaldo es de 3s en primer plano (30s en segundo), **sube a 1s mientras el
+dispositivo activo no es GAMMA** (Spotify no tiene push: ese sondeo *es* la
+latencia de detección de lo que se haga en el teléfono) y **frena a 30s si
+Spotify responde `QUOTA_EXCEEDED`** (`X-Spotify-Limit: quota`), que es lo único
+que empeora al reintentar. Solo lo salta un cambio de reproducción aplicado por
+SSE (ni la cola ni un snapshot de Soloist inactivo cuentan como frescura, para no
+ocultar lo que suena en el teléfono). Las
 lecturas concurrentes se unifican en una sola petición (single-flight con una
 repetición acotada si llega un pedido explícito a mitad), un error HTTP
 rezagado no pisa un evento SSE más nuevo, `needsAuth` en 401/503 y un 429/5xx

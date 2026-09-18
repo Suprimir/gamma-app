@@ -172,6 +172,28 @@ class SpotifyPlayerController extends ChangeNotifier {
   static const _devicesRefreshIntervalMs = 15000;
   static const _queueRefreshIntervalMs = 20000;
 
+  /// Reconciling cadence while another device (not the local renderer) is the
+  /// active one: Spotify has no push for its playback state, so this poll IS
+  /// the detection latency for actions made on a phone. The default 3s cadence
+  /// measured 20-90s of detection in practice; 1s costs more quota and is only
+  /// used while a remote device is playing.
+  static const _remotePollInterval = Duration(seconds: 1);
+
+  /// Brake applied after a spent Development Mode quota (429 with
+  /// `X-Spotify-Limit: quota`): retrying into it makes it worse, so polling
+  /// falls back to this until the window passes or a read succeeds.
+  static const _quotaBrakeInterval = Duration(seconds: 30);
+
+  /// How long the quota brake holds without a successful read. Spotify does
+  /// not publish a reset instant, so this is a deliberate heuristic.
+  static const _quotaBrakeMs = 5 * 60 * 1000;
+
+  /// Interval the poll timer is currently programmed with.
+  Duration _cadenceInterval = Duration.zero;
+
+  /// Epoch ms until which the quota brake holds; null when inactive.
+  int? _quotaBrakeUntilMs;
+
   /// Last `GET /spotify/player` body (or SSE merge), or null while unknown.
   Map<String, dynamic>? get player => _player;
 
@@ -353,6 +375,47 @@ class SpotifyPlayerController extends ChangeNotifier {
     return value is num ? value.round() : null;
   }
 
+  /// True while another device is the active source with something loaded: the
+  /// only case where the fast reconciling cadence pays for its quota.
+  bool get _remoteSourceActive {
+    final player = _player;
+    if (player == null) return false;
+    return player['source'] == 'webapi' && player['has_playback'] == true;
+  }
+
+  /// Whether the quota brake is still in force (expires on its own).
+  bool _quotaBrakeActive() {
+    final until = _quotaBrakeUntilMs;
+    if (until == null) return false;
+    if (_nowMs() >= until) {
+      _quotaBrakeUntilMs = null;
+      return false;
+    }
+    return true;
+  }
+
+  /// The cadence the poll timer should use right now: the brake wins over the
+  /// remote boost, and the lifecycle-driven cadence is the baseline.
+  Duration _desiredInterval() {
+    if (_quotaBrakeActive()) return _quotaBrakeInterval;
+    if (_remoteSourceActive) return _remotePollInterval;
+    return _pollInterval;
+  }
+
+  /// Reprograms the poll timer when the desired cadence changed.
+  void _syncPollCadence() {
+    if (_disposed || !_live || _pollInterval <= Duration.zero) return;
+    final wanted = _desiredInterval();
+    if (wanted == _cadenceInterval) return;
+    _programTimer(wanted);
+  }
+
+  void _programTimer(Duration interval) {
+    _pollTimer?.cancel();
+    _cadenceInterval = interval;
+    _pollTimer = Timer.periodic(interval, (_) => _pollTick(interval));
+  }
+
   /// True when the backend did not advertise an action list (legacy player
   /// responses keep the previous gating) or when [action] is advertised.
   bool actionEnabled(String action) {
@@ -434,6 +497,17 @@ class SpotifyPlayerController extends ChangeNotifier {
     // el error de esta respuesta pueden pisarlo (el error viejo no debe borrar
     // la canción que el evento acaba de traer, ni marcar falta de cuenta).
     final stale = versionBeforePlayer != _stateVersion;
+    if (playerError != null) {
+      if (_isQuotaLimit(playerError)) {
+        // La cuota de desarrollo agotada no se arregla reintentando: se frena
+        // el sondeo (la marca es del límite, no del estado, así que aplica
+        // aunque la respuesta sea vieja).
+        _quotaBrakeUntilMs = _nowMs() + _quotaBrakeMs;
+      }
+    } else {
+      // Una lectura exitosa prueba que Spotify responde: se suelta el freno.
+      _quotaBrakeUntilMs = null;
+    }
     if (!stale) {
       if (playerError != null) {
         final authFailure = _isAuthError(playerError);
@@ -455,6 +529,7 @@ class SpotifyPlayerController extends ChangeNotifier {
     }
     _loading = false;
     _syncTicker();
+    _syncPollCadence();
     notifyListeners();
 
     _scheduleDetails(force: forceDetails);
@@ -627,22 +702,26 @@ class SpotifyPlayerController extends ChangeNotifier {
     if (_disposed || interval <= Duration.zero) return;
     _live = true;
     _pollInterval = interval;
-    _pollTimer = Timer.periodic(interval, (_) => _pollTick(interval));
+    _programTimer(_desiredInterval());
     _subscribeEvents();
     _syncTicker();
   }
 
   /// Changes the fallback poll cadence while keeping the SSE subscription and
   /// the canonical state (foreground/background switching). Zero pauses the
-  /// poll; the stream stays live.
+  /// poll; the stream stays live. The remote boost and the quota brake still
+  /// apply on top of the new baseline.
   void setPollInterval(Duration interval) {
     if (_disposed || !_live) return;
     if (interval == _pollInterval && _pollTimer != null) return;
     _pollInterval = interval;
-    _pollTimer?.cancel();
-    _pollTimer = null;
-    if (interval <= Duration.zero) return;
-    _pollTimer = Timer.periodic(interval, (_) => _pollTick(interval));
+    if (interval <= Duration.zero) {
+      _pollTimer?.cancel();
+      _pollTimer = null;
+      _cadenceInterval = Duration.zero;
+      return;
+    }
+    _programTimer(_desiredInterval());
   }
 
   /// One fallback poll tick. Only an applied playback change counts as fresh
@@ -664,6 +743,8 @@ class SpotifyPlayerController extends ChangeNotifier {
     _pollInterval = Duration.zero;
     _pollTimer?.cancel();
     _pollTimer = null;
+    _cadenceInterval = Duration.zero;
+    _quotaBrakeUntilMs = null;
     _resubscribeTimer?.cancel();
     _resubscribeTimer = null;
     _ticker?.cancel();
@@ -810,6 +891,10 @@ class SpotifyPlayerController extends ChangeNotifier {
     // reproducción no se anuncia reproducción (antes se forzaba a true).
     merged['has_playback'] =
         merged['track'] is Map || merged['is_playing'] == true;
+    // El merge no trae `source`: un evento local significa que el renderer es
+    // GAMMA, así que la cadencia vuelve a la base (el boost es para el sondeo
+    // de un dispositivo remoto).
+    if (merged['source'] == 'webapi') merged.remove('source');
     _player = merged;
     _settlePendingDeviceByCanonical(merged);
     _needsAuth = false;
@@ -825,6 +910,7 @@ class SpotifyPlayerController extends ChangeNotifier {
     if (unresolvedActiveDevice) {
       _scheduleReactiveRefresh();
     }
+    _syncPollCadence();
     return true;
   }
 
@@ -967,6 +1053,13 @@ class SpotifyPlayerController extends ChangeNotifier {
   bool _isAuthError(Object error) =>
       error is ApiException &&
       (error.statusCode == 401 || error.statusCode == 503);
+
+  /// True cuando un 429 dice que la cuota de modo desarrollo está agotada (no
+  /// el límite de ritmo): reintentar la agrava, así que se frena el sondeo.
+  bool _isQuotaLimit(Object error) =>
+      error is ApiException &&
+      error.statusCode == 429 &&
+      error.header('x-spotify-limit') == 'quota';
 
   /// True for transient failures (rate limit, server error, network) whose only
   /// sane reaction is keeping the last known state and retrying later.

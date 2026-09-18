@@ -773,17 +773,32 @@ class ApiClient {
   Map<String, dynamic> _decode(http.Response resp) {
     final body = jsonDecode(utf8.decode(resp.bodyBytes));
     if (resp.statusCode >= 400) {
-      throw ApiException(resp.statusCode, body);
+      // Headers travel with the error so callers can react to a signal the body
+      // does not carry (e.g. X-Spotify-Limit: quota vs rate on a 429).
+      throw ApiException(
+        resp.statusCode,
+        body,
+        headers: resp.headers,
+      );
     }
     return body as Map<String, dynamic>;
   }
 }
 
 class ApiException implements Exception {
-  ApiException(this.statusCode, this.body);
+  ApiException(this.statusCode, this.body, {Map<String, String> headers = const {}})
+    : headers = {
+        for (final entry in headers.entries)
+          entry.key.toLowerCase(): entry.value,
+      };
 
   final int statusCode;
   final Object body;
+  final Map<String, String> headers;
+
+  /// Header value by name, case-insensitive (http lowercases the names, but a
+  /// hand-built exception or a test double must not have to).
+  String? header(String name) => headers[name.toLowerCase()];
 
   @override
   String toString() => 'API $statusCode: $body';

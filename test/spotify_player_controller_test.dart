@@ -1191,6 +1191,135 @@ void main() {
 
   });
 
+  group('cadencia adaptativa', () {
+    test('ApiException expone cabeceras sin distinguir mayúsculas', () {
+      final error = ApiException(429, {}, headers: {'X-Spotify-Limit': 'quota'});
+
+      expect(error.header('x-spotify-limit'), 'quota');
+      expect(ApiException(500, {}).header('x-spotify-limit'), isNull);
+    });
+
+    testWidgets('con un dispositivo remoto el sondeo sube a 1 s', (tester) async {
+      final api = _FakeSpotifyApi();
+      api.player = {...api.player, 'source': 'webapi'};
+      var now = 1000;
+      final controller = SpotifyPlayerController(api, nowMs: () => now);
+
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(seconds: 3));
+      final before = api.playerCalls;
+
+      await tester.pump(const Duration(seconds: 3));
+
+      expect(
+        api.playerCalls - before,
+        3,
+        reason: 'tres ticks de 1 s mientras reproduce el teléfono',
+      );
+
+      controller.dispose();
+      await api.close();
+    });
+
+    testWidgets('sin dispositivo remoto se queda en la cadencia base', (
+      tester,
+    ) async {
+      final api = _FakeSpotifyApi();
+      var now = 1000;
+      final controller = SpotifyPlayerController(api, nowMs: () => now);
+
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(seconds: 3));
+      final before = api.playerCalls;
+
+      await tester.pump(const Duration(seconds: 3));
+
+      expect(api.playerCalls - before, 1, reason: 'el renderer local no gasta cuota');
+      controller.dispose();
+      await api.close();
+    });
+
+    testWidgets('una cuota agotada frena el sondeo a 30 s', (tester) async {
+      final api = _FakeSpotifyApi();
+      api.player = {...api.player, 'source': 'webapi'};
+      var now = 1000;
+      final controller = SpotifyPlayerController(api, nowMs: () => now);
+
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(seconds: 3));
+
+      api.playerError = ApiException(
+        429,
+        {'detail': 'cuota'},
+        headers: {'x-spotify-limit': 'quota'},
+      );
+      await tester.pump(const Duration(seconds: 1));
+      final afterError = api.playerCalls;
+
+      await tester.pump(const Duration(seconds: 10));
+
+      expect(
+        api.playerCalls,
+        afterError,
+        reason: 'reintentar contra una cuota agotada la agrava',
+      );
+      controller.dispose();
+      await api.close();
+    });
+
+    testWidgets('el freno se suelta con la siguiente lectura buena', (
+      tester,
+    ) async {
+      final api = _FakeSpotifyApi();
+      api.player = {...api.player, 'source': 'webapi'};
+      var now = 1000;
+      final controller = SpotifyPlayerController(api, nowMs: () => now);
+
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(seconds: 3));
+      api.playerError = ApiException(
+        429,
+        {'detail': 'cuota'},
+        headers: {'x-spotify-limit': 'quota'},
+      );
+      await tester.pump(const Duration(seconds: 1));
+      final afterError = api.playerCalls;
+
+      api.playerError = null;
+      await tester.pump(const Duration(seconds: 30));
+      final afterRecovery = api.playerCalls;
+      expect(afterRecovery, greaterThan(afterError));
+
+      await tester.pump(const Duration(seconds: 3));
+      expect(
+        api.playerCalls - afterRecovery,
+        3,
+        reason: 'vuelve al ritmo remoto tras una lectura buena',
+      );
+      controller.dispose();
+      await api.close();
+    });
+
+    testWidgets('un 429 de ritmo no frena el sondeo', (tester) async {
+      final api = _FakeSpotifyApi();
+      api.player = {...api.player, 'source': 'webapi'};
+      var now = 1000;
+      final controller = SpotifyPlayerController(api, nowMs: () => now);
+
+      await controller.refresh();
+      controller.startPolling(interval: const Duration(seconds: 3));
+      api.playerError = ApiException(429, {'detail': 'ritmo'});
+      await tester.pump(const Duration(seconds: 1));
+      final afterError = api.playerCalls;
+
+      await tester.pump(const Duration(seconds: 3));
+
+      expect(api.playerCalls - afterError, 3, reason: 'el backoff lo absorbe');
+      controller.dispose();
+      await api.close();
+    });
+  });
+
   group('targetSupportsVolume', () {
     test('resolves by id and reflects listing updates after a forced read',
         () async {
