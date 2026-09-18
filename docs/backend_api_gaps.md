@@ -106,12 +106,15 @@ El core expone los 13 endpoints de reproducción (OpenAPI + curl en vivo):
   activo / orden rechazada, 422 inválido, 503 módulo desactivado o servicio
   sin autorizar.
 - Ciclo de vida local (fase 4): `GET /soloist/status` (binario, clave solo
-  configurada o no, servicio, adaptador con conexión viva, vínculo,
-  `next_step`), `POST
+  configurada o no, servicio, adaptador con conexión viva, vínculo conocido vs
+  operativo, `next_step`), `POST
   /soloist/key`, `POST /soloist/service` (`enable|start|restart`), `POST
   /soloist/install` + `GET /soloist/jobs/{id}`. Nada exige cuenta autorizada.
-  La tarjeta sondea cada 5 s hasta `ready` y cada 30 s después para converger
-  si se pierde la conexión.
+  `ready` exige operativo (`available`): WS caído con dispositivo visible da
+  `linked` pero `pair`. La tarjeta sondea cada 5 s hasta `ready` y cada 30 s
+  después para converger si se pierde la conexión. `/auth/start` devuelve
+  `callback_warning` cuando el callback no es válido (http no-loopback,
+  localhost o https sin host) y Ajustes/wall/dashboard lo muestran.
 
 **Pendiente del lado operador (no del cliente):** la cuenta todavía no está
 autorizada; el server responde `503` con

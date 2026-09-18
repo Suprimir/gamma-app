@@ -447,8 +447,14 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
       if (url == null || url.isEmpty) {
         throw StateError('URL de autorización vacía');
       }
+      final warning = data['callback_warning']?.toString() ?? '';
       if (kIsWeb) {
         openInNewTab(url);
+        if (warning.isNotEmpty && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(warning), duration: const Duration(seconds: 8)),
+          );
+        }
         return;
       }
       if (Platform.isAndroid) {
@@ -463,10 +469,13 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'Autorizá GAMMA en Spotify y la conexión se completa sola.',
+            warning.isNotEmpty
+                ? warning
+                : 'Autorizá GAMMA en Spotify y la conexión se completa sola.',
           ),
+          duration: Duration(seconds: warning.isNotEmpty ? 8 : 4),
         ),
       );
     } catch (_) {

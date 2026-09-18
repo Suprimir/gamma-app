@@ -54,6 +54,16 @@ class _FakeConfigApi extends ApiClient {
     'client_id_configured': true,
   };
 
+  Map<String, dynamic> spotifyAuthStartResponse = {
+    'success': true,
+    'auth_url': 'https://accounts.spotify.com/authorize?test=1',
+    'state': 'state-1',
+  };
+
+  @override
+  Future<Map<String, dynamic>> spotifyAuthStart() async =>
+      spotifyAuthStartResponse;
+
   Map<String, dynamic> soloistStatusResponse = {
     'binary': {
       'present': false,
@@ -422,6 +432,33 @@ void main() {
 
       expect(api.soloistInstallCalls, [false]);
       expect(find.text('Instalando…'), findsOneWidget);
+    });
+
+    testWidgets('connection warns when the callback is not valid for Spotify', (
+      tester,
+    ) async {
+      final api = _FakeConfigApi()
+        ..spotifyAuthStartResponse = {
+          'success': true,
+          'auth_url': 'https://accounts.spotify.com/authorize?test=1',
+          'state': 'state-1',
+          'callback_warning':
+              'El callback http://192.168.1.5:8420 no es válido para Spotify.',
+        };
+      await pumpSpotify(tester, SpotifyModuleScreen(api: api));
+
+      await tester.tap(find.text('Conectar con Spotify'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(
+        find.byKey(const ValueKey('spotify-callback-warning')),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('no es válido para Spotify'),
+        findsOneWidget,
+      );
     });
   });
 

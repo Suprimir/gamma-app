@@ -1267,6 +1267,10 @@ class _WallMusicCardState extends State<_WallMusicCard> {
       if (url == null || url.isEmpty) {
         throw StateError('URL de autorización vacía');
       }
+      final warning = data['callback_warning']?.toString() ?? '';
+      if (warning.isNotEmpty && mounted) {
+        setState(() => _error = warning);
+      }
       await _openExternalUrl(url);
       if (!mounted) return;
       setState(() => _waitingAuth = true);

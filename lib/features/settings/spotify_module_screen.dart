@@ -41,6 +41,7 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
   bool _disconnecting = false;
   String _connectionStatus = '';
   bool _connectionStatusOk = true;
+  String _callbackWarning = '';
   Timer? _oauthPoll;
 
   // Local renderer (Soloist onboarding without SSH)
@@ -108,6 +109,7 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
     setState(() {
       _connecting = true;
       _connectionStatus = '';
+      _callbackWarning = '';
     });
     try {
       final data = await widget.api.spotifyAuthStart();
@@ -115,6 +117,10 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
       final url = data['auth_url']?.toString();
       if (url == null || url.isEmpty) {
         throw StateError('URL de autorización vacía');
+      }
+      final warning = data['callback_warning']?.toString() ?? '';
+      if (warning.isNotEmpty) {
+        setState(() => _callbackWarning = warning);
       }
       await _openExternalUrl(url);
       if (!mounted) return;
@@ -177,6 +183,7 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
             _spotifySettings = s;
             _connecting = false;
             _connectionStatus = '';
+            _callbackWarning = '';
           });
           return;
         }
@@ -237,6 +244,7 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
     setState(() {
       _disconnecting = true;
       _connectionStatus = '';
+      _callbackWarning = '';
     });
     try {
       await widget.api.spotifyAuthReset();
@@ -583,6 +591,18 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
             _meta('Cuenta: ${s['account_name']}'),
           if (connected && s['device_name'] != null)
             _meta('Dispositivo: ${s['device_name']}'),
+          if (_callbackWarning.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              _callbackWarning,
+              key: const ValueKey('spotify-callback-warning'),
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1.5,
+                color: AppColors.amber,
+              ),
+            ),
+          ],
           if (_connectionStatus.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
