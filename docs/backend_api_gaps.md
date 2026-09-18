@@ -126,8 +126,10 @@ respaldo es de 3s en primer plano (30s en segundo), **sube a 1s mientras el
 dispositivo activo no es GAMMA** (Spotify no tiene push: ese sondeo *es* la
 latencia de detección de lo que se haga en el teléfono) y **frena a 30s si
 Spotify responde `QUOTA_EXCEEDED`** (`X-Spotify-Limit: quota`), que es lo único
-que empeora al reintentar. Solo lo salta un cambio de reproducción aplicado por
-SSE (ni la cola ni un snapshot de Soloist inactivo cuentan como frescura, para no
+que empeora al reintentar. El boost exige primer plano; para medir un soak largo
+sin dejar la ventana enfocada, `--dart-define=SPOTIFY_FORCE_REMOTE_CADENCE=true`
+lo fuerza (gancho de prueba, apagado por defecto). Solo lo salta un cambio de
+reproducción aplicado por SSE (ni la cola ni un snapshot de Soloist inactivo cuentan como frescura, para no
 ocultar lo que suena en el teléfono). Las
 lecturas concurrentes se unifican en una sola petición (single-flight con una
 repetición acotada si llega un pedido explícito a mitad), un error HTTP
