@@ -54,6 +54,58 @@ class _FakeConfigApi extends ApiClient {
     'client_id_configured': true,
   };
 
+  Map<String, dynamic> soloistStatusResponse = {
+    'binary': {
+      'present': false,
+      'version': null,
+      'age_days': null,
+      'expires_in_days': null,
+      'update_needed': false,
+    },
+    'api_key': {'configured': false, 'permissions_ok': null},
+    'service': {'installed': false, 'enabled': null, 'active': null},
+    'adapter': {'connected': false, 'logged_in': false, 'is_active': false},
+    'device_visible': false,
+    'linked': false,
+    'ready': false,
+    'next_step': {'code': 'install', 'hint': 'Instala el binario.'},
+  };
+
+  @override
+  Future<Map<String, dynamic>> spotifySoloistStatus() async =>
+      soloistStatusResponse;
+
+  final soloistKeyCalls = <String>[];
+
+  @override
+  Future<Map<String, dynamic>> spotifySoloistSaveKey(String apiKey) async {
+    soloistKeyCalls.add(apiKey);
+    return {'success': true};
+  }
+
+  final soloistServiceCalls = <String>[];
+
+  @override
+  Future<Map<String, dynamic>> spotifySoloistService(String action) async {
+    soloistServiceCalls.add(action);
+    return {'success': true, 'message': 'Servicio $action OK.'};
+  }
+
+  final soloistInstallCalls = <bool>[];
+  Map<String, dynamic> soloistJobResponse = const {'state': 'running', 'log': []};
+
+  @override
+  Future<Map<String, dynamic>> spotifySoloistInstall({
+    bool update = false,
+  }) async {
+    soloistInstallCalls.add(update);
+    return {'job_id': 'abc123'};
+  }
+
+  @override
+  Future<Map<String, dynamic>> spotifySoloistJob(String jobId) async =>
+      soloistJobResponse;
+
   final spotifyConfigCalls = <Map<String, Object?>>[];
   Map<String, dynamic> spotifyConfigResponse = const {};
   Object? spotifyConfigError;
@@ -167,6 +219,17 @@ String _fieldText(WidgetTester tester, String key) =>
     tester.widget<TextField>(find.byKey(ValueKey(key))).controller!.text;
 
 void main() {
+  /// The Spotify screen grew a third card (local renderer): it needs a taller
+  /// viewport so every action stays tappable without scrolling.
+  Future<void> pumpSpotify(
+    WidgetTester tester,
+    SpotifyModuleScreen screen,
+  ) => _pumpScreen(
+    tester,
+    screen,
+    size: const Size(600, 2600),
+  );
+
   group('SpotifyModuleScreen', () {
     testWidgets('renders connection + credentials and saves changed fields', (
       tester,
@@ -177,7 +240,7 @@ void main() {
           'reconnect_required': false,
           'message': 'Credenciales actualizadas',
         };
-      await _pumpScreen(tester, SpotifyModuleScreen(api: api));
+      await pumpSpotify(tester, SpotifyModuleScreen(api: api));
 
       expect(find.text('Spotify'), findsOneWidget);
       expect(find.text('Conexión'), findsOneWidget);
@@ -207,7 +270,7 @@ void main() {
       tester,
     ) async {
       final api = _FakeConfigApi();
-      await _pumpScreen(tester, SpotifyModuleScreen(api: api));
+      await pumpSpotify(tester, SpotifyModuleScreen(api: api));
 
       await tester.enterText(
         find.byKey(const ValueKey('config-spotify-client-secret')),
@@ -232,7 +295,7 @@ void main() {
           'reconnect_required': true,
           'message': 'Credenciales actualizadas',
         };
-      await _pumpScreen(tester, SpotifyModuleScreen(api: api));
+      await pumpSpotify(tester, SpotifyModuleScreen(api: api));
 
       await tester.enterText(
         find.byKey(const ValueKey('config-spotify-device-name')),
@@ -254,7 +317,7 @@ void main() {
         ..spotifyConfigError = ApiException(422, {
           'detail': 'El client_secret no puede estar vacío.',
         });
-      await _pumpScreen(tester, SpotifyModuleScreen(api: api));
+      await pumpSpotify(tester, SpotifyModuleScreen(api: api));
 
       await tester.enterText(
         find.byKey(const ValueKey('config-spotify-client-secret')),
@@ -268,6 +331,97 @@ void main() {
         find.text('El client_secret no puede estar vacío.'),
         findsOneWidget,
       );
+    });
+
+    testWidgets('soloist card shows the lifecycle state and saves the key', (
+      tester,
+    ) async {
+      final api = _FakeConfigApi();
+      await pumpSpotify(tester, SpotifyModuleScreen(api: api));
+
+      expect(find.text('Reproductor local'), findsOneWidget);
+      expect(find.text('En proceso'), findsOneWidget);
+      expect(find.text('Binario: no instalado'), findsOneWidget);
+      expect(find.text('Clave API: pendiente'), findsOneWidget);
+      expect(find.text('Servicio: no instalado'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('config-soloist-api-key')),
+        'spak_nueva123456',
+      );
+      await tester.tap(find.byKey(const ValueKey('config-soloist-save-key')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(api.soloistKeyCalls, ['spak_nueva123456']);
+      expect(_fieldText(tester, 'config-soloist-api-key'), isEmpty);
+      expect(find.text('Clave guardada.'), findsOneWidget);
+    });
+
+    testWidgets('soloist card shows pairing guide, expiry and ready badge', (
+      tester,
+    ) async {
+      final api = _FakeConfigApi()
+        ..soloistStatusResponse = {
+          'binary': {
+            'present': true,
+            'version': 'soloist 1.3.8.7',
+            'age_days': 80,
+            'expires_in_days': 10,
+            'update_needed': true,
+          },
+          'api_key': {'configured': true, 'permissions_ok': true},
+          'service': {'installed': true, 'enabled': true, 'active': true},
+          'adapter': {'connected': true, 'logged_in': false, 'is_active': false},
+          'device_visible': false,
+          'linked': false,
+          'ready': false,
+          'next_step': {'code': 'pair', 'hint': 'Elige el dispositivo.'},
+        };
+      await pumpSpotify(tester, SpotifyModuleScreen(api: api));
+
+      expect(find.text('Binario: soloist 1.3.8.7 (80 días)'), findsOneWidget);
+      expect(find.text('Clave API: configurada'), findsOneWidget);
+      expect(find.textContaining('caduca en 10 días'), findsOneWidget);
+      expect(
+        find.textContaining('elige tu reproductor en el selector'),
+        findsOneWidget,
+      );
+
+      api.soloistStatusResponse = {
+        ...api.soloistStatusResponse,
+        'adapter': {'connected': true, 'logged_in': true, 'is_active': true},
+        'device_visible': true,
+        'linked': true,
+        'ready': true,
+        'next_step': {'code': 'ready', 'hint': 'Listo.'},
+      };
+      await tester.tap(find.text('Verificar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Listo'), findsOneWidget);
+    });
+
+    testWidgets('soloist service and install buttons call the backend', (
+      tester,
+    ) async {
+      final api = _FakeConfigApi();
+      await pumpSpotify(tester, SpotifyModuleScreen(api: api));
+
+      await tester.tap(find.byKey(const ValueKey('config-soloist-service-start')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(api.soloistServiceCalls, ['start']);
+      expect(find.text('Servicio start OK.'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('config-soloist-install')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(api.soloistInstallCalls, [false]);
+      expect(find.text('Instalando…'), findsOneWidget);
     });
   });
 

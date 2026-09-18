@@ -43,6 +43,19 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
   bool _connectionStatusOk = true;
   Timer? _oauthPoll;
 
+  // Local renderer (Soloist onboarding without SSH)
+  Map<String, dynamic>? _soloistStatus;
+  final _soloistKeyCtrl = TextEditingController();
+  bool _savingSoloistKey = false;
+  String _soloistKeyStatus = '';
+  bool _soloistKeyStatusOk = true;
+  Timer? _soloistPoll;
+  String? _soloistJobId;
+  String _soloistJobStatus = '';
+  bool _soloistWorking = false;
+  String _soloistActionStatus = '';
+  bool _soloistActionOk = true;
+
   @override
   ApiClient get moduleApi => widget.api;
 
@@ -53,6 +66,7 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
   void initState() {
     super.initState();
     _loadSpotifySettings();
+    _loadSoloistStatus();
   }
 
   Future<void> _loadSpotifySettings() async {
@@ -78,10 +92,12 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
   @override
   void dispose() {
     _oauthPoll?.cancel();
+    _soloistPoll?.cancel();
     _clientIdCtrl.dispose();
     _clientSecretCtrl.dispose();
     _deviceNameCtrl.dispose();
     _marketCtrl.dispose();
+    _soloistKeyCtrl.dispose();
     super.dispose();
   }
 
@@ -239,6 +255,141 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
     }
   }
 
+  // --- Local renderer (Soloist onboarding) ---------------------------------
+
+  Future<void> _loadSoloistStatus() async {
+    try {
+      final status = await widget.api.spotifySoloistStatus();
+      if (!mounted) return;
+      setState(() => _soloistStatus = status);
+    } catch (_) {
+      // The card keeps its neutral state; a failed read is never fatal.
+    }
+    _syncSoloistPoll();
+  }
+
+  /// Polls while onboarding is incomplete (or a job runs): cheap, read-only,
+  /// and stops by itself once Soloist reports ready.
+  void _syncSoloistPoll() {
+    final done =
+        _soloistStatus != null &&
+        _soloistStatus!['ready'] == true &&
+        _soloistJobId == null;
+    if (done) {
+      _soloistPoll?.cancel();
+      _soloistPoll = null;
+      return;
+    }
+    _soloistPoll ??= Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _soloistTick(),
+    );
+  }
+
+  Future<void> _soloistTick() async {
+    if (_soloistJobId != null) await _pollSoloistJob();
+    await _loadSoloistStatus();
+  }
+
+  Future<void> _pollSoloistJob() async {
+    final jobId = _soloistJobId;
+    if (jobId == null) return;
+    try {
+      final job = await widget.api.spotifySoloistJob(jobId);
+      if (!mounted) return;
+      final state = job['state']?.toString() ?? 'running';
+      setState(() {
+        final log = (job['log'] as List?)?.cast<String>() ?? const [];
+        _soloistJobStatus = state == 'running'
+            ? 'Instalando…'
+            : state == 'done'
+            ? 'Instalación completa.'
+            : 'Falló: ${log.isNotEmpty ? log.last : 'sin detalle'}';
+        if (state != 'running') _soloistJobId = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _soloistJobStatus = 'Error consultando el trabajo: $e');
+    }
+  }
+
+  Future<void> _saveSoloistKey() async {
+    final key = _soloistKeyCtrl.text.trim();
+    if (key.isEmpty || _savingSoloistKey) return;
+    setState(() {
+      _savingSoloistKey = true;
+      _soloistKeyStatus = '';
+    });
+    try {
+      await widget.api.spotifySoloistSaveKey(key);
+      if (!mounted) return;
+      setState(() {
+        _savingSoloistKey = false;
+        _soloistKeyStatusOk = true;
+        _soloistKeyStatus = 'Clave guardada.';
+      });
+      _soloistKeyCtrl.clear();
+      await _loadSoloistStatus();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _savingSoloistKey = false;
+        _soloistKeyStatus = configErrorMessage(e);
+        _soloistKeyStatusOk = false;
+      });
+    }
+  }
+
+  Future<void> _soloistService(String action) async {
+    if (_soloistWorking) return;
+    setState(() {
+      _soloistWorking = true;
+      _soloistActionStatus = '';
+    });
+    try {
+      final result = await widget.api.spotifySoloistService(action);
+      if (!mounted) return;
+      setState(() {
+        _soloistWorking = false;
+        _soloistActionOk = true;
+        _soloistActionStatus = (result['message'] ?? 'Listo.').toString();
+      });
+      await _loadSoloistStatus();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _soloistWorking = false;
+        _soloistActionStatus = configErrorMessage(e);
+        _soloistActionOk = false;
+      });
+    }
+  }
+
+  Future<void> _soloistInstall({bool update = false}) async {
+    if (_soloistWorking || _soloistJobId != null) return;
+    setState(() {
+      _soloistWorking = true;
+      _soloistActionStatus = '';
+    });
+    try {
+      final result = await widget.api.spotifySoloistInstall(update: update);
+      if (!mounted) return;
+      setState(() {
+        _soloistWorking = false;
+        _soloistJobId = result['job_id']?.toString();
+        _soloistJobStatus = 'Instalando…';
+      });
+      _syncSoloistPoll();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _soloistWorking = false;
+        _soloistActionStatus = configErrorMessage(e);
+        _soloistActionOk = false;
+      });
+    }
+  }
+
   // --- Credentials ---------------------------------------------------------
 
   Future<void> _saveCredentials() async {
@@ -313,6 +464,8 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
           padding: const EdgeInsets.all(20),
           children: [
             _connectionCard(),
+            const SizedBox(height: 14),
+            _soloistCard(),
             const SizedBox(height: 14),
             SettingsCard(
               icon: CupertinoIcons.lock,
@@ -444,6 +597,208 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
         ],
       ),
     );
+  }
+
+  Widget _soloistCard() {
+    final s = _soloistStatus ?? const <String, dynamic>{};
+    final ready = s['ready'] == true;
+    final binary = s['binary'] is Map
+        ? (s['binary'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final apiKey = s['api_key'] is Map
+        ? (s['api_key'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final service = s['service'] is Map
+        ? (s['service'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final adapter = s['adapter'] is Map
+        ? (s['adapter'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final nextStep = s['next_step'] is Map
+        ? (s['next_step'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final expiresIn = binary['expires_in_days'];
+    final showExpiry =
+        expiresIn is num && expiresIn < 15 && binary['present'] == true;
+    return SettingsCard(
+      icon: CupertinoIcons.speaker_2,
+      title: 'Reproductor local',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                height: 28,
+                decoration: BoxDecoration(
+                  color: ready
+                      ? AppColors.green.withValues(alpha: 0.09)
+                      : AppColors.surfaceRaised,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: ready
+                        ? AppColors.green.withValues(alpha: 0.3)
+                        : AppColors.border,
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  ready ? 'Listo' : 'En proceso',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: ready ? AppColors.green : AppColors.textFaint,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              ToolButton(
+                icon: CupertinoIcons.refresh,
+                label: 'Verificar',
+                filled: false,
+                onTap: _loadSoloistStatus,
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          _meta(_soloistBinaryLine(binary)),
+          _meta(
+            'Clave API: ${apiKey['configured'] == true ? 'configurada' : 'pendiente'}',
+          ),
+          _meta(_soloistServiceLine(service)),
+          _meta(
+            'Sesión: ${adapter['logged_in'] == true ? 'conectada' : 'sin conectar'}'
+            '${adapter['is_active'] == true ? ' (dispositivo activo)' : ''}',
+          ),
+          if (s['device_visible'] == true)
+            _meta('Visible en Spotify: sí'),
+          if (nextStep['code'] == 'pair') ...[
+            const SizedBox(height: 8),
+            const Text(
+              'Abre la app de Spotify en la misma red, elige tu reproductor '
+              'en el selector de dispositivos y reproduce algo. Después pulsa '
+              'Verificar.',
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.5,
+                color: AppColors.textDim,
+              ),
+            ),
+          ],
+          if (showExpiry) ...[
+            const SizedBox(height: 8),
+            Text(
+              'El build caduca en ${expiresIn.round()} días: actualiza antes de que deje de funcionar.',
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1.5,
+                color: AppColors.amber,
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          ModuleConfigField(
+            fieldKey: const ValueKey('config-soloist-api-key'),
+            label: 'Clave API de Soloist',
+            controller: _soloistKeyCtrl,
+            helper: 'Solo se guarda, nunca se muestra. Generala en el panel de Soloist.',
+            obscure: true,
+          ),
+          ModuleConfigSaveRow(
+            saveKey: const ValueKey('config-soloist-save-key'),
+            saving: _savingSoloistKey,
+            onSave: _saveSoloistKey,
+          ),
+          const SizedBox(height: 4),
+          ModuleConfigStatus(
+            status: _soloistKeyStatus,
+            ok: _soloistKeyStatusOk,
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ToolButton(
+                key: const ValueKey('config-soloist-install'),
+                icon: CupertinoIcons.arrow_down_to_line,
+                label: 'Instalar',
+                filled: false,
+                onTap: () {
+                  if (!_soloistWorking && _soloistJobId == null) {
+                    _soloistInstall();
+                  }
+                },
+              ),
+              ToolButton(
+                key: const ValueKey('config-soloist-update'),
+                icon: CupertinoIcons.arrow_2_circlepath,
+                label: 'Actualizar',
+                filled: false,
+                onTap: () {
+                  if (!_soloistWorking && _soloistJobId == null) {
+                    _soloistInstall(update: true);
+                  }
+                },
+              ),
+              ToolButton(
+                key: const ValueKey('config-soloist-service-start'),
+                icon: CupertinoIcons.play,
+                label: _soloistWorking ? 'Aplicando…' : 'Iniciar',
+                filled: false,
+                onTap: () => _soloistService('start'),
+              ),
+              ToolButton(
+                key: const ValueKey('config-soloist-service-restart'),
+                icon: CupertinoIcons.restart,
+                label: 'Reiniciar',
+                filled: false,
+                onTap: () => _soloistService('restart'),
+              ),
+            ],
+          ),
+          if (_soloistJobStatus.isNotEmpty || _soloistActionStatus.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            if (_soloistJobStatus.isNotEmpty)
+              Text(
+                _soloistJobStatus,
+                style: const TextStyle(
+                  fontSize: 13,
+                  height: 1.5,
+                  color: AppColors.textDim,
+                ),
+              ),
+            if (_soloistActionStatus.isNotEmpty)
+              ModuleConfigStatus(
+                status: _soloistActionStatus,
+                ok: _soloistActionOk,
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _soloistBinaryLine(Map<String, dynamic> binary) {
+    if (binary['present'] != true) return 'Binario: no instalado';
+    final version = binary['version']?.toString();
+    final age = binary['age_days'];
+    final head = version != null && version.isNotEmpty
+        ? 'Binario: $version'
+        : 'Binario: instalado';
+    if (age is num) return '$head (${age.round()} días)';
+    return head;
+  }
+
+  String _soloistServiceLine(Map<String, dynamic> service) {
+    if (service['installed'] != true) return 'Servicio: no instalado';
+    final state = service['active'] == true
+        ? 'activo'
+        : service['enabled'] == true
+        ? 'habilitado, inactivo'
+        : 'detenido';
+    return 'Servicio: $state';
   }
 
   Widget _reconnectWarning() {

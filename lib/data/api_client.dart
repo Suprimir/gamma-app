@@ -605,6 +605,47 @@ class ApiClient {
   Future<Map<String, dynamic>> spotifySettings() =>
       _get('/api/v1/spotify/settings');
 
+  /// Local Soloist lifecycle (phase-4 onboarding): status, key, service and
+  /// background install jobs. None of it needs an authorized account.
+  Future<Map<String, dynamic>> spotifySoloistStatus() =>
+      _get('/api/v1/spotify/soloist/status');
+
+  /// Saves the Soloist API key. The backend validates the format and never
+  /// echoes the value back.
+  Future<Map<String, dynamic>> spotifySoloistSaveKey(String apiKey) async {
+    final resp = await _client.post(
+      Uri.parse('$baseUrl/api/v1/spotify/soloist/key'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'api_key': apiKey}),
+    );
+    return _decode(resp);
+  }
+
+  /// Controls the Soloist systemd service: enable, start or restart.
+  Future<Map<String, dynamic>> spotifySoloistService(String action) async {
+    final resp = await _client.post(
+      Uri.parse('$baseUrl/api/v1/spotify/soloist/service'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'action': action}),
+    );
+    return _decode(resp);
+  }
+
+  /// Starts a background install/update job; returns its `job_id`.
+  Future<Map<String, dynamic>> spotifySoloistInstall({bool update = false}) async {
+    final resp = await _client.post(
+      Uri.parse('$baseUrl/api/v1/spotify/soloist/install'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'update': update}),
+    );
+    return _decode(resp);
+  }
+
+  /// Status of a background install/update job.
+  Future<Map<String, dynamic>> spotifySoloistJob(String jobId) => _get(
+    '/api/v1/spotify/soloist/jobs/${Uri.encodeComponent(jobId)}',
+  );
+
   Future<Map<String, dynamic>> spotifyAuthStart() async {
     final resp = await _client.post(
       Uri.parse('$baseUrl/api/v1/spotify/auth/start'),

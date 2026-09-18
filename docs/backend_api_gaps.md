@@ -105,6 +105,10 @@ El core expone los 13 endpoints de reproducción (OpenAPI + curl en vivo):
 - Errores: 401 auth vencida, 403 Premium requerido, 409 sin dispositivo
   activo / orden rechazada, 422 inválido, 503 módulo desactivado o servicio
   sin autorizar.
+- Ciclo de vida local (fase 4): `GET /soloist/status` (binario, clave solo
+  configurada o no, servicio, adaptador, vínculo, `next_step`), `POST
+  /soloist/key`, `POST /soloist/service` (`enable|start|restart`), `POST
+  /soloist/install` + `GET /soloist/jobs/{id}`. Nada exige cuenta autorizada.
 
 **Pendiente del lado operador (no del cliente):** la cuenta todavía no está
 autorizada; el server responde `503` con
