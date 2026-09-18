@@ -158,9 +158,11 @@ class SpotifyPlayerController extends ChangeNotifier {
   /// net for a missed event.
   int? _queueFetchedAtMs;
 
-  /// Serializes the secondary listing reads so overlapping refreshes do not
-  /// duplicate device/queue traffic.
+  /// Serializa las lecturas secundarias para que pases solapados no dupliquen
+  /// tráfico de dispositivos/cola, y recuerda un pedido forzado que llegó
+  /// mientras otra pasada corría (una orden o el picker no deben perderse).
   bool _detailsInFlight = false;
+  bool _detailsForcedPending = false;
 
   /// Epoch ms of the last applied Spotify SSE event. A poll tick inside the
   /// cadence window is skipped: the stream already delivered newer state.
@@ -360,8 +362,9 @@ class SpotifyPlayerController extends ChangeNotifier {
   }
 
   /// Loads the player state and publishes it as soon as it arrives; the device
-  /// listing and the playback queue refresh behind it (see [_refreshDetails]),
-  /// so the track/pause/seek state never waits on secondary reads.
+  /// listing and the playback queue refresh behind it (see [_scheduleDetails]),
+  /// so the track/pause/seek state never waits on secondary reads — and a slow
+  /// listing never delays the next pass.
   ///
   /// Concurrent calls are coalesced into a single HTTP read; a poll that
   /// overlaps another joins the in-flight batch, while an explicit request
@@ -387,14 +390,16 @@ class SpotifyPlayerController extends ChangeNotifier {
   }
 
   /// Runs the coalesced refresh passes and completes every waiting caller once
-  /// the queue drains.
+  /// the queue drains. Each pass publishes the player and hands the secondary
+  /// listings to [_scheduleDetails], so a slow listing never delays the next
+  /// pass.
   Future<void> _drainRefreshes() async {
     try {
       do {
         _refreshQueued = false;
         final force = _queuedForce;
         _queuedForce = false;
-        await _refreshOnce(forceDetails: force);
+        await _refreshPlayerOnce(forceDetails: force);
       } while (_refreshQueued && !_disposed);
     } finally {
       _refreshing = false;
@@ -408,8 +413,9 @@ class SpotifyPlayerController extends ChangeNotifier {
     }
   }
 
-  /// One player read plus its secondary listings.
-  Future<void> _refreshOnce({required bool forceDetails}) async {
+  /// One player read. The device listing and the playback queue refresh behind
+  /// it (see [_scheduleDetails]).
+  Future<void> _refreshPlayerOnce({required bool forceDetails}) async {
     if (_disposed) return;
     _loading = true;
     notifyListeners();
@@ -451,14 +457,40 @@ class SpotifyPlayerController extends ChangeNotifier {
     _syncTicker();
     notifyListeners();
 
-    await _refreshDetails(force: forceDetails);
+    _scheduleDetails(force: forceDetails);
   }
 
-  /// Refreshes the device listing and the playback queue behind the player
-  /// read, gated by their own cadences. Non-fatal: a failed listing keeps the
-  /// last known data and never erases the canonical player state.
-  Future<void> _refreshDetails({bool force = false}) async {
-    if (_disposed || _detailsInFlight) return;
+  /// Schedules the secondary listings behind the player read.
+  ///
+  /// They never block a player pass: un `/devices` (o `/queue`) colgado no debe
+  /// retrasar el siguiente sondeo ni la convergencia tras una orden. Un pedido
+  /// forzado que llega mientras otra pasada corre se encola una vez.
+  void _scheduleDetails({required bool force}) {
+    if (_disposed) return;
+    if (force) _detailsForcedPending = true;
+    if (_detailsInFlight) return;
+    unawaited(_drainDetails());
+  }
+
+  Future<void> _drainDetails() async {
+    _detailsInFlight = true;
+    try {
+      do {
+        final force = _detailsForcedPending;
+        _detailsForcedPending = false;
+        await _refreshDetailsOnce(force: force);
+      } while (!_disposed && _detailsForcedPending);
+    } finally {
+      _detailsInFlight = false;
+      _detailsForcedPending = false;
+    }
+  }
+
+  /// Refreshes the device listing and the playback queue, gated by their own
+  /// cadences. Non-fatal: a failed listing keeps the last known data and never
+  /// erases the canonical player state.
+  Future<void> _refreshDetailsOnce({required bool force}) async {
+    if (_disposed) return;
     final now = _nowMs();
     final devicesDue =
         force ||
@@ -476,36 +508,31 @@ class SpotifyPlayerController extends ChangeNotifier {
             now - _queueFetchedAtMs! >= _queueRefreshIntervalMs);
     if (!devicesDue && !queueDue) return;
 
-    _detailsInFlight = true;
-    try {
-      if (devicesDue) {
-        try {
-          final data = await api.spotifyDevices();
-          if (_disposed) return;
-          _devices =
-              (data['devices'] as List?)?.cast<Map<String, dynamic>>() ??
-              const [];
-          _defaultDeviceId = data['default_device_id']?.toString();
-          _devicesFetchedAtMs = _nowMs();
-          notifyListeners();
-        } catch (_) {
-          // Non-fatal: device discovery failing never erases known devices.
-        }
+    if (devicesDue) {
+      try {
+        final data = await api.spotifyDevices();
+        if (_disposed) return;
+        _devices =
+            (data['devices'] as List?)?.cast<Map<String, dynamic>>() ??
+            const [];
+        _defaultDeviceId = data['default_device_id']?.toString();
+        _devicesFetchedAtMs = _nowMs();
+        notifyListeners();
+      } catch (_) {
+        // Non-fatal: device discovery failing never erases known devices.
       }
-      if (_disposed) return;
-      if (queueDue) {
-        try {
-          final data = await api.spotifyPlaybackQueue(limit: 20);
-          if (_disposed) return;
-          _queue = _normalizeQueue(data);
-          _queueFetchedAtMs = _nowMs();
-          notifyListeners();
-        } catch (_) {
-          // Non-fatal: a failed queue read keeps the last known queue.
-        }
+    }
+    if (_disposed) return;
+    if (queueDue) {
+      try {
+        final data = await api.spotifyPlaybackQueue(limit: 20);
+        if (_disposed) return;
+        _queue = _normalizeQueue(data);
+        _queueFetchedAtMs = _nowMs();
+        notifyListeners();
+      } catch (_) {
+        // Non-fatal: a failed queue read keeps the last known queue.
       }
-    } finally {
-      _detailsInFlight = false;
     }
   }
 
@@ -626,7 +653,7 @@ class SpotifyPlayerController extends ChangeNotifier {
     final last = _lastStateEventMs;
     final sseFresh = last != null && _nowMs() - last < interval.inMilliseconds;
     if (sseFresh) {
-      unawaited(_refreshDetails());
+      _scheduleDetails(force: false);
     } else {
       unawaited(refresh());
     }

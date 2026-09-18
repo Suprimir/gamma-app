@@ -685,6 +685,9 @@ void main() {
         };
       final controller = SpotifyPlayerController(api);
       await controller.refresh();
+      // La cola se pide detrás del player: llega con el siguiente turno de
+      // microtareas, no dentro del propio `await refresh()`.
+      await pumpEventQueue();
 
       expect(controller.previousQueue, hasLength(1));
       expect(controller.upcomingQueue, hasLength(1));
@@ -694,6 +697,7 @@ void main() {
 
       api.queueError = ApiException(500, {'detail': 'cola caída'});
       await controller.refresh();
+      await pumpEventQueue();
 
       expect(controller.error, isNull);
       expect(controller.upcomingQueue.first['name'], 'Siguiente');
@@ -1155,6 +1159,32 @@ void main() {
       calls += 1;
       expect(api.playerCalls, calls);
 
+      controller.dispose();
+      await api.close();
+    });
+
+    test('un listado de devices colgado no bloquea el siguiente refresh del player',
+        () async {
+      final api = _FakeSpotifyApi();
+      final controller = SpotifyPlayerController(api);
+      await controller.refresh();
+      await pumpEventQueue();
+      controller.startPolling(interval: const Duration(hours: 1));
+
+      // El listado de dispositivos queda en vuelo...
+      api.devicesCompleter = Completer<Map<String, dynamic>>();
+      final stuck = controller.refresh();
+      await pumpEventQueue();
+      final callsWithStuckListing = api.playerCalls;
+
+      // ...y el siguiente pase (sondeo u orden) debe poder leer el player
+      // igual: la canción/pausa no puede quedar esperando a los listados.
+      final next = controller.refresh();
+      await pumpEventQueue();
+      expect(api.playerCalls, callsWithStuckListing + 1);
+
+      api.devicesCompleter!.complete(api.devices);
+      await Future.wait([stuck, next]);
       controller.dispose();
       await api.close();
     });
