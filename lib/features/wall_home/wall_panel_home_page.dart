@@ -20,6 +20,7 @@ import '../../ui/open_in_new_tab.dart';
 import '../../ui/shared_widgets.dart';
 import '../../ui/spotify_logo.dart';
 import '../voice/vad_model.dart';
+import '../spotify/spotify_controller_owner.dart';
 import '../spotify/spotify_player_controller.dart';
 import 'wall_activity_bus.dart';
 import 'wall_voice_controller.dart';
@@ -1181,9 +1182,16 @@ class _WallMusicCard extends StatefulWidget {
 class _WallMusicCardState extends State<_WallMusicCard> {
   static const _externalUrlChannel = MethodChannel('gamma_app/external_url');
 
-  late final SpotifyPlayerController _spotify = SpotifyPlayerController(
-    widget.api,
+  /// Shared app-wide controller when the app provides it (single poll/SSE for
+  /// every surface); otherwise this card owns a local one.
+  late final SpotifyControllerOwner _spotifyOwner = SpotifyControllerOwner(
+    api: widget.api,
+    interval: widget.pollInterval,
   );
+
+  SpotifyPlayerController get _spotify => _spotifyOwner.controller;
+
+  bool _spotifyListening = false;
 
   bool _loading = true;
   bool _connecting = false;
@@ -1200,20 +1208,30 @@ class _WallMusicCardState extends State<_WallMusicCard> {
   void initState() {
     super.initState();
     _loadStatus();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _spotifyOwner.attach(context);
     // Playback state is its own async source: the card renders whatever the
     // backend confirms and never blocks the home load on it.
-    unawaited(_spotify.refresh());
-    _spotify.startPolling(interval: widget.pollInterval);
+    _spotifyOwner.start();
     // The settings read happens once in [_loadStatus]; the listener converges
     // the card when the playback backend starts answering (fresh auth).
-    _spotify.addListener(_onSpotifyAvailabilityChanged);
+    if (!_spotifyListening) {
+      _spotifyListening = true;
+      _spotify.addListener(_onSpotifyAvailabilityChanged);
+    }
   }
 
   @override
   void dispose() {
-    _spotify.removeListener(_onSpotifyAvailabilityChanged);
+    if (_spotifyListening) {
+      _spotify.removeListener(_onSpotifyAvailabilityChanged);
+    }
     _oauthPoll?.cancel();
-    _spotify.dispose();
+    _spotifyOwner.dispose();
     super.dispose();
   }
 
@@ -1945,74 +1963,86 @@ class _WallMusicCardState extends State<_WallMusicCard> {
   /// Touch-sized device picker: every target is a full-width 56px row and
   /// "Automático" clears the explicit pick (the backend resolves it).
   Future<void> _pickDevice() async {
+    // Fresh listing regardless of the cadence: the user may have just started
+    // Spotify on another device that the cached listing does not know yet.
+    unawaited(_spotify.refreshNow());
     final choice = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: AppColors.surface,
       builder: (sheetContext) {
-        final activeId = _spotify.activeDevice?['id'];
         return SafeArea(
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const ListTile(
-                  title: Text(
-                    'Reproducir en',
-                    style: TextStyle(
-                      color: AppColors.text,
-                      fontWeight: FontWeight.w700,
+          // The sheet rebuilds with the controller so a listing that lands
+          // after opening (forced read) shows the fresh targets immediately.
+          child: ListenableBuilder(
+            listenable: _spotify,
+            builder: (context, _) {
+              final activeId = _spotify.activeDevice?['id'];
+              return SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const ListTile(
+                      title: Text(
+                        'Reproducir en',
+                        style: TextStyle(
+                          color: AppColors.text,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ),
-                  ),
+                    ListTile(
+                      leading: const Icon(
+                        Icons.auto_awesome,
+                        color: AppColors.textDim,
+                      ),
+                      title: const Text(
+                        'Automático',
+                        style: TextStyle(color: AppColors.text),
+                      ),
+                      subtitle: const Text(
+                        'GAMMA elige el dispositivo activo',
+                        style: TextStyle(color: AppColors.textFaint),
+                      ),
+                      trailing:
+                          _spotify.selectedDeviceId == null && activeId != null
+                          ? Icon(Icons.check, color: AppColors.accent)
+                          : null,
+                      onTap: () => Navigator.pop(sheetContext, ''),
+                    ),
+                    for (final device in _spotify.devices)
+                      ListTile(
+                        leading: Icon(
+                          device['is_active'] == true
+                              ? Icons.speaker
+                              : Icons.speaker_outlined,
+                          color: AppColors.textDim,
+                        ),
+                        title: Text(
+                          device['name']?.toString() ??
+                              device['id']?.toString() ??
+                              'Dispositivo',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: AppColors.text),
+                        ),
+                        subtitle: device['is_default'] == true
+                            ? const Text(
+                                'Predeterminado',
+                                style: TextStyle(color: AppColors.textFaint),
+                              )
+                            : null,
+                        trailing: device['id'] == activeId
+                            ? Icon(Icons.check, color: AppColors.accent)
+                            : null,
+                        onTap: () => Navigator.pop(
+                          sheetContext,
+                          device['id']?.toString(),
+                        ),
+                      ),
+                  ],
                 ),
-                ListTile(
-                  leading: const Icon(
-                    Icons.auto_awesome,
-                    color: AppColors.textDim,
-                  ),
-                  title: const Text(
-                    'Automático',
-                    style: TextStyle(color: AppColors.text),
-                  ),
-                  subtitle: const Text(
-                    'GAMMA elige el dispositivo activo',
-                    style: TextStyle(color: AppColors.textFaint),
-                  ),
-                  trailing:
-                      _spotify.selectedDeviceId == null && activeId != null
-                      ? Icon(Icons.check, color: AppColors.accent)
-                      : null,
-                  onTap: () => Navigator.pop(sheetContext, ''),
-                ),
-                for (final device in _spotify.devices)
-                  ListTile(
-                    leading: Icon(
-                      device['is_active'] == true
-                          ? Icons.speaker
-                          : Icons.speaker_outlined,
-                      color: AppColors.textDim,
-                    ),
-                    title: Text(
-                      device['name']?.toString() ??
-                          device['id']?.toString() ??
-                          'Dispositivo',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: AppColors.text),
-                    ),
-                    subtitle: device['is_default'] == true
-                        ? const Text(
-                            'Predeterminado',
-                            style: TextStyle(color: AppColors.textFaint),
-                          )
-                        : null,
-                    trailing: device['id'] == activeId
-                        ? Icon(Icons.check, color: AppColors.accent)
-                        : null,
-                    onTap: () =>
-                        Navigator.pop(sheetContext, device['id']?.toString()),
-                  ),
-              ],
-            ),
+              );
+            },
           ),
         );
       },
@@ -2841,11 +2871,15 @@ class _WallSleepOverlayState extends State<_WallSleepOverlay>
   WeatherReading? _weather;
   Timer? _weatherTimer;
 
-  /// Read-only now-playing chip for the idle screen; same canonical state
-  /// as the music card (SSE + optional fallback poll).
-  late final SpotifyPlayerController _spotify = SpotifyPlayerController(
-    widget.api,
+  /// Read-only now-playing chip for the idle screen; same canonical state as
+  /// the music card (SSE + optional fallback poll). Resolves the app-wide
+  /// shared controller when present, so the chip never opens a second stream.
+  late final SpotifyControllerOwner _spotifyOwner = SpotifyControllerOwner(
+    api: widget.api,
+    interval: widget.pollInterval,
   );
+
+  SpotifyPlayerController get _spotify => _spotifyOwner.controller;
 
   /// Exit/snap-back driver for the swipe-up-to-wake gesture.
   late final AnimationController _fling = AnimationController(
@@ -2872,8 +2906,13 @@ class _WallSleepOverlayState extends State<_WallSleepOverlay>
       const Duration(minutes: 10),
       (_) => _loadWeather(),
     );
-    _spotify.refresh();
-    _spotify.startPolling(interval: widget.pollInterval);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _spotifyOwner.attach(context);
+    _spotifyOwner.start();
   }
 
   void _scheduleNextMinute() {
@@ -2900,7 +2939,7 @@ class _WallSleepOverlayState extends State<_WallSleepOverlay>
     _timer?.cancel();
     _weatherTimer?.cancel();
     _weatherRepo.close();
-    _spotify.dispose();
+    _spotifyOwner.dispose();
     _fling.dispose();
     super.dispose();
   }

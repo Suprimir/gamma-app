@@ -28,6 +28,7 @@ import '../devices/desktop_devices_page.dart';
 import '../routines/routines_editor_page.dart';
 import '../routines/routines_page.dart';
 import '../settings/settings_page.dart';
+import '../spotify/spotify_controller_owner.dart';
 import '../spotify/spotify_player_controller.dart';
 import '../voice/mic_source.dart';
 import '../voice/vad_model.dart';
@@ -93,10 +94,16 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
   String? _lastTrackUri;
 
   /// Canonical playback state shared by the now-playing block, the transport
-  /// and the device picker. Owned here; disposed with the page.
-  late final SpotifyPlayerController _spotify = SpotifyPlayerController(
-    widget.api,
+  /// and the device picker. Resolves the app-wide shared controller when the
+  /// app provides it; otherwise the page owns a local one.
+  late final SpotifyControllerOwner _spotifyOwner = SpotifyControllerOwner(
+    api: widget.api,
+    interval: widget.spotifyPollInterval,
   );
+
+  SpotifyPlayerController get _spotify => _spotifyOwner.controller;
+
+  bool _spotifyListening = false;
 
   late final AnimationController _staggerController;
   late final Animation<double> _staggerCurved;
@@ -182,14 +189,19 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     VadModel.vad.onError.listen((message) {
       if (mounted && _listening) _fail('Error del VAD: $message');
     });
-    // The settings read happens once in [_loadData]; the listener converges
-    // the card when the playback backend starts answering (fresh auth).
-    _spotify.addListener(_onSpotifyAvailabilityChanged);
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _spotifyOwner.attach(context);
+    _spotifyOwner.start();
+    // The settings read happens once in [_loadData]; the listener converges
+    // the card when the playback backend starts answering (fresh auth).
+    if (!_spotifyListening) {
+      _spotifyListening = true;
+      _spotify.addListener(_onSpotifyAvailabilityChanged);
+    }
     final isActive = TickerMode.valuesOf(context).enabled;
     if (!_initialized) {
       _initialized = true;
@@ -224,8 +236,10 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     }
     _inputController.dispose();
     _player.dispose();
-    _spotify.removeListener(_onSpotifyAvailabilityChanged);
-    _spotify.dispose();
+    if (_spotifyListening) {
+      _spotify.removeListener(_onSpotifyAvailabilityChanged);
+    }
+    _spotifyOwner.dispose();
     _staggerController.dispose();
     super.dispose();
   }
@@ -553,9 +567,9 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
         _refreshError = null;
       });
       // Playback state is its own async source: the card converges on the
-      // canonical backend state without blocking the home load.
+      // canonical backend state without blocking the home load. Polling is
+      // started once in didChangeDependencies.
       unawaited(_spotify.refresh());
-      _spotify.startPolling(interval: widget.spotifyPollInterval);
     } catch (error, stackTrace) {
       debugPrint('DesktopDashboard _loadData error: $error\n$stackTrace');
       if (!mounted) return;

@@ -113,12 +113,17 @@ la cuenta, y reproducir requiere Premium (403). El cliente muestra la CTA
 de conexión y los estados "Sin reproducción" / "Sin dispositivo activo" en
 vez de inventar estado.
 
-**Lado app (2026-09-12):** `ApiClient` expone los 13 métodos;
-`SpotifyPlayerController` (`lib/features/spotify/`) comparte estado entre
-desktop y wall (refresh de player+devices, comandos device-scoped, eventos
-SSE en tiempo real `spotify_state_changed`/`spotify_queue_changed` con poll
-de respaldo cada 30s cableado desde `main.dart` → `AppShell`, `needsAuth`
-en 401/503); la tarjeta Spotify del desktop reproduce playlists con
+**Lado app (2026-09-12, actualizado 2026-09-17):** `ApiClient` expone los
+13 métodos; `SpotifyPlayerController` (`lib/features/spotify/`) es un único
+controlador compartido por app (`SpotifyScope` en `main.dart`: tarjeta del
+wall, chip de reposo y dashboard desktop comparten poll y suscripción SSE)
+con comandos device-scoped y eventos SSE en tiempo real
+`spotify_state_changed`/`spotify_queue_changed`. El player se publica apenas
+llega (los listados de devices/cola corren detrás con cadencia propia:
+15s/20s), el poll de respaldo es de 3s en primer plano (30s en segundo) y se
+salta cuando un evento SSE reciente ya trajo el estado; `needsAuth` en
+401/503 y un 429/5xx transitorio conserva la última canción en vez de vaciar
+la tarjeta. La tarjeta Spotify del desktop reproduce playlists con
 `playContext`, muestra transporte/volumen/selector de dispositivo/progreso
 interpolado/cola; el card de música del wall usa los mismos estados con
 targets táctiles grandes.
@@ -183,12 +188,14 @@ quiere server-side: endpoint de clima por ubicación configurable.
 - **`observed_state`** parseado y listo para mostrar on/off confirmado.
 - **Dashboards**: sin fallback a mock, cámaras por `/cameras/status`,
   playlists con metadata real, tarjeta de estado sin inventar.
-- **Spotify playback**: controller compartido (desktop + wall) con refresh
-  de player/devices, **SSE en tiempo real** (poll de respaldo 30s), progreso
-  interpolado en cliente, cola "A continuación", transporte, volumen,
-  selector de dispositivo y tap de playlist → `playContext` (context_uri
-  real). Fuente de estado: Soloist WS (`source: "soloist"`) con fallback al
-  Web API.
+- **Spotify playback**: controller compartido por app (desktop + wall + chip
+  de reposo, `SpotifyScope`), **SSE en tiempo real** con poll de respaldo de
+  3s en primer plano (30s en segundo, y se salta si el SSE acaba de llegar),
+  progreso interpolado en cliente (ancla `position` también para la rama Web
+  API), cola "A continuación", transporte, volumen, selector de dispositivo
+  con lectura forzada al abrir y lista viva, y tap de playlist →
+  `playContext` (context_uri real). Fuente de estado: Soloist WS
+  (`source: "soloist"`) con fallback al Web API.
 - **Turns** con `session_id` desde chips mobile, acciones desktop y wall.
 - **Rutinas relacionadas** reales (GET /routines filtrado), **TTS preview**,
   **card de Sistema** (health), **bindings reales**, **identify honesto**,
