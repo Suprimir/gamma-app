@@ -1,10 +1,7 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../data/api_client.dart';
 import '../../ui/app_colors.dart';
@@ -16,7 +13,7 @@ import '../dashboard/desktop_dashboard_page.dart';
 import '../../data/device_inventory.dart';
 import '../../data/http_device_inventory_repository.dart';
 import '../../data/weather_repository.dart';
-import '../../ui/open_in_new_tab.dart';
+import '../../ui/external_url.dart';
 import '../../ui/shared_widgets.dart';
 import '../../ui/spotify_logo.dart';
 import '../voice/vad_model.dart';
@@ -1180,8 +1177,6 @@ class _WallMusicCard extends StatefulWidget {
 }
 
 class _WallMusicCardState extends State<_WallMusicCard> {
-  static const _externalUrlChannel = MethodChannel('gamma_app/external_url');
-
   /// Shared app-wide controller when the app provides it (single poll/SSE for
   /// every surface); otherwise this card owns a local one.
   late final SpotifyControllerOwner _spotifyOwner = SpotifyControllerOwner(
@@ -1271,7 +1266,7 @@ class _WallMusicCardState extends State<_WallMusicCard> {
       if (warning.isNotEmpty && mounted) {
         setState(() => _error = warning);
       }
-      await _openExternalUrl(url);
+      await openExternalUrl(url);
       if (!mounted) return;
       setState(() => _waitingAuth = true);
       _startPolling();
@@ -1282,30 +1277,6 @@ class _WallMusicCardState extends State<_WallMusicCard> {
         _connecting = false;
       });
     }
-  }
-
-  Future<void> _openExternalUrl(String url) async {
-    if (kIsWeb) {
-      openInNewTab(url);
-      return;
-    }
-    if (Platform.isAndroid) {
-      await _externalUrlChannel.invokeMethod<void>('openUrl', {'url': url});
-      return;
-    }
-    if (Platform.isLinux) {
-      final result = await Process.run('xdg-open', [url]);
-      if (result.exitCode != 0) {
-        final details = result.stderr.toString().trim();
-        throw StateError(
-          details.isEmpty
-              ? 'No se pudo abrir el navegador.'
-              : 'No se pudo abrir el navegador: $details',
-        );
-      }
-      return;
-    }
-    throw UnsupportedError('Abrir enlaces externos no está soportado aquí.');
   }
 
   void _startPolling() {

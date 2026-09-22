@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:record/record.dart';
 
@@ -15,7 +15,7 @@ import '../../data/http_device_inventory_repository.dart';
 import '../../ui/app_colors.dart';
 import '../../ui/assistant_orb.dart';
 import '../../ui/audio_waves.dart';
-import '../../ui/open_in_new_tab.dart';
+import '../../ui/external_url.dart';
 import 'home_theme_background.dart';
 import '../../ui/shared_widgets.dart';
 import '../../ui/spotify_logo.dart';
@@ -438,8 +438,6 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
     }
   }
 
-  static const _externalUrlChannel = MethodChannel('gamma_app/external_url');
-
   Future<void> _connectSpotify() async {
     try {
       final data = await widget.api.spotifyAuthStart();
@@ -448,25 +446,7 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
         throw StateError('URL de autorización vacía');
       }
       final warning = data['callback_warning']?.toString() ?? '';
-      if (kIsWeb) {
-        openInNewTab(url);
-        if (warning.isNotEmpty && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(warning), duration: const Duration(seconds: 8)),
-          );
-        }
-        return;
-      }
-      if (Platform.isAndroid) {
-        await _externalUrlChannel.invokeMethod<void>('openUrl', {'url': url});
-      } else if (Platform.isLinux) {
-        final result = await Process.run('xdg-open', [url]);
-        if (result.exitCode != 0) {
-          throw StateError('No se pudo abrir el navegador.');
-        }
-      } else {
-        throw UnsupportedError('desktop-connect');
-      }
+      await openExternalUrl(url);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -480,8 +460,6 @@ class _DesktopDashboardPageState extends State<DesktopDashboardPage>
       );
     } catch (_) {
       if (!mounted) return;
-      // Windows/desktop: no external-url channel here — Ajustes owns the
-      // platform-specific connect flow, so route there instead of faking it.
       Navigator.of(context).push(
         MaterialPageRoute<void>(builder: (_) => SettingsPage(api: widget.api)),
       );

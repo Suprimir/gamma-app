@@ -1,14 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../data/api_client.dart';
 import '../../ui/app_colors.dart';
-import '../../ui/open_in_new_tab.dart';
+import '../../ui/external_url.dart';
 import '../../ui/shared_widgets.dart';
 import 'module_config_widgets.dart';
 
@@ -122,7 +119,7 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
       if (warning.isNotEmpty) {
         setState(() => _callbackWarning = warning);
       }
-      await _openExternalUrl(url);
+      await openExternalUrl(url);
       if (!mounted) return;
       setState(() {
         _connectionStatus =
@@ -139,32 +136,6 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
         _connecting = false;
       });
     }
-  }
-
-  static const _platformChannel = MethodChannel('gamma_app/external_url');
-
-  Future<void> _openExternalUrl(String url) async {
-    if (kIsWeb) {
-      openInNewTab(url);
-      return;
-    }
-    if (Platform.isAndroid) {
-      await _platformChannel.invokeMethod<void>('openUrl', {'url': url});
-      return;
-    }
-    if (Platform.isLinux) {
-      final result = await Process.run('xdg-open', [url]);
-      if (result.exitCode != 0) {
-        final details = result.stderr.toString().trim();
-        throw StateError(
-          details.isEmpty
-              ? 'No se pudo abrir el navegador.'
-              : 'No se pudo abrir el navegador: $details',
-        );
-      }
-      return;
-    }
-    throw UnsupportedError('Abrir enlaces externos no está soportado aquí.');
   }
 
   void _startOAuthPolling() {
@@ -691,8 +662,7 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
             'Sesión: ${adapter['logged_in'] == true ? 'conectada' : 'sin conectar'}'
             '${adapter['is_active'] == true ? ' (dispositivo activo)' : ''}',
           ),
-          if (s['device_visible'] == true)
-            _meta('Visible en Spotify: sí'),
+          if (s['device_visible'] == true) _meta('Visible en Spotify: sí'),
           if (nextStep['code'] == 'pair') ...[
             const SizedBox(height: 8),
             const Text(
@@ -722,7 +692,8 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
             fieldKey: const ValueKey('config-soloist-api-key'),
             label: 'Clave API de Soloist',
             controller: _soloistKeyCtrl,
-            helper: 'Solo se guarda, nunca se muestra. Generala en el panel de Soloist.',
+            helper:
+                'Solo se guarda, nunca se muestra. Generala en el panel de Soloist.',
             obscure: true,
           ),
           ModuleConfigSaveRow(
@@ -778,7 +749,8 @@ class _SpotifyModuleScreenState extends State<SpotifyModuleScreen>
               ),
             ],
           ),
-          if (_soloistJobStatus.isNotEmpty || _soloistActionStatus.isNotEmpty) ...[
+          if (_soloistJobStatus.isNotEmpty ||
+              _soloistActionStatus.isNotEmpty) ...[
             const SizedBox(height: 8),
             if (_soloistJobStatus.isNotEmpty)
               Text(
